@@ -316,3 +316,42 @@ describe("anchors", () => {
     expect(rows).toEqual([]);
   });
 });
+
+describe("staleness", () => {
+  const stale = (token: string, id: string, body: unknown) =>
+    call(token, "PUT", `/${id}/staleness`, body);
+
+  test("flags a memory with a reason, and clears it", async () => {
+    const m = await (
+      await call(alice, "POST", "", { scope: "user", content: "flaggable" })
+    ).json();
+    const res = await stale(alice, m.id, {
+      stale: true,
+      reason: "src/a.ts changed",
+    });
+    expect(await res.json()).toMatchObject({
+      status: "possibly_stale",
+      staleReason: "src/a.ts changed",
+    });
+    expect(
+      await (await stale(alice, m.id, { stale: false })).json(),
+    ).toMatchObject({
+      status: "active",
+      staleReason: null,
+    });
+  });
+
+  test("rejects a missing reason, other people's memories and retired ones", async () => {
+    const m = await (
+      await call(alice, "POST", "", { scope: "user", content: "mine only" })
+    ).json();
+    expect((await stale(alice, m.id, { stale: true })).status).toBe(400);
+    expect((await stale(bob, m.id, { stale: true, reason: "x" })).status).toBe(
+      404,
+    );
+    await call(alice, "DELETE", `/${m.id}`);
+    expect(
+      (await stale(alice, m.id, { stale: true, reason: "x" })).status,
+    ).toBe(409);
+  });
+});

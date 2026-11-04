@@ -434,6 +434,53 @@ export function memoryRoutes(db: Db, providers: Providers) {
     return c.json(dto);
   });
 
+  /**
+   * Records the result of an anchor check done against a checkout. The server
+   * has no repo, so the client verifies (see `verifyAnchors` in shared) and
+   * reports here. `stale: false` clears a possibly_stale flag, e.g. after review.
+   */
+  app.put("/:id/staleness", async (c) => {
+    const id = c.req.param("id");
+    if (!z.uuid().safeParse(id).success) return c.json(bad("not found"), 404);
+    const parsed = z
+      .discriminatedUnion("stale", [
+        z.object({
+          stale: z.literal(true),
+          reason: z.string().trim().min(1).max(1000),
+        }),
+        z.object({ stale: z.literal(false) }),
+      ])
+      .safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json(bad(z.prettifyError(parsed.error)), 400);
+    const existing = await findVisible(id, c.get("principal"));
+    if (!existing) return c.json(bad("not found"), 404);
+    if (existing.status !== "active" && existing.status !== "possibly_stale") {
+      return c.json(
+        bad(`a ${existing.status} memory can't change staleness`),
+        409,
+      );
+    }
+    const b = parsed.data;
+    const [m] = await db
+      .update(memories)
+      .set(
+        b.stale
+          ? {
+              status: "possibly_stale",
+              staleReason: b.reason,
+              updatedAt: new Date(),
+            }
+          : { status: "active", staleReason: null, updatedAt: new Date() },
+      )
+      .where(eq(memories.id, id))
+      .returning();
+    const row = m as MemoryRow;
+    const [dto] = await withAnchors(db, [
+      toDto(row, await projectKeyOf(row.projectId)),
+    ]);
+    return c.json(dto);
+  });
+
   /** Retires the memory (kept as history). `?hard=true` deletes the row. */
   app.delete("/:id", async (c) => {
     const id = c.req.param("id");
