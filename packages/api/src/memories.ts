@@ -1,9 +1,9 @@
-import { and, desc, eq, ne, or, type SQL } from "drizzle-orm";
+import { and, desc, eq, inArray, ne, or, type SQL } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AuthEnv } from "./auth.js";
 import type { Db } from "./db/client.js";
-import { memories, projects } from "./db/schema.js";
+import { anchors, memories, projects } from "./db/schema.js";
 import type { Providers } from "./providers/index.js";
 import { decide, findCandidates, markSuperseded } from "./reconcile.js";
 import { isEmptyAfterScrub, scrub } from "./scrub.js";
@@ -13,6 +13,27 @@ type MemoryRow = typeof memories.$inferSelect;
 const projectRef = z.object({
   key: z.string().min(1),
   name: z.string().min(1).optional(),
+});
+
+/** A repo-relative path. Absolute paths and `..` would point outside the checkout. */
+const anchorPath = z
+  .string()
+  .trim()
+  .transform((p) => p.replace(/^(\.\/)+/, ""))
+  .refine(
+    (p) => p.length > 0 && !p.startsWith("/") && !p.split("/").includes(".."),
+    {
+      message: "anchor path must be relative to the repo root",
+    },
+  );
+
+export const anchorInput = z.object({
+  path: anchorPath,
+  symbol: z.string().trim().min(1).optional(),
+  /** Commit the memory was recorded at. */
+  commitSha: z
+    .string()
+    .regex(/^[0-9a-f]{7,40}$/i, "commitSha must be a hex git SHA"),
 });
 
 const createBody = z.object({
@@ -27,6 +48,7 @@ const createBody = z.object({
   sessionId: z.uuid().optional(),
   /** Set false to skip the duplicate and contradiction check. */
   dedup: z.boolean().default(true),
+  anchors: z.array(anchorInput).max(20).default([]),
 });
 
 const patchBody = z
@@ -50,6 +72,41 @@ const listQuery = z.object({
 });
 
 /** The API shape of a memory. Leaves out the embedding and search vector. */
+export type AnchorDto = {
+  id: string;
+  path: string;
+  symbol: string | null;
+  commitSha: string;
+};
+
+/** Adds each memory's anchors in one query. */
+export async function withAnchors<T extends { id: string }>(
+  db: Db,
+  items: T[],
+): Promise<(T & { anchors: AnchorDto[] })[]> {
+  if (items.length === 0) return [];
+  const rows = await db
+    .select({
+      id: anchors.id,
+      memoryId: anchors.memoryId,
+      path: anchors.path,
+      symbol: anchors.symbol,
+      commitSha: anchors.commitSha,
+    })
+    .from(anchors)
+    .where(
+      inArray(
+        anchors.memoryId,
+        items.map((i) => i.id),
+      ),
+    )
+    .orderBy(anchors.createdAt, anchors.path, anchors.id);
+  const by = new Map<string, AnchorDto[]>();
+  for (const { memoryId, ...a } of rows)
+    by.set(memoryId, [...(by.get(memoryId) ?? []), a]);
+  return items.map((i) => ({ ...i, anchors: by.get(i.id) ?? [] }));
+}
+
 export function toDto(m: MemoryRow, projectKey: string | null) {
   return {
     id: m.id,
@@ -201,9 +258,18 @@ export function memoryRoutes(db: Db, providers: Providers) {
           .select()
           .from(memories)
           .where(eq(memories.id, verdict.id));
+        // The caller's anchors describe the same fact at a newer commit, so keep them.
+        if (b.anchors.length > 0) {
+          await db
+            .insert(anchors)
+            .values(b.anchors.map((a) => ({ ...a, memoryId: verdict.id })));
+        }
+        const [withA] = await withAnchors(db, [
+          toDto(row as MemoryRow, b.project?.key ?? null),
+        ]);
         return c.json(
           {
-            ...toDto(row as MemoryRow, b.project?.key ?? null),
+            ...withA,
             outcome: merged ? "merged" : "duplicate",
             redactions: clean.redactions,
           },
@@ -236,10 +302,18 @@ export function memoryRoutes(db: Db, providers: Providers) {
       })
       .returning();
     const created = m as MemoryRow;
+    if (b.anchors.length > 0) {
+      await db
+        .insert(anchors)
+        .values(b.anchors.map((a) => ({ ...a, memoryId: created.id })));
+    }
     if (supersedes.length > 0) await markSuperseded(db, supersedes, created.id);
+    const [createdDto] = await withAnchors(db, [
+      toDto(created, b.project?.key ?? null),
+    ]);
     return c.json(
       {
-        ...toDto(created, b.project?.key ?? null),
+        ...createdDto,
         outcome: supersedes.length > 0 ? "superseded" : "created",
         supersedes,
         redactions: clean.redactions,
@@ -286,7 +360,10 @@ export function memoryRoutes(db: Db, providers: Providers) {
       .limit(q.limit)
       .offset(q.offset);
     return c.json({
-      items: rows.map((r) => toDto(r.m, r.projectKey)),
+      items: await withAnchors(
+        db,
+        rows.map((r) => toDto(r.m, r.projectKey)),
+      ),
       limit: q.limit,
       offset: q.offset,
     });
@@ -297,7 +374,10 @@ export function memoryRoutes(db: Db, providers: Providers) {
     if (!z.uuid().safeParse(id).success) return c.json(bad("not found"), 404);
     const m = await findVisible(id, c.get("principal"));
     if (!m) return c.json(bad("not found"), 404);
-    return c.json(toDto(m, await projectKeyOf(m.projectId)));
+    const [dto] = await withAnchors(db, [
+      toDto(m, await projectKeyOf(m.projectId)),
+    ]);
+    return c.json(dto);
   });
 
   app.patch("/:id", async (c) => {
@@ -348,7 +428,10 @@ export function memoryRoutes(db: Db, providers: Providers) {
         .where(eq(memories.id, id));
       row = fresh ?? row;
     }
-    return c.json(toDto(row, await projectKeyOf(row.projectId)));
+    const [dto] = await withAnchors(db, [
+      toDto(row, await projectKeyOf(row.projectId)),
+    ]);
+    return c.json(dto);
   });
 
   /** Retires the memory (kept as history). `?hard=true` deletes the row. */

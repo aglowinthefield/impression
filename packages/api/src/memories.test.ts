@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { createApp } from "./app.js";
 import { createToken } from "./auth.js";
-import { memories } from "./db/schema.js";
+import { anchors, memories } from "./db/schema.js";
 import { createTestDb } from "./test-db.js";
 import { fakeProviders } from "./test-providers.js";
 
@@ -228,5 +228,91 @@ describe("list", () => {
       ).items,
     ).toEqual([]);
     expect((await call(alice, "GET", "?limit=0")).status).toBe(400);
+  });
+});
+
+describe("anchors", () => {
+  const sha = "a1b2c3d4e5f6";
+  test("are stored on create and returned by get, list and search", async () => {
+    const res = await call(alice, "POST", "", {
+      scope: "project",
+      project,
+      content: "Auth middleware lives in the gateway",
+      anchors: [
+        { path: "./src/auth.ts", symbol: "requireAuth", commitSha: sha },
+        { path: "src/z.md", commitSha: sha },
+      ],
+    });
+    expect(res.status).toBe(201);
+    const m = await res.json();
+    expect(m.anchors).toMatchObject([
+      { path: "src/auth.ts", symbol: "requireAuth", commitSha: sha },
+      { path: "src/z.md", symbol: null, commitSha: sha },
+    ]);
+    expect(
+      (await (await call(alice, "GET", `/${m.id}`)).json()).anchors,
+    ).toHaveLength(2);
+    const list = await (
+      await call(alice, "GET", `?project=${project.key}`)
+    ).json();
+    expect(
+      list.items.find((x: { id: string }) => x.id === m.id).anchors,
+    ).toHaveLength(2);
+    const found = await (
+      await app.request("/api/search", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${alice}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          query: "auth middleware gateway",
+          project: project.key,
+        }),
+      })
+    ).json();
+    expect(
+      found.results.find((x: { id: string }) => x.id === m.id).anchors,
+    ).toHaveLength(2);
+  });
+
+  test("memories without anchors return an empty list", async () => {
+    const m = await (
+      await call(alice, "POST", "", {
+        scope: "user",
+        content: "no anchors here",
+      })
+    ).json();
+    expect(m.anchors).toEqual([]);
+  });
+
+  test.each([
+    ["absolute path", { path: "/etc/passwd", commitSha: sha }],
+    ["parent traversal", { path: "../x.ts", commitSha: sha }],
+    ["bad sha", { path: "a.ts", commitSha: "main" }],
+    ["empty path", { path: " ", commitSha: sha }],
+  ])("rejects %s", async (_n, anchor) => {
+    const res = await call(alice, "POST", "", {
+      scope: "user",
+      content: "x anchor",
+      anchors: [anchor],
+    });
+    expect(res.status).toBe(400);
+  });
+
+  test("are deleted with the memory", async () => {
+    const m = await (
+      await call(alice, "POST", "", {
+        scope: "user",
+        content: "gone soon",
+        anchors: [{ path: "a.ts", commitSha: sha }],
+      })
+    ).json();
+    await call(alice, "DELETE", `/${m.id}?hard=true`);
+    const rows = await t.db
+      .select()
+      .from(anchors)
+      .where(eq(anchors.memoryId, m.id));
+    expect(rows).toEqual([]);
   });
 });

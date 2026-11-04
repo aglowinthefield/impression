@@ -4,7 +4,7 @@ import { z } from "zod";
 import type { AuthEnv } from "./auth.js";
 import type { Db } from "./db/client.js";
 import { memories, projects } from "./db/schema.js";
-import { toDto } from "./memories.js";
+import { toDto, withAnchors } from "./memories.js";
 import type { Providers } from "./providers/index.js";
 
 /**
@@ -124,20 +124,18 @@ export function searchRoutes(db: Db, providers: Providers) {
       );
     const byId = new Map(rows.map((r) => [r.m.id, r]));
 
-    return c.json({
-      degraded,
-      results: top.flatMap(([id, score]) => {
-        const r = byId.get(id);
-        if (!r) return [];
-        return [
-          {
-            ...toDto(r.m, r.projectKey),
-            score,
-            stale: r.m.status === "possibly_stale",
-          },
-        ];
-      }),
+    const ranked = top.flatMap(([id, score]) => {
+      const r = byId.get(id);
+      if (!r) return [];
+      return [
+        {
+          ...toDto(r.m, r.projectKey),
+          score,
+          stale: r.m.status === "possibly_stale",
+        },
+      ];
     });
+    return c.json({ degraded, results: await withAnchors(db, ranked) });
   });
 
   return app;
