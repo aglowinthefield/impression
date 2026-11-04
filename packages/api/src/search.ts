@@ -132,6 +132,10 @@ export function searchRoutes(db: Db, providers: Providers) {
           ...toDto(r.m, r.projectKey),
           score,
           stale: r.m.status === "possibly_stale",
+          warning:
+            r.m.status === "possibly_stale"
+              ? `May be out of date: ${r.m.staleReason ?? "flagged stale"}`
+              : null,
         },
       ];
     });

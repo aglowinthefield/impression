@@ -322,6 +322,32 @@ export function memoryRoutes(db: Db, providers: Providers) {
     );
   });
 
+  /** Memories flagged possibly_stale that the caller can see. Resolve with PUT /:id/staleness {stale:false} (confirm), PATCH content (update) or DELETE (retire). */
+  app.get("/review", async (c) => {
+    const principal = c.get("principal");
+    const rows = await db
+      .select({ m: memories, projectKey: projects.key })
+      .from(memories)
+      .leftJoin(projects, eq(memories.projectId, projects.id))
+      .where(
+        and(
+          eq(memories.status, "possibly_stale"),
+          or(
+            eq(memories.scope, "project"),
+            and(eq(memories.scope, "user"), eq(memories.owner, principal)),
+          ),
+        ),
+      )
+      .orderBy(memories.updatedAt, memories.id)
+      .limit(200);
+    return c.json({
+      items: await withAnchors(
+        db,
+        rows.map((r) => toDto(r.m, r.projectKey)),
+      ),
+    });
+  });
+
   app.get("/", async (c) => {
     const parsed = listQuery.safeParse(c.req.query());
     if (!parsed.success) return c.json(bad(z.prettifyError(parsed.error)), 400);
@@ -412,6 +438,10 @@ export function memoryRoutes(db: Db, providers: Providers) {
       .set({
         ...b,
         updatedAt: new Date(),
+        // Rewriting a flagged memory is the "update" review outcome.
+        ...(contentChanged && existing.status === "possibly_stale"
+          ? { status: "active" as const, staleReason: null }
+          : {}),
         // The old vector describes the old text. Clear it so search never ranks on stale meaning.
         ...(contentChanged
           ? { embedding: null, embeddingModel: null, embeddingDim: null }

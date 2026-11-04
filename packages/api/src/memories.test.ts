@@ -355,3 +355,62 @@ describe("staleness", () => {
     ).toBe(409);
   });
 });
+
+describe("review queue", () => {
+  test("lists flagged memories, and each outcome resolves one", async () => {
+    const mk = async (content: string) =>
+      (await (
+        await call(alice, "POST", "", { scope: "user", content, dedup: false })
+      ).json()) as { id: string };
+    const flag = (id: string) =>
+      call(alice, "PUT", `/${id}/staleness`, {
+        stale: true,
+        reason: "src/x.ts changed",
+      });
+    const [a, b, c] = [
+      await mk("review confirm"),
+      await mk("review update"),
+      await mk("review retire"),
+    ];
+    for (const m of [a, b, c]) await flag((m as { id: string }).id);
+
+    const ids = async () =>
+      (
+        (await (await call(alice, "GET", "/review")).json()) as {
+          items: { id: string }[];
+        }
+      ).items.map((i) => i.id);
+    expect(await ids()).toEqual(expect.arrayContaining([a.id, b.id, c.id]));
+
+    await call(alice, "PUT", `/${a.id}/staleness`, { stale: false });
+    await call(alice, "PATCH", `/${b.id}`, {
+      content: "review update, rewritten",
+    });
+    await call(alice, "DELETE", `/${c.id}`);
+    const left = await ids();
+    expect([a.id, b.id, c.id].some((id) => left.includes(id))).toBe(false);
+    expect(await (await call(alice, "GET", `/${b.id}`)).json()).toMatchObject({
+      status: "active",
+      staleReason: null,
+    });
+  });
+
+  test("another token doesn't see my user memories", async () => {
+    const m = (await (
+      await call(alice, "POST", "", {
+        scope: "user",
+        content: "private flagged",
+      })
+    ).json()) as { id: string };
+    await call(alice, "PUT", `/${m.id}/staleness`, {
+      stale: true,
+      reason: "r",
+    });
+    const items = (
+      (await (await call(bob, "GET", "/review")).json()) as {
+        items: { id: string }[];
+      }
+    ).items;
+    expect(items.map((i) => i.id)).not.toContain(m.id);
+  });
+});

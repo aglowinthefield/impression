@@ -262,3 +262,20 @@ test("toTsQuery ORs the words and ignores punctuation", () => {
   );
   expect(toTsQuery("???")).toBeNull();
 });
+
+test("a stale result carries a warning with the reason", async () => {
+  const m = await add(alice, { scope: "user", content: "gazelle stale fact" });
+  await call(
+    alice,
+    `/memories/${m.id}/staleness`,
+    { stale: true, reason: "src/g.ts changed" },
+    "PUT",
+  );
+  const r = (await search(alice, { query: "gazelle" })) as unknown as {
+    results: { stale: boolean; warning: string }[];
+  };
+  expect(r.results[0]).toMatchObject({
+    stale: true,
+    warning: "May be out of date: src/g.ts changed",
+  });
+});
