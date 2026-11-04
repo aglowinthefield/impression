@@ -1,35 +1,15 @@
-import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
-import postgres from "postgres";
 import { afterAll, beforeAll, expect, test } from "vitest";
-import { createDb, DEFAULT_DATABASE_URL } from "./client.js";
-import { runMigrations } from "./migrate.js";
+import { createTestDb } from "../test-db.js";
 import { anchors, EMBEDDING_DIM, memories, projects } from "./schema.js";
 
-const adminUrl = process.env.DATABASE_URL ?? DEFAULT_DATABASE_URL;
-const dbName = `impression_test_${randomUUID().replaceAll("-", "")}`;
-const testUrl = (() => {
-  const u = new URL(adminUrl);
-  u.pathname = `/${dbName}`;
-  return u.toString();
-})();
-
-let ctx: ReturnType<typeof createDb>;
+let ctx: Awaited<ReturnType<typeof createTestDb>>;
 
 beforeAll(async () => {
-  const admin = postgres(adminUrl);
-  await admin.unsafe(`CREATE DATABASE ${dbName}`);
-  await admin.end();
-  await runMigrations(testUrl);
-  ctx = createDb(testUrl);
+  ctx = await createTestDb();
 });
 
-afterAll(async () => {
-  await ctx.close();
-  const admin = postgres(adminUrl);
-  await admin.unsafe(`DROP DATABASE ${dbName}`);
-  await admin.end();
-});
+afterAll(() => ctx.drop());
 
 function vec(first: number) {
   const v = new Array<number>(EMBEDDING_DIM).fill(0);
