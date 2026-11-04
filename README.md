@@ -67,3 +67,11 @@ pnpm install
 pnpm lint && pnpm typecheck && pnpm test
 pnpm dev   # api on :3000, GET /health
 ```
+
+## MCP server
+
+`packages/mcp` is a stdio MCP server with two tools, `search` and `add`. It resolves the project from the working directory and talks to the API over HTTP. Build it with `pnpm build`, then register `node packages/mcp/dist/bin.js` in your agent with `IMPRESSION_URL` (default `http://localhost:3000`) and `IMPRESSION_TOKEN` set. For Claude Code:
+
+```sh
+claude mcp add impression -e IMPRESSION_TOKEN=imp_... -- node /path/to/impression/packages/mcp/dist/bin.js
+```
