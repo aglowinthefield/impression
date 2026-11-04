@@ -4,6 +4,7 @@ import type { Db } from "./db/client.js";
 import { memoryRoutes } from "./memories.js";
 import type { Providers } from "./providers/index.js";
 import { searchRoutes } from "./search.js";
+import { sessionRoutes } from "./sessions.js";
 
 export function createApp(db: Db, providers: Providers) {
   const app = new Hono<AuthEnv>();
@@ -15,6 +16,7 @@ export function createApp(db: Db, providers: Providers) {
   api.use(requireAuth(db));
   api.route("/memories", memoryRoutes(db, providers));
   api.route("/search", searchRoutes(db, providers));
+  api.route("/sessions", sessionRoutes(db));
   api.get("/whoami", (c) => c.json({ name: c.get("principal") }));
   app.route("/api", api);
 

@@ -109,6 +109,9 @@ export const sessions = pgTable("sessions", {
   projectId: uuid()
     .notNull()
     .references(() => projects.id, { onDelete: "cascade" }),
+  /** Who ended the session. Sessions are visible only to their owner. */
+  owner: text().notNull(),
+  agent: text(),
   commitSha: text(),
   transcript: text().notNull(),
   createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
