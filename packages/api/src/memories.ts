@@ -5,6 +5,7 @@ import type { AuthEnv } from "./auth.js";
 import type { Db } from "./db/client.js";
 import { memories, projects } from "./db/schema.js";
 import type { Providers } from "./providers/index.js";
+import { decide, findCandidates, markSuperseded } from "./reconcile.js";
 
 type MemoryRow = typeof memories.$inferSelect;
 
@@ -23,6 +24,8 @@ const createBody = z.object({
   confidence: z.number().min(0).max(1).optional(),
   agent: z.string().min(1).optional(),
   sessionId: z.uuid().optional(),
+  /** Set false to skip the duplicate and contradiction check. */
+  dedup: z.boolean().default(true),
 });
 
 const patchBody = z
@@ -147,6 +150,58 @@ export function memoryRoutes(db: Db, providers: Providers) {
       projectId = p?.id ?? null;
     }
 
+    // Embed first, so similar memories can be found before anything is written.
+    let vector: number[] | null = null;
+    try {
+      vector = (await providers.embeddings.embed([b.content]))[0] ?? null;
+    } catch (err) {
+      console.error(
+        "embedding failed on create:",
+        err instanceof Error ? err.message : err,
+      );
+    }
+
+    let supersedes: string[] = [];
+    if (b.dedup && vector) {
+      const candidates = await findCandidates(
+        db,
+        { scope: b.scope, projectId, owner: principal },
+        vector,
+      );
+      const verdict = await decide(providers.llm, b.content, candidates);
+      if (verdict.action === "duplicate") {
+        const existing = candidates.find((c) => c.id === verdict.id);
+        const merged =
+          verdict.merged && verdict.merged !== existing?.content
+            ? verdict.merged
+            : null;
+        if (merged) {
+          await db
+            .update(memories)
+            .set({ content: merged, updatedAt: new Date() })
+            .where(eq(memories.id, verdict.id));
+          await embedMemory(db, providers, verdict.id, merged);
+        } else {
+          await db
+            .update(memories)
+            .set({ updatedAt: new Date() })
+            .where(eq(memories.id, verdict.id));
+        }
+        const [row] = await db
+          .select()
+          .from(memories)
+          .where(eq(memories.id, verdict.id));
+        return c.json(
+          {
+            ...toDto(row as MemoryRow, b.project?.key ?? null),
+            outcome: merged ? "merged" : "duplicate",
+          },
+          200,
+        );
+      }
+      if (verdict.action === "supersede") supersedes = verdict.ids;
+    }
+
     const [m] = await db
       .insert(memories)
       .values({
@@ -160,14 +215,25 @@ export function memoryRoutes(db: Db, providers: Providers) {
         author: principal,
         agent: b.agent,
         sessionId: b.sessionId,
+        ...(vector
+          ? {
+              embedding: vector,
+              embeddingModel: providers.embeddings.model,
+              embeddingDim: providers.embeddings.dimensions,
+            }
+          : {}),
       })
       .returning();
-    await embedMemory(db, providers, (m as MemoryRow).id, b.content);
-    const [fresh] = await db
-      .select()
-      .from(memories)
-      .where(eq(memories.id, (m as MemoryRow).id));
-    return c.json(toDto(fresh as MemoryRow, b.project?.key ?? null), 201);
+    const created = m as MemoryRow;
+    if (supersedes.length > 0) await markSuperseded(db, supersedes, created.id);
+    return c.json(
+      {
+        ...toDto(created, b.project?.key ?? null),
+        outcome: supersedes.length > 0 ? "superseded" : "created",
+        supersedes,
+      },
+      201,
+    );
   });
 
   app.get("/", async (c) => {
