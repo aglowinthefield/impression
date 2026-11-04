@@ -1,0 +1,234 @@
+import { eq } from "drizzle-orm";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { createApp } from "./app.js";
+import { createToken } from "./auth.js";
+import { memories } from "./db/schema.js";
+import { createTestDb } from "./test-db.js";
+
+let t: Awaited<ReturnType<typeof createTestDb>>;
+let app: ReturnType<typeof createApp>;
+let alice: string;
+let bob: string;
+
+beforeAll(async () => {
+  t = await createTestDb();
+  app = createApp(t.db);
+  alice = await createToken(t.db, "alice");
+  bob = await createToken(t.db, "bob");
+});
+afterAll(() => t.drop());
+
+function call(token: string, method: string, path: string, body?: unknown) {
+  return app.request(`/api/memories${path}`, {
+    method,
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+}
+
+const project = { key: "github.com/acme/app" };
+
+describe("create", () => {
+  test("stores a project memory with provenance and creates the project", async () => {
+    const res = await call(alice, "POST", "", {
+      scope: "project",
+      project,
+      content: "Migrations run via make db-migrate",
+      agent: "pi",
+      pathPrefix: "packages/api",
+    });
+    expect(res.status).toBe(201);
+    expect(await res.json()).toMatchObject({
+      scope: "project",
+      project: "github.com/acme/app",
+      content: "Migrations run via make db-migrate",
+      owner: "alice",
+      author: "alice",
+      agent: "pi",
+      status: "active",
+      pathPrefix: "packages/api",
+    });
+  });
+
+  test("a second memory reuses the same project", async () => {
+    await call(alice, "POST", "", {
+      scope: "project",
+      project,
+      content: "second",
+    });
+    const list = await (
+      await call(alice, "GET", `?project=${project.key}`)
+    ).json();
+    expect(list.items.length).toBeGreaterThanOrEqual(2);
+  });
+
+  test.each([
+    ["project scope without a project", { scope: "project", content: "x" }],
+    ["user scope with a project", { scope: "user", project, content: "x" }],
+    ["team scope", { scope: "team", project, content: "x" }],
+    ["empty content", { scope: "user", content: "   " }],
+    ["a non-JSON body", undefined],
+  ])("rejects %s", async (_name, body) => {
+    expect((await call(alice, "POST", "", body)).status).toBe(400);
+  });
+});
+
+describe("visibility", () => {
+  test("a user memory is hidden from other tokens, a project memory is shared", async () => {
+    const mine = await (
+      await call(alice, "POST", "", { scope: "user", content: "I prefer pnpm" })
+    ).json();
+    const shared = await (
+      await call(alice, "POST", "", {
+        scope: "project",
+        project,
+        content: "shared",
+      })
+    ).json();
+
+    expect((await call(bob, "GET", `/${mine.id}`)).status).toBe(404);
+    expect(
+      (await call(bob, "PATCH", `/${mine.id}`, { pinned: true })).status,
+    ).toBe(404);
+    expect((await call(bob, "DELETE", `/${mine.id}`)).status).toBe(404);
+    expect((await call(bob, "GET", `/${shared.id}`)).status).toBe(200);
+
+    const bobsList = await (await call(bob, "GET", "?scope=user")).json();
+    expect(bobsList.items.map((m: { id: string }) => m.id)).not.toContain(
+      mine.id,
+    );
+  });
+});
+
+describe("read, update, delete", () => {
+  test("gets one memory, and 404s on unknown or malformed ids", async () => {
+    const m = await (
+      await call(alice, "POST", "", { scope: "user", content: "findable" })
+    ).json();
+    expect(await (await call(alice, "GET", `/${m.id}`)).json()).toMatchObject({
+      content: "findable",
+    });
+    expect(
+      (await call(alice, "GET", "/00000000-0000-4000-8000-000000000000"))
+        .status,
+    ).toBe(404);
+    expect((await call(alice, "GET", "/not-a-uuid")).status).toBe(404);
+  });
+
+  test("patching content clears the stale embedding, patching a flag keeps it", async () => {
+    const m = await (
+      await call(alice, "POST", "", { scope: "user", content: "old text" })
+    ).json();
+    await t.db
+      .update(memories)
+      .set({
+        embedding: new Array(1536).fill(0.1),
+        embeddingModel: "m",
+        embeddingDim: 1536,
+      })
+      .where(eq(memories.id, m.id));
+
+    await call(alice, "PATCH", `/${m.id}`, { pinned: true });
+    let [row] = await t.db.select().from(memories).where(eq(memories.id, m.id));
+    expect(row?.embeddingModel).toBe("m");
+
+    const res = await call(alice, "PATCH", `/${m.id}`, { content: "new text" });
+    expect(await res.json()).toMatchObject({
+      content: "new text",
+      pinned: true,
+      embeddingModel: null,
+    });
+    [row] = await t.db.select().from(memories).where(eq(memories.id, m.id));
+    expect(row?.embedding).toBeNull();
+  });
+
+  test("rejects an empty patch", async () => {
+    const m = await (
+      await call(alice, "POST", "", { scope: "user", content: "x" })
+    ).json();
+    expect((await call(alice, "PATCH", `/${m.id}`, {})).status).toBe(400);
+  });
+
+  test("won't edit a superseded memory", async () => {
+    const m = await (
+      await call(alice, "POST", "", { scope: "user", content: "gone" })
+    ).json();
+    await t.db
+      .update(memories)
+      .set({ status: "superseded" })
+      .where(eq(memories.id, m.id));
+    expect(
+      (await call(alice, "PATCH", `/${m.id}`, { content: "edit" })).status,
+    ).toBe(409);
+  });
+
+  test("delete retires by default and hides it from the default list, hard delete removes the row", async () => {
+    const m = await (
+      await call(alice, "POST", "", { scope: "user", content: "to retire" })
+    ).json();
+    const del = await call(alice, "DELETE", `/${m.id}`);
+    expect(await del.json()).toMatchObject({ status: "retired" });
+
+    const def = await (await call(alice, "GET", "?scope=user")).json();
+    expect(def.items.map((x: { id: string }) => x.id)).not.toContain(m.id);
+    const retired = await (
+      await call(alice, "GET", "?scope=user&status=retired")
+    ).json();
+    expect(retired.items.map((x: { id: string }) => x.id)).toContain(m.id);
+
+    expect((await call(alice, "DELETE", `/${m.id}?hard=true`)).status).toBe(
+      204,
+    );
+    expect((await call(alice, "GET", `/${m.id}`)).status).toBe(404);
+  });
+});
+
+describe("list", () => {
+  test("filters by pinned and project, pages, and returns newest first", async () => {
+    const p2 = { key: "github.com/acme/other" };
+    const ids: string[] = [];
+    for (const c of ["one", "two", "three"]) {
+      const r = await (
+        await call(alice, "POST", "", {
+          scope: "project",
+          project: p2,
+          content: c,
+          pinned: c === "two",
+        })
+      ).json();
+      ids.push(r.id);
+    }
+    const all = await (await call(alice, "GET", `?project=${p2.key}`)).json();
+    expect(all.items.map((m: { content: string }) => m.content)).toEqual([
+      "three",
+      "two",
+      "one",
+    ]);
+
+    const pinned = await (
+      await call(alice, "GET", `?project=${p2.key}&pinned=true`)
+    ).json();
+    expect(pinned.items.map((m: { content: string }) => m.content)).toEqual([
+      "two",
+    ]);
+
+    const page = await (
+      await call(alice, "GET", `?project=${p2.key}&limit=1&offset=1`)
+    ).json();
+    expect(page.items.map((m: { content: string }) => m.content)).toEqual([
+      "two",
+    ]);
+
+    expect(
+      (
+        await (
+          await call(alice, "GET", "?project=github.com/nobody/none")
+        ).json()
+      ).items,
+    ).toEqual([]);
+    expect((await call(alice, "GET", "?limit=0")).status).toBe(400);
+  });
+});

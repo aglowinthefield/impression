@@ -32,14 +32,14 @@ TypeScript monorepo (pnpm workspaces, Node 22+). Packages: `shared`, `api`, `cli
 
 ## Configuration
 
-| Variable | Default | Notes |
-|---|---|---|
-| `DATABASE_URL` | local compose Postgres | |
-| `PORT` | `3000` | |
-| `EMBEDDING_PROVIDER` | `openai` | or `ollama`. Needs `OPENAI_API_KEY` for openai. |
-| `LLM_PROVIDER` | `anthropic` | or `ollama`. Needs `ANTHROPIC_API_KEY` for anthropic. |
-| `EMBEDDING_MODEL`, `LLM_MODEL` | `text-embedding-3-small`, `claude-haiku-4-5` | Required for ollama. |
-| `EMBEDDING_DIMENSIONS`, `OLLAMA_URL` | | Ollama only. The dimension must be 1536 to match the column. |
+| Variable                             | Default                                      | Notes                                                        |
+| ------------------------------------ | -------------------------------------------- | ------------------------------------------------------------ |
+| `DATABASE_URL`                       | local compose Postgres                       |                                                              |
+| `PORT`                               | `3000`                                       |                                                              |
+| `EMBEDDING_PROVIDER`                 | `openai`                                     | or `ollama`. Needs `OPENAI_API_KEY` for openai.              |
+| `LLM_PROVIDER`                       | `anthropic`                                  | or `ollama`. Needs `ANTHROPIC_API_KEY` for anthropic.        |
+| `EMBEDDING_MODEL`, `LLM_MODEL`       | `text-embedding-3-small`, `claude-haiku-4-5` | Required for ollama.                                         |
+| `EMBEDDING_DIMENSIONS`, `OLLAMA_URL` |                                              | Ollama only. The dimension must be 1536 to match the column. |
 
 ## Develop
 

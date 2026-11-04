@@ -1,0 +1,245 @@
+import { and, desc, eq, ne, or, type SQL } from "drizzle-orm";
+import { Hono } from "hono";
+import { z } from "zod";
+import type { AuthEnv } from "./auth.js";
+import type { Db } from "./db/client.js";
+import { memories, projects } from "./db/schema.js";
+
+type MemoryRow = typeof memories.$inferSelect;
+
+const projectRef = z.object({
+  key: z.string().min(1),
+  name: z.string().min(1).optional(),
+});
+
+const createBody = z.object({
+  // Team scope arrives with roles and approval after v1.
+  scope: z.enum(["user", "project"]),
+  content: z.string().trim().min(1).max(10_000),
+  project: projectRef.optional(),
+  pathPrefix: z.string().min(1).nullable().optional(),
+  pinned: z.boolean().optional(),
+  confidence: z.number().min(0).max(1).optional(),
+  agent: z.string().min(1).optional(),
+  sessionId: z.uuid().optional(),
+});
+
+const patchBody = z
+  .object({
+    content: z.string().trim().min(1).max(10_000),
+    pathPrefix: z.string().min(1).nullable(),
+    pinned: z.boolean(),
+  })
+  .partial()
+  .refine((b) => Object.keys(b).length > 0, "nothing to update");
+
+const statuses = ["active", "possibly_stale", "superseded", "retired"] as const;
+
+const listQuery = z.object({
+  scope: z.enum(["user", "project"]).optional(),
+  project: z.string().min(1).optional(),
+  status: z.enum(statuses).optional(),
+  pinned: z.enum(["true", "false"]).optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+
+/** The API shape of a memory. Leaves out the embedding and search vector. */
+function toDto(m: MemoryRow, projectKey: string | null) {
+  return {
+    id: m.id,
+    scope: m.scope,
+    project: projectKey,
+    owner: m.owner,
+    content: m.content,
+    pathPrefix: m.pathPrefix,
+    status: m.status,
+    staleReason: m.staleReason,
+    confidence: m.confidence,
+    pinned: m.pinned,
+    author: m.author,
+    agent: m.agent,
+    sessionId: m.sessionId,
+    supersededBy: m.supersededBy,
+    embeddingModel: m.embeddingModel,
+    createdAt: m.createdAt,
+    updatedAt: m.updatedAt,
+  };
+}
+
+const bad = (message: string) => ({ error: message });
+
+export function memoryRoutes(db: Db) {
+  const app = new Hono<AuthEnv>();
+
+  async function projectKeyOf(id: string | null): Promise<string | null> {
+    if (!id) return null;
+    const [p] = await db
+      .select({ key: projects.key })
+      .from(projects)
+      .where(eq(projects.id, id));
+    return p?.key ?? null;
+  }
+
+  /** A user memory is visible only to its owner. Project memories are visible to every token. */
+  async function findVisible(id: string, principal: string) {
+    const [m] = await db.select().from(memories).where(eq(memories.id, id));
+    if (!m || (m.scope === "user" && m.owner !== principal)) return null;
+    return m;
+  }
+
+  app.post("/", async (c) => {
+    const parsed = createBody.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json(bad(z.prettifyError(parsed.error)), 400);
+    const b = parsed.data;
+    const principal = c.get("principal");
+
+    if (b.scope === "project" && !b.project) {
+      return c.json(bad("project is required for project scope"), 400);
+    }
+    if (b.scope === "user" && b.project) {
+      return c.json(bad("project must be omitted for user scope"), 400);
+    }
+
+    let projectId: string | null = null;
+    if (b.project) {
+      const name =
+        b.project.name ?? b.project.key.split("/").pop() ?? b.project.key;
+      const [p] = await db
+        .insert(projects)
+        .values({ key: b.project.key, name })
+        .onConflictDoUpdate({
+          target: projects.key,
+          set: { key: b.project.key },
+        })
+        .returning();
+      projectId = p?.id ?? null;
+    }
+
+    const [m] = await db
+      .insert(memories)
+      .values({
+        scope: b.scope,
+        projectId,
+        owner: principal,
+        content: b.content,
+        pathPrefix: b.pathPrefix ?? null,
+        pinned: b.pinned ?? false,
+        confidence: b.confidence,
+        author: principal,
+        agent: b.agent,
+        sessionId: b.sessionId,
+      })
+      .returning();
+    return c.json(toDto(m as MemoryRow, b.project?.key ?? null), 201);
+  });
+
+  app.get("/", async (c) => {
+    const parsed = listQuery.safeParse(c.req.query());
+    if (!parsed.success) return c.json(bad(z.prettifyError(parsed.error)), 400);
+    const q = parsed.data;
+    const principal = c.get("principal");
+
+    const where: SQL[] = [
+      or(
+        eq(memories.scope, "project"),
+        and(eq(memories.scope, "user"), eq(memories.owner, principal)),
+      ) as SQL,
+    ];
+    if (q.scope) where.push(eq(memories.scope, q.scope));
+    if (q.status) where.push(eq(memories.status, q.status));
+    else
+      where.push(
+        ne(memories.status, "retired"),
+        ne(memories.status, "superseded"),
+      );
+    if (q.pinned) where.push(eq(memories.pinned, q.pinned === "true"));
+    if (q.project) {
+      const [p] = await db
+        .select({ id: projects.id })
+        .from(projects)
+        .where(eq(projects.key, q.project));
+      if (!p) return c.json({ items: [], limit: q.limit, offset: q.offset });
+      where.push(eq(memories.projectId, p.id));
+    }
+
+    const rows = await db
+      .select({ m: memories, projectKey: projects.key })
+      .from(memories)
+      .leftJoin(projects, eq(memories.projectId, projects.id))
+      .where(and(...where))
+      .orderBy(desc(memories.createdAt), desc(memories.id))
+      .limit(q.limit)
+      .offset(q.offset);
+    return c.json({
+      items: rows.map((r) => toDto(r.m, r.projectKey)),
+      limit: q.limit,
+      offset: q.offset,
+    });
+  });
+
+  app.get("/:id", async (c) => {
+    const id = c.req.param("id");
+    if (!z.uuid().safeParse(id).success) return c.json(bad("not found"), 404);
+    const m = await findVisible(id, c.get("principal"));
+    if (!m) return c.json(bad("not found"), 404);
+    return c.json(toDto(m, await projectKeyOf(m.projectId)));
+  });
+
+  app.patch("/:id", async (c) => {
+    const id = c.req.param("id");
+    if (!z.uuid().safeParse(id).success) return c.json(bad("not found"), 404);
+    const parsed = patchBody.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json(bad(z.prettifyError(parsed.error)), 400);
+    const existing = await findVisible(id, c.get("principal"));
+    if (!existing) return c.json(bad("not found"), 404);
+    if (existing.status === "superseded") {
+      return c.json(
+        bad("superseded memories are history and can't be edited"),
+        409,
+      );
+    }
+
+    const b = parsed.data;
+    const contentChanged =
+      b.content !== undefined && b.content !== existing.content;
+    const [m] = await db
+      .update(memories)
+      .set({
+        ...b,
+        updatedAt: new Date(),
+        // The old vector describes the old text. Clear it so search never ranks on stale meaning.
+        ...(contentChanged
+          ? { embedding: null, embeddingModel: null, embeddingDim: null }
+          : {}),
+      })
+      .where(eq(memories.id, id))
+      .returning();
+    return c.json(
+      toDto(m as MemoryRow, await projectKeyOf((m as MemoryRow).projectId)),
+    );
+  });
+
+  /** Retires the memory (kept as history). `?hard=true` deletes the row. */
+  app.delete("/:id", async (c) => {
+    const id = c.req.param("id");
+    if (!z.uuid().safeParse(id).success) return c.json(bad("not found"), 404);
+    const existing = await findVisible(id, c.get("principal"));
+    if (!existing) return c.json(bad("not found"), 404);
+
+    if (c.req.query("hard") === "true") {
+      await db.delete(memories).where(eq(memories.id, id));
+      return c.body(null, 204);
+    }
+    const [m] = await db
+      .update(memories)
+      .set({ status: "retired", updatedAt: new Date() })
+      .where(eq(memories.id, id))
+      .returning();
+    return c.json(
+      toDto(m as MemoryRow, await projectKeyOf((m as MemoryRow).projectId)),
+    );
+  });
+
+  return app;
+}
