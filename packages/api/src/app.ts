@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { type AuthEnv, requireAuth } from "./auth.js";
+import { coreRoutes } from "./core.js";
 import type { Db } from "./db/client.js";
 import { memoryRoutes } from "./memories.js";
 import { proposalRoutes } from "./proposals.js";
@@ -20,6 +21,7 @@ export function createApp(
   const api = new Hono<AuthEnv>();
   api.use(requireAuth(db));
   api.route("/memories", memoryRoutes(db, providers));
+  api.route("/core", coreRoutes(db));
   api.route("/search", searchRoutes(db, providers));
   api.route(
     "/sessions",

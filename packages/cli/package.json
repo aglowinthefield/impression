@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "main": "dist/index.js",
+  "bin": {
+    "impression": "dist/bin.js"
+  },
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsrs -p tsconfig.build.json",

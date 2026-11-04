@@ -75,3 +75,24 @@ pnpm dev   # api on :3000, GET /health
 ```sh
 claude mcp add impression -e IMPRESSION_TOKEN=imp_... -- node /path/to/impression/packages/mcp/dist/bin.js
 ```
+
+## Session-start hook
+
+`GET /api/core` returns a small set per project: pinned first, then by confidence and recency, within a token budget (`budget`, default 800). Flagged-stale and superseded memories are left out. `impression hook session-start` (from `packages/cli`) prints it as Claude Code `SessionStart` output, or as plain text with `--plain`. It exits 0 and prints nothing if the API is down. In `~/.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "IMPRESSION_TOKEN=imp_... node /path/to/impression/packages/cli/dist/bin.js hook session-start"
+          }
+        ]
+      }
+    ]
+  }
+}
+```

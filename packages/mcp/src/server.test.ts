@@ -5,7 +5,6 @@ import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, test } from "vitest";
-import { createClient } from "./client.js";
 import { createServer } from "./server.js";
 
 function repo() {
@@ -20,6 +19,10 @@ async function connect(post: (path: string, body: unknown) => unknown) {
   const calls: { path: string; body: unknown }[] = [];
   const server = createServer({
     client: {
+      get: async (path) => {
+        calls.push({ path, body: undefined });
+        return post(path, undefined);
+      },
       post: async (path, body) => {
         calls.push({ path, body });
         return post(path, body);
@@ -89,21 +92,5 @@ describe("mcp tools", () => {
     const r = await call("search", { query: "x" });
     expect(r.isError).toBe(true);
     expect(r.content[0]?.text).toContain("401");
-  });
-});
-
-describe("createClient", () => {
-  test("sends the bearer token and surfaces API errors", async () => {
-    let seen: Request | undefined;
-    const fetchImpl = (async (url: string, init: RequestInit) => {
-      seen = new Request(url, init);
-      return new Response('{"error":"nope"}', { status: 422 });
-    }) as unknown as typeof fetch;
-    const c = createClient("http://h:3000/", "imp_x", fetchImpl);
-    await expect(c.post("/memories", {})).rejects.toThrow(
-      "Impression API 422: nope",
-    );
-    expect(seen?.url).toBe("http://h:3000/api/memories");
-    expect(seen?.headers.get("authorization")).toBe("Bearer imp_x");
   });
 });

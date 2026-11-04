@@ -1,6 +1,6 @@
 #!/usr/bin/env node
+import { createClient } from "@impression/shared";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { createClient } from "./client.js";
 import { createServer } from "./server.js";
 
 const token = process.env.IMPRESSION_TOKEN;
