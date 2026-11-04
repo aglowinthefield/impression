@@ -1,0 +1,1 @@
+ALTER TABLE "proposals" ADD COLUMN "embedding" vector(1536);

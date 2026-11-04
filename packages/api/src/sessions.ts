@@ -42,7 +42,11 @@ function dto(
   };
 }
 
-export function sessionRoutes(db: Db, providers: Providers) {
+export function sessionRoutes(
+  db: Db,
+  providers: Providers,
+  autoAcceptConfidence: number | null,
+) {
   const app = new Hono<AuthEnv>();
 
   app.post("/", async (c) => {
@@ -120,6 +124,13 @@ export function sessionRoutes(db: Db, providers: Providers) {
       const summary = await extractProposals(db, providers, {
         sessionId: s.id,
         projectId: s.projectId,
+        projectKey: (
+          await db
+            .select({ key: projects.key })
+            .from(projects)
+            .where(eq(projects.id, s.projectId))
+        )[0]?.key as string,
+        autoAcceptConfidence,
         owner: s.owner,
         commitSha: s.commitSha,
         transcript: s.transcript,

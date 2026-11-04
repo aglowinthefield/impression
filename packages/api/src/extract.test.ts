@@ -84,6 +84,8 @@ test("extracts scrubbed proposals with anchors at the session commit", async () 
     proposed: 2,
     skippedDuplicates: 0,
     skippedEmpty: 1,
+    skippedRepeats: 0,
+    autoAccepted: 0,
   });
   const rows = await t.db
     .select()
@@ -155,4 +157,67 @@ test("another token can't extract my session", async () => {
     headers: { authorization: `Bearer ${bob}` },
   });
   expect(res.status).toBe(404);
+});
+
+describe("proposal review", () => {
+  const extractOne = async (content: string, confidence = 0.5) => {
+    reply = JSON.stringify({ memories: [{ content, confidence }] });
+    const id = await session("transcript");
+    const res = await call("POST", `/sessions/${id}/extract`);
+    return { sid: id, summary: (await res.json()) as Record<string, number> };
+  };
+  const pending = async () =>
+    (await (await call("GET", "/proposals")).json()) as {
+      items: { id: string; content: string }[];
+    };
+
+  test("accept creates a memory, with an edit if given", async () => {
+    await extractOne("Tests need Postgres on 54329");
+    const p = (await pending()).items.find((x) => x.content.includes("54329"));
+    const res = await call("POST", `/proposals/${p?.id}/accept`, {
+      content: "Tests need Postgres on port 54329",
+    });
+    expect(res.status).toBe(201);
+    const mem = (await res.json()) as { content: string; agent: string };
+    expect(mem).toMatchObject({
+      content: "Tests need Postgres on port 54329",
+      agent: "extraction",
+    });
+    expect((await call("POST", `/proposals/${p?.id}/accept`)).status).toBe(409);
+  });
+
+  test("reject hides it and the same idea isn't proposed again", async () => {
+    await extractOne("Lint with biome check");
+    const p = (await pending()).items.find((x) => x.content.includes("biome"));
+    expect((await call("POST", `/proposals/${p?.id}/reject`)).status).toBe(200);
+    expect((await pending()).items.some((x) => x.id === p?.id)).toBe(false);
+    const again = await extractOne("Lint with biome check");
+    expect(again.summary).toMatchObject({ proposed: 0, skippedRepeats: 1 });
+  });
+
+  test("high confidence auto-accepts when enabled", async () => {
+    const llm = fakeProviders();
+    llm.llm = {
+      model: "fake",
+      complete: async ({ system }) =>
+        system?.includes("maintain a developer's project memory")
+          ? '{"action":"add"}'
+          : JSON.stringify({
+              memories: [
+                { content: "Zebra cache lives in redis", confidence: 0.95 },
+              ],
+            }),
+    };
+    const a = createApp(t.db, llm, { autoAcceptConfidence: 0.8 });
+    const sid = await session("x");
+    const res = await a.request(`/api/sessions/${sid}/extract`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(await res.json()).toMatchObject({ proposed: 1, autoAccepted: 1 });
+    const list = (await (
+      await call("GET", "/memories?project=github.com/acme/ex")
+    ).json()) as { items: { content: string }[] };
+    expect(list.items.some((m) => m.content.includes("Zebra"))).toBe(true);
+  });
 });

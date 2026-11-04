@@ -1,6 +1,8 @@
+import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { Db } from "./db/client.js";
 import { proposals } from "./db/schema.js";
+import { anchorInput, createMemory } from "./memories.js";
 import type { Providers } from "./providers/index.js";
 import { decide, findCandidates } from "./reconcile.js";
 import { isEmptyAfterScrub, scrub } from "./scrub.js";
@@ -53,9 +55,15 @@ export function parseExtraction(reply: string): Extracted[] {
   return out;
 }
 
+/** A candidate this close to a pending or rejected proposal is treated as the same one. */
+export const REPROPOSAL_MIN_SIMILARITY = 0.9;
+
 export interface ExtractInput {
   sessionId: string;
   projectId: string;
+  projectKey: string;
+  /** Proposals at or above this confidence become memories right away. Null turns auto-accept off. */
+  autoAcceptConfidence: number | null;
   owner: string;
   commitSha: string | null;
   transcript: string;
@@ -65,6 +73,9 @@ export interface ExtractSummary {
   proposed: number;
   skippedDuplicates: number;
   skippedEmpty: number;
+  /** Skipped because a pending or rejected proposal already says it. */
+  skippedRepeats: number;
+  autoAccepted: number;
 }
 
 /**
@@ -88,6 +99,8 @@ export async function extractProposals(
     proposed: 0,
     skippedDuplicates: 0,
     skippedEmpty: 0,
+    skippedRepeats: 0,
+    autoAccepted: 0,
   };
 
   for (const item of parseExtraction(reply)) {
@@ -96,9 +109,22 @@ export async function extractProposals(
       summary.skippedEmpty++;
       continue;
     }
+    let vec: number[] | null = null;
     try {
-      const [vec] = await providers.embeddings.embed([clean.text]);
+      vec = (await providers.embeddings.embed([clean.text]))[0] ?? null;
       if (vec) {
+        const literal = JSON.stringify(vec);
+        const repeats = await db.execute(sql`
+          SELECT 1 FROM proposals
+          WHERE project_id = ${input.projectId}
+            AND status IN ('pending', 'rejected')
+            AND embedding IS NOT NULL
+            AND 1 - (embedding <=> ${literal}::vector) >= ${REPROPOSAL_MIN_SIMILARITY}
+          LIMIT 1`);
+        if (repeats.length > 0) {
+          summary.skippedRepeats++;
+          continue;
+        }
         const candidates = await findCandidates(
           db,
           { scope: "project", projectId: input.projectId, owner: input.owner },
@@ -128,14 +154,70 @@ export async function extractProposals(
             commitSha: sha,
           }))
       : [];
-    await db.insert(proposals).values({
-      projectId: input.projectId,
-      sessionId: input.sessionId,
-      content: clean.text,
-      confidence: item.confidence,
-      anchors,
-    });
+    const [proposal] = await db
+      .insert(proposals)
+      .values({
+        projectId: input.projectId,
+        sessionId: input.sessionId,
+        content: clean.text,
+        confidence: item.confidence,
+        embedding: vec,
+        anchors,
+      })
+      .returning();
+    if (
+      proposal &&
+      input.autoAcceptConfidence !== null &&
+      item.confidence >= input.autoAcceptConfidence
+    ) {
+      await acceptProposal(db, providers, proposal.id, input.owner, {
+        projectKey: input.projectKey,
+        sessionId: input.sessionId,
+      });
+      summary.autoAccepted++;
+    }
     summary.proposed++;
   }
   return summary;
+}
+
+/**
+ * Turns a pending proposal into a project memory, optionally with edited text.
+ * Goes through the normal create path, so it is scrubbed and deduped again.
+ * Returns null if the proposal isn't pending.
+ */
+export async function acceptProposal(
+  db: Db,
+  providers: Providers,
+  id: string,
+  principal: string,
+  opts: { projectKey: string; sessionId?: string | null; content?: string },
+) {
+  const [claimed] = await db
+    .update(proposals)
+    .set({ status: "accepted" })
+    .where(and(eq(proposals.id, id), eq(proposals.status, "pending")))
+    .returning();
+  if (!claimed) return null;
+  const anchors = z.array(anchorInput).catch([]).parse(claimed.anchors);
+  const result = await createMemory(db, providers, principal, {
+    scope: "project",
+    project: { key: opts.projectKey },
+    content: opts.content ?? claimed.content,
+    confidence: claimed.confidence,
+    agent: "extraction",
+    sessionId: opts.sessionId ?? claimed.sessionId ?? undefined,
+    dedup: true,
+    anchors,
+  });
+  if (result.status === 422) {
+    await db
+      .update(proposals)
+      .set({ status: "pending" })
+      .where(eq(proposals.id, id));
+    return result;
+  }
+  const memoryId = (result.body as { id: string }).id;
+  await db.update(proposals).set({ memoryId }).where(eq(proposals.id, id));
+  return result;
 }
