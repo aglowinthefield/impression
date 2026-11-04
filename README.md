@@ -27,6 +27,8 @@ TypeScript monorepo (pnpm workspaces, Node 22+). Packages: `shared`, `api`, `cli
 - HTTP: Hono. Chosen for a small, typed API that is easy to test with `app.request()`.
 - Postgres access: Drizzle ORM with `postgres`. Chosen for SQL-close typed queries and pgvector support.
 - Tests: Vitest. Lint and format: Biome.
+- Compiler: [`tsrs`](https://github.com/oxc-project/tsrs), the Rust port of the TypeScript 7 compiler. Packages call `tsrs` for `build` and `typecheck` (pre-1.0, pinned in `package.json`).
+- Task runner: Turborepo. Root scripts run `turbo run <task>`, so every package defines its own `build`, `typecheck`, `test` and `lint`, and results are cached.
 
 ## Develop
 

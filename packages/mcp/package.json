@@ -6,8 +6,10 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "tsc -p .",
-    "typecheck": "tsc -p . --noEmit"
+    "build": "tsrs -p tsconfig.build.json",
+    "typecheck": "tsrs -p . --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "lint": "biome check ."
   },
   "dependencies": {
     "@impression/shared": "workspace:*"
