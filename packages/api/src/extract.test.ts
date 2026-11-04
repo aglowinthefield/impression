@@ -1,0 +1,158 @@
+import { eq } from "drizzle-orm";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { createApp } from "./app.js";
+import { createToken } from "./auth.js";
+import { proposals } from "./db/schema.js";
+import { parseExtraction } from "./extract.js";
+import { createTestDb } from "./test-db.js";
+import { fakeProviders } from "./test-providers.js";
+
+describe("parseExtraction", () => {
+  test("reads fenced JSON and drops malformed items", () => {
+    const r = parseExtraction(
+      'ok\n```json\n{"memories":[{"content":"a","confidence":0.9},{"content":"","confidence":1},{"content":"b","confidence":2},{"content":"c","confidence":0.5,"anchors":[{"path":"x.ts"}]}]}\n```',
+    );
+    expect(r.map((m) => m.content)).toEqual(["a", "c"]);
+  });
+  test.each(["", "nope", "{bad", '{"memories":3}'])("%j gives []", (x) => {
+    expect(parseExtraction(x)).toEqual([]);
+  });
+});
+
+let t: Awaited<ReturnType<typeof createTestDb>>;
+let app: ReturnType<typeof createApp>;
+let token: string;
+let reply = "";
+let prompts: string[] = [];
+beforeAll(async () => {
+  t = await createTestDb();
+  const providers = fakeProviders();
+  providers.llm = {
+    model: "fake",
+    complete: async ({ system, prompt }) => {
+      prompts.push(prompt);
+      // The dedup check has its own system prompt.
+      return system?.includes("maintain a developer's project memory")
+        ? '{"action":"add"}'
+        : reply;
+    },
+  };
+  app = createApp(t.db, providers);
+  token = await createToken(t.db, "alice");
+});
+afterAll(() => t.drop());
+
+const call = (method: string, path: string, body?: unknown) =>
+  app.request(`/api${path}`, {
+    method,
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+const project = { key: "github.com/acme/ex" };
+const session = async (transcript: string) =>
+  (
+    (await (
+      await call("POST", "/sessions", {
+        project,
+        transcript,
+        commitSha: "abc1234",
+      })
+    ).json()) as { id: string }
+  ).id;
+
+test("extracts scrubbed proposals with anchors at the session commit", async () => {
+  reply = JSON.stringify({
+    memories: [
+      {
+        content: "Run make db-migrate before tests",
+        confidence: 0.9,
+        anchors: [
+          { path: "Makefile", symbol: "db-migrate" },
+          { path: "/etc/x" },
+        ],
+      },
+      { content: "Use key AKIAIOSFODNN7EXAMPLE for S3", confidence: 0.6 },
+      { content: "AKIAIOSFODNN7EXAMPLE", confidence: 0.9 },
+    ],
+  });
+  const id = await session("long transcript here");
+  const res = await call("POST", `/sessions/${id}/extract`);
+  expect(await res.json()).toEqual({
+    proposed: 2,
+    skippedDuplicates: 0,
+    skippedEmpty: 1,
+  });
+  const rows = await t.db
+    .select()
+    .from(proposals)
+    .where(eq(proposals.sessionId, id));
+  expect(rows.map((r) => r.content).sort()).toEqual([
+    "Run make db-migrate before tests",
+    "Use key [REDACTED:aws-access-key] for S3",
+  ]);
+  const first = rows.find((r) => r.content.startsWith("Run"));
+  expect(first?.anchors).toEqual([
+    { path: "Makefile", symbol: "db-migrate", commitSha: "abc1234" },
+  ]);
+  expect(first?.status).toBe("pending");
+});
+
+test("skips candidates the project already knows", async () => {
+  await call("POST", "/memories", {
+    scope: "project",
+    project,
+    content: "Deploys use flyctl deploy",
+    dedup: false,
+  });
+  const llmDup = fakeProviders();
+  const dupApp = createApp(t.db, {
+    ...llmDup,
+    llm: {
+      model: "fake",
+      complete: async ({ system }) =>
+        system?.includes("maintain a developer's project memory")
+          ? JSON.stringify({
+              action: "duplicate",
+              id: (
+                await t.db.query.memories.findFirst({
+                  where: (m, { eq }) =>
+                    eq(m.content, "Deploys use flyctl deploy"),
+                })
+              )?.id,
+            })
+          : JSON.stringify({
+              memories: [
+                { content: "Deploys use flyctl deploy now", confidence: 0.9 },
+              ],
+            }),
+    },
+  });
+  const sid = await session("x");
+  const res = await dupApp.request(`/api/sessions/${sid}/extract`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}` },
+  });
+  expect(await res.json()).toMatchObject({ proposed: 0, skippedDuplicates: 1 });
+});
+
+test("sends only the tail of a huge transcript", async () => {
+  reply = '{"memories":[]}';
+  prompts = [];
+  const id = await session(`HEAD${"x".repeat(70_000)}TAIL`);
+  await call("POST", `/sessions/${id}/extract`);
+  expect(prompts[0]).toContain("TAIL");
+  expect(prompts[0]).not.toContain("HEAD");
+});
+
+test("another token can't extract my session", async () => {
+  const bob = await createToken(t.db, "bob");
+  const id = await session("mine");
+  const res = await app.request(`/api/sessions/${id}/extract`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${bob}` },
+  });
+  expect(res.status).toBe(404);
+});

@@ -16,7 +16,7 @@ export function createApp(db: Db, providers: Providers) {
   api.use(requireAuth(db));
   api.route("/memories", memoryRoutes(db, providers));
   api.route("/search", searchRoutes(db, providers));
-  api.route("/sessions", sessionRoutes(db));
+  api.route("/sessions", sessionRoutes(db, providers));
   api.get("/whoami", (c) => c.json({ name: c.get("principal") }));
   app.route("/api", api);
 

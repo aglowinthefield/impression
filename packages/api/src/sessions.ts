@@ -4,6 +4,8 @@ import { z } from "zod";
 import type { AuthEnv } from "./auth.js";
 import type { Db } from "./db/client.js";
 import { projects, sessions } from "./db/schema.js";
+import { extractProposals } from "./extract.js";
+import type { Providers } from "./providers/index.js";
 import { scrub } from "./scrub.js";
 
 /** About 2 MB of text. Longer transcripts should be summarized by the client first. */
@@ -40,7 +42,7 @@ function dto(
   };
 }
 
-export function sessionRoutes(db: Db) {
+export function sessionRoutes(db: Db, providers: Providers) {
   const app = new Hono<AuthEnv>();
 
   app.post("/", async (c) => {
@@ -102,6 +104,34 @@ export function sessionRoutes(db: Db) {
       .where(and(eq(sessions.id, id), eq(sessions.owner, c.get("principal"))));
     if (!r) return c.json({ error: "not found" }, 404);
     return c.json(dto(r.s, r.key));
+  });
+
+  /** Runs extraction on a stored session and queues the results as proposals. */
+  app.post("/:id/extract", async (c) => {
+    const id = c.req.param("id");
+    if (!z.uuid().safeParse(id).success)
+      return c.json({ error: "not found" }, 404);
+    const [s] = await db
+      .select()
+      .from(sessions)
+      .where(and(eq(sessions.id, id), eq(sessions.owner, c.get("principal"))));
+    if (!s) return c.json({ error: "not found" }, 404);
+    try {
+      const summary = await extractProposals(db, providers, {
+        sessionId: s.id,
+        projectId: s.projectId,
+        owner: s.owner,
+        commitSha: s.commitSha,
+        transcript: s.transcript,
+      });
+      return c.json(summary);
+    } catch (err) {
+      console.error(
+        "extraction failed:",
+        err instanceof Error ? err.message : err,
+      );
+      return c.json({ error: "extraction failed, try again" }, 502);
+    }
   });
 
   return app;
