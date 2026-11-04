@@ -38,6 +38,13 @@ Needs Postgres with pgvector. `docker compose up -d --wait` starts one on port 5
 pnpm --filter @impression/api db:migrate
 ```
 
+Create an API token (shown once, stored hashed), then start the API:
+
+```
+pnpm --filter @impression/api token:create <your-name>
+pnpm dev   # api on :3000; /health is open, /api/* needs `Authorization: Bearer <token>`
+```
+
 Tests create and drop their own database on that server. After editing `packages/api/src/db/schema.ts`, run `pnpm --filter @impression/api db:generate` and commit the new file in `packages/api/drizzle`.
 
 ```

@@ -134,3 +134,13 @@ export const proposals = pgTable(
   },
   (t) => [index("proposals_project_status_idx").on(t.projectId, t.status)],
 );
+
+/** API tokens. Only the SHA-256 hash is stored, so a token is shown once at creation. */
+export const apiTokens = pgTable("api_tokens", {
+  id: uuid().primaryKey().defaultRandom(),
+  /** The person this token acts as. Becomes the owner and author of what it writes. */
+  name: text().notNull(),
+  tokenHash: text().notNull().unique(),
+  createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  revokedAt: timestamp({ withTimezone: true }),
+});
