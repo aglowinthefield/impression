@@ -19,3 +19,20 @@ or a small team, not for consumer-facing agents.
 
 Personal-first slice with a web UI. See the milestones and issues on GitHub.
 Out of v1: team scope, roles and approval, per-prompt injection, extra local providers.
+
+## Stack
+
+TypeScript monorepo (pnpm workspaces, Node 22+). Packages: `shared`, `api`, `cli`, `mcp`. `web` arrives in M6.
+
+- HTTP: Hono. Chosen for a small, typed API that is easy to test with `app.request()`.
+- Postgres access: Drizzle ORM with `postgres`. Chosen for SQL-close typed queries and pgvector support.
+- Tests: Vitest. Lint and format: Biome.
+
+## Develop
+
+```
+corepack enable
+pnpm install
+pnpm lint && pnpm typecheck && pnpm test
+pnpm dev   # api on :3000, GET /health
+```
