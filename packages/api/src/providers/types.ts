@@ -1,0 +1,45 @@
+export interface EmbeddingProvider {
+  /** Recorded on each memory, so a model change means a re-embed. */
+  readonly model: string;
+  readonly dimensions: number;
+  embed(texts: string[]): Promise<number[][]>;
+}
+
+export interface CompleteRequest {
+  system?: string;
+  prompt: string;
+  maxTokens?: number;
+}
+
+export interface LlmProvider {
+  readonly model: string;
+  complete(req: CompleteRequest): Promise<string>;
+}
+
+export type Fetch = typeof fetch;
+
+export class ProviderError extends Error {
+  constructor(provider: string, message: string) {
+    super(`${provider}: ${message}`);
+    this.name = "ProviderError";
+  }
+}
+
+export async function postJson(
+  provider: string,
+  fetchFn: Fetch,
+  url: string,
+  headers: Record<string, string>,
+  body: unknown,
+): Promise<unknown> {
+  const res = await fetchFn(url, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...headers },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = (await res.text().catch(() => "")).slice(0, 300);
+    throw new ProviderError(provider, `HTTP ${res.status} ${text}`);
+  }
+  return res.json();
+}
