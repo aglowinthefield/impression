@@ -1,4 +1,18 @@
 {
   "formatter": { "indentStyle": "space", "indentWidth": 2 },
-  "files": { "includes": ["**", "!**/dist", "!**/node_modules", "!.worktrees"] }
+  "files": {
+    "includes": [
+      "**",
+      "!**/dist",
+      "!**/node_modules",
+      "!.worktrees",
+      "!**/drizzle"
+    ]
+  },
+  "overrides": [
+    {
+      "includes": ["**/*.test.ts"],
+      "linter": { "rules": { "style": { "noNonNullAssertion": "off" } } }
+    }
+  ]
 }
