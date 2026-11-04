@@ -161,6 +161,147 @@ export async function embedMemory(
   }
 }
 
+export type CreateInput = z.infer<typeof createBody>;
+
+/**
+ * Stores a memory: scrub, embed, dedup, insert, anchors. Shared by the create
+ * route and proposal acceptance. The caller validates scope and project.
+ */
+export async function createMemory(
+  db: Db,
+  providers: Providers,
+  principal: string,
+  b: CreateInput,
+) {
+  let projectId: string | null = null;
+  if (b.project) {
+    const name =
+      b.project.name ?? b.project.key.split("/").pop() ?? b.project.key;
+    const [p] = await db
+      .insert(projects)
+      .values({ key: b.project.key, name })
+      .onConflictDoUpdate({
+        target: projects.key,
+        set: { key: b.project.key },
+      })
+      .returning();
+    projectId = p?.id ?? null;
+  }
+
+  const clean = scrub(b.content);
+  if (clean.redactions.length > 0 && isEmptyAfterScrub(clean.text)) {
+    return {
+      status: 422 as const,
+      body: bad("content is only secrets or personal data, nothing was stored"),
+    };
+  }
+  b.content = clean.text;
+
+  // Embed first, so similar memories can be found before anything is written.
+  let vector: number[] | null = null;
+  try {
+    vector = (await providers.embeddings.embed([b.content]))[0] ?? null;
+  } catch (err) {
+    console.error(
+      "embedding failed on create:",
+      err instanceof Error ? err.message : err,
+    );
+  }
+
+  let supersedes: string[] = [];
+  if (b.dedup && vector) {
+    const candidates = await findCandidates(
+      db,
+      { scope: b.scope, projectId, owner: principal },
+      vector,
+    );
+    const verdict = await decide(providers.llm, b.content, candidates);
+    if (verdict.action === "duplicate") {
+      const existing = candidates.find((c) => c.id === verdict.id);
+      const merged =
+        verdict.merged && verdict.merged !== existing?.content
+          ? verdict.merged
+          : null;
+      if (merged) {
+        await db
+          .update(memories)
+          .set({ content: merged, updatedAt: new Date() })
+          .where(eq(memories.id, verdict.id));
+        await embedMemory(db, providers, verdict.id, merged);
+      } else {
+        await db
+          .update(memories)
+          .set({ updatedAt: new Date() })
+          .where(eq(memories.id, verdict.id));
+      }
+      const [row] = await db
+        .select()
+        .from(memories)
+        .where(eq(memories.id, verdict.id));
+      // The caller's anchors describe the same fact at a newer commit, so keep them.
+      if (b.anchors.length > 0) {
+        await db
+          .insert(anchors)
+          .values(b.anchors.map((a) => ({ ...a, memoryId: verdict.id })));
+      }
+      const [withA] = await withAnchors(db, [
+        toDto(row as MemoryRow, b.project?.key ?? null),
+      ]);
+      return {
+        status: 200 as const,
+        body: {
+          ...withA,
+          outcome: merged ? "merged" : "duplicate",
+          redactions: clean.redactions,
+        },
+      };
+    }
+    if (verdict.action === "supersede") supersedes = verdict.ids;
+  }
+
+  const [m] = await db
+    .insert(memories)
+    .values({
+      scope: b.scope,
+      projectId,
+      owner: principal,
+      content: b.content,
+      pathPrefix: b.pathPrefix ?? null,
+      pinned: b.pinned ?? false,
+      confidence: b.confidence,
+      author: principal,
+      agent: b.agent,
+      sessionId: b.sessionId,
+      ...(vector
+        ? {
+            embedding: vector,
+            embeddingModel: providers.embeddings.model,
+            embeddingDim: providers.embeddings.dimensions,
+          }
+        : {}),
+    })
+    .returning();
+  const created = m as MemoryRow;
+  if (b.anchors.length > 0) {
+    await db
+      .insert(anchors)
+      .values(b.anchors.map((a) => ({ ...a, memoryId: created.id })));
+  }
+  if (supersedes.length > 0) await markSuperseded(db, supersedes, created.id);
+  const [createdDto] = await withAnchors(db, [
+    toDto(created, b.project?.key ?? null),
+  ]);
+  return {
+    status: 201 as const,
+    body: {
+      ...createdDto,
+      outcome: supersedes.length > 0 ? "superseded" : "created",
+      supersedes,
+      redactions: clean.redactions,
+    },
+  };
+}
+
 export function memoryRoutes(db: Db, providers: Providers) {
   const app = new Hono<AuthEnv>();
 
@@ -184,7 +325,6 @@ export function memoryRoutes(db: Db, providers: Providers) {
     const parsed = createBody.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json(bad(z.prettifyError(parsed.error)), 400);
     const b = parsed.data;
-    const principal = c.get("principal");
 
     if (b.scope === "project" && !b.project) {
       return c.json(bad("project is required for project scope"), 400);
@@ -192,137 +332,10 @@ export function memoryRoutes(db: Db, providers: Providers) {
     if (b.scope === "user" && b.project) {
       return c.json(bad("project must be omitted for user scope"), 400);
     }
-
-    let projectId: string | null = null;
-    if (b.project) {
-      const name =
-        b.project.name ?? b.project.key.split("/").pop() ?? b.project.key;
-      const [p] = await db
-        .insert(projects)
-        .values({ key: b.project.key, name })
-        .onConflictDoUpdate({
-          target: projects.key,
-          set: { key: b.project.key },
-        })
-        .returning();
-      projectId = p?.id ?? null;
-    }
-
-    const clean = scrub(b.content);
-    if (clean.redactions.length > 0 && isEmptyAfterScrub(clean.text)) {
-      return c.json(
-        bad("content is only secrets or personal data, nothing was stored"),
-        422,
-      );
-    }
-    b.content = clean.text;
-
-    // Embed first, so similar memories can be found before anything is written.
-    let vector: number[] | null = null;
-    try {
-      vector = (await providers.embeddings.embed([b.content]))[0] ?? null;
-    } catch (err) {
-      console.error(
-        "embedding failed on create:",
-        err instanceof Error ? err.message : err,
-      );
-    }
-
-    let supersedes: string[] = [];
-    if (b.dedup && vector) {
-      const candidates = await findCandidates(
-        db,
-        { scope: b.scope, projectId, owner: principal },
-        vector,
-      );
-      const verdict = await decide(providers.llm, b.content, candidates);
-      if (verdict.action === "duplicate") {
-        const existing = candidates.find((c) => c.id === verdict.id);
-        const merged =
-          verdict.merged && verdict.merged !== existing?.content
-            ? verdict.merged
-            : null;
-        if (merged) {
-          await db
-            .update(memories)
-            .set({ content: merged, updatedAt: new Date() })
-            .where(eq(memories.id, verdict.id));
-          await embedMemory(db, providers, verdict.id, merged);
-        } else {
-          await db
-            .update(memories)
-            .set({ updatedAt: new Date() })
-            .where(eq(memories.id, verdict.id));
-        }
-        const [row] = await db
-          .select()
-          .from(memories)
-          .where(eq(memories.id, verdict.id));
-        // The caller's anchors describe the same fact at a newer commit, so keep them.
-        if (b.anchors.length > 0) {
-          await db
-            .insert(anchors)
-            .values(b.anchors.map((a) => ({ ...a, memoryId: verdict.id })));
-        }
-        const [withA] = await withAnchors(db, [
-          toDto(row as MemoryRow, b.project?.key ?? null),
-        ]);
-        return c.json(
-          {
-            ...withA,
-            outcome: merged ? "merged" : "duplicate",
-            redactions: clean.redactions,
-          },
-          200,
-        );
-      }
-      if (verdict.action === "supersede") supersedes = verdict.ids;
-    }
-
-    const [m] = await db
-      .insert(memories)
-      .values({
-        scope: b.scope,
-        projectId,
-        owner: principal,
-        content: b.content,
-        pathPrefix: b.pathPrefix ?? null,
-        pinned: b.pinned ?? false,
-        confidence: b.confidence,
-        author: principal,
-        agent: b.agent,
-        sessionId: b.sessionId,
-        ...(vector
-          ? {
-              embedding: vector,
-              embeddingModel: providers.embeddings.model,
-              embeddingDim: providers.embeddings.dimensions,
-            }
-          : {}),
-      })
-      .returning();
-    const created = m as MemoryRow;
-    if (b.anchors.length > 0) {
-      await db
-        .insert(anchors)
-        .values(b.anchors.map((a) => ({ ...a, memoryId: created.id })));
-    }
-    if (supersedes.length > 0) await markSuperseded(db, supersedes, created.id);
-    const [createdDto] = await withAnchors(db, [
-      toDto(created, b.project?.key ?? null),
-    ]);
-    return c.json(
-      {
-        ...createdDto,
-        outcome: supersedes.length > 0 ? "superseded" : "created",
-        supersedes,
-        redactions: clean.redactions,
-      },
-      201,
-    );
+    const r = await createMemory(db, providers, c.get("principal"), b);
+    return c.json(r.body, r.status);
   });
 
-  /** Memories flagged possibly_stale that the caller can see. Resolve with PUT /:id/staleness {stale:false} (confirm), PATCH content (update) or DELETE (retire). */
   app.get("/review", async (c) => {
     const principal = c.get("principal");
     const rows = await db

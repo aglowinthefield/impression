@@ -29,6 +29,13 @@
       "when": 1793830637072,
       "tag": "0003_session_owner",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1793831078910,
+      "tag": "0004_proposal_embedding",
+      "breakpoints": true
     }
   ]
 }

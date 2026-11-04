@@ -128,6 +128,8 @@ export const proposals = pgTable(
     sessionId: uuid().references(() => sessions.id, { onDelete: "set null" }),
     content: text().notNull(),
     confidence: real().notNull(),
+    /** Used to recognise a re-proposal of something already pending or rejected. */
+    embedding: vector({ dimensions: EMBEDDING_DIM }),
     /** Proposed anchors: [{ path, symbol?, commitSha }]. */
     anchors: jsonb().notNull().default([]),
     status: proposalStatusEnum().notNull().default("pending"),
