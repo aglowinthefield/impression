@@ -4,6 +4,7 @@ import { createApp } from "./app.js";
 import { createToken } from "./auth.js";
 import { memories } from "./db/schema.js";
 import { createTestDb } from "./test-db.js";
+import { fakeProviders } from "./test-providers.js";
 
 let t: Awaited<ReturnType<typeof createTestDb>>;
 let app: ReturnType<typeof createApp>;
@@ -12,7 +13,7 @@ let bob: string;
 
 beforeAll(async () => {
   t = await createTestDb();
-  app = createApp(t.db);
+  app = createApp(t.db, fakeProviders());
   alice = await createToken(t.db, "alice");
   bob = await createToken(t.db, "bob");
 });
@@ -118,17 +119,14 @@ describe("read, update, delete", () => {
     expect((await call(alice, "GET", "/not-a-uuid")).status).toBe(404);
   });
 
-  test("patching content clears the stale embedding, patching a flag keeps it", async () => {
+  test("patching content re-embeds it, patching a flag leaves the vector alone", async () => {
     const m = await (
       await call(alice, "POST", "", { scope: "user", content: "old text" })
     ).json();
+    const sentinel = new Array(1536).fill(0.1);
     await t.db
       .update(memories)
-      .set({
-        embedding: new Array(1536).fill(0.1),
-        embeddingModel: "m",
-        embeddingDim: 1536,
-      })
+      .set({ embedding: sentinel, embeddingModel: "m", embeddingDim: 1536 })
       .where(eq(memories.id, m.id));
 
     await call(alice, "PATCH", `/${m.id}`, { pinned: true });
@@ -139,10 +137,10 @@ describe("read, update, delete", () => {
     expect(await res.json()).toMatchObject({
       content: "new text",
       pinned: true,
-      embeddingModel: null,
+      embeddingModel: "fake-bow",
     });
     [row] = await t.db.select().from(memories).where(eq(memories.id, m.id));
-    expect(row?.embedding).toBeNull();
+    expect(row?.embedding).not.toEqual(sentinel);
   });
 
   test("rejects an empty patch", async () => {
