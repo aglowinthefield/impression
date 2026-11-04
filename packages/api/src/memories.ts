@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { AuthEnv } from "./auth.js";
 import type { Db } from "./db/client.js";
 import { memories, projects } from "./db/schema.js";
+import type { Providers } from "./providers/index.js";
 
 type MemoryRow = typeof memories.$inferSelect;
 
@@ -45,7 +46,7 @@ const listQuery = z.object({
 });
 
 /** The API shape of a memory. Leaves out the embedding and search vector. */
-function toDto(m: MemoryRow, projectKey: string | null) {
+export function toDto(m: MemoryRow, projectKey: string | null) {
   return {
     id: m.id,
     scope: m.scope,
@@ -69,7 +70,37 @@ function toDto(m: MemoryRow, projectKey: string | null) {
 
 const bad = (message: string) => ({ error: message });
 
-export function memoryRoutes(db: Db) {
+/**
+ * Embeds a memory's content and stores the vector with its model and dimension.
+ * Failure is logged, not thrown: the memory is already saved and stays findable
+ * by full text, and a later re-embed can fill the vector in.
+ */
+export async function embedMemory(
+  db: Db,
+  providers: Providers,
+  id: string,
+  content: string,
+) {
+  try {
+    const [vector] = await providers.embeddings.embed([content]);
+    if (!vector) return;
+    await db
+      .update(memories)
+      .set({
+        embedding: vector,
+        embeddingModel: providers.embeddings.model,
+        embeddingDim: providers.embeddings.dimensions,
+      })
+      .where(eq(memories.id, id));
+  } catch (err) {
+    console.error(
+      `embedding failed for memory ${id}:`,
+      err instanceof Error ? err.message : err,
+    );
+  }
+}
+
+export function memoryRoutes(db: Db, providers: Providers) {
   const app = new Hono<AuthEnv>();
 
   async function projectKeyOf(id: string | null): Promise<string | null> {
@@ -131,7 +162,12 @@ export function memoryRoutes(db: Db) {
         sessionId: b.sessionId,
       })
       .returning();
-    return c.json(toDto(m as MemoryRow, b.project?.key ?? null), 201);
+    await embedMemory(db, providers, (m as MemoryRow).id, b.content);
+    const [fresh] = await db
+      .select()
+      .from(memories)
+      .where(eq(memories.id, (m as MemoryRow).id));
+    return c.json(toDto(fresh as MemoryRow, b.project?.key ?? null), 201);
   });
 
   app.get("/", async (c) => {
@@ -215,9 +251,16 @@ export function memoryRoutes(db: Db) {
       })
       .where(eq(memories.id, id))
       .returning();
-    return c.json(
-      toDto(m as MemoryRow, await projectKeyOf((m as MemoryRow).projectId)),
-    );
+    let row = m as MemoryRow;
+    if (contentChanged) {
+      await embedMemory(db, providers, id, row.content);
+      const [fresh] = await db
+        .select()
+        .from(memories)
+        .where(eq(memories.id, id));
+      row = fresh ?? row;
+    }
+    return c.json(toDto(row, await projectKeyOf(row.projectId)));
   });
 
   /** Retires the memory (kept as history). `?hard=true` deletes the row. */

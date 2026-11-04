@@ -56,6 +56,8 @@ pnpm --filter @impression/api token:create <your-name>
 pnpm dev   # api on :3000; /health is open, /api/* needs `Authorization: Bearer <token>`
 ```
 
+Search: `POST /api/search` with `{ query, scope?, project?, path?, status?, limit?, minSimilarity? }`.
+
 Tests create and drop their own database on that server. After editing `packages/api/src/db/schema.ts`, run `pnpm --filter @impression/api db:generate` and commit the new file in `packages/api/drizzle`.
 
 ```

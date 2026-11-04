@@ -5,6 +5,7 @@ import { createToken } from "./auth.js";
 import { loadConfig } from "./config.js";
 import { apiTokens } from "./db/schema.js";
 import { createTestDb } from "./test-db.js";
+import { fakeProviders } from "./test-providers.js";
 
 let t: Awaited<ReturnType<typeof createTestDb>>;
 let app: ReturnType<typeof createApp>;
@@ -12,7 +13,7 @@ let token: string;
 
 beforeAll(async () => {
   t = await createTestDb();
-  app = createApp(t.db);
+  app = createApp(t.db, fakeProviders());
   token = await createToken(t.db, "alice");
 });
 afterAll(() => t.drop());
