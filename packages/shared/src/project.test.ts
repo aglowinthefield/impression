@@ -1,5 +1,11 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, test } from "vitest";
@@ -111,5 +117,16 @@ describe("resolveProject", () => {
       name: "plain",
       pathPrefix: null,
     });
+  });
+});
+
+describe("resolveProject through a symlink", () => {
+  test("a symlinked cwd gives the same subpath as the real one", () => {
+    const real = mkdtempSync(join(tmpdir(), "imp-real-"));
+    execFileSync("git", ["init", "-q"], { cwd: real });
+    mkdirSync(join(real, "pkg"));
+    const link = `${real}-link`;
+    symlinkSync(real, link);
+    expect(resolveProject(join(link, "pkg")).pathPrefix).toBe("pkg");
   });
 });

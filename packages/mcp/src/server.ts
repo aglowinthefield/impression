@@ -1,7 +1,6 @@
-import { resolveProject } from "@impression/shared";
+import { type ApiClient, resolveProject } from "@impression/shared";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { ApiClient } from "./client.js";
 
 interface SearchResult {
   id: string;

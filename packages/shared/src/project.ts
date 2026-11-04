@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 
 export interface ProjectIdentity {
@@ -64,7 +65,7 @@ function git(cwd: string, ...args: string[]): string | null {
  * checkout's path, which every worktree of that repo shares.
  */
 export function resolveProject(cwd: string): ProjectIdentity {
-  const start = resolve(cwd);
+  const start = realpath(resolve(cwd));
   const toplevel = git(start, "rev-parse", "--show-toplevel");
   if (!toplevel) {
     return {
@@ -102,4 +103,13 @@ export function resolveProject(cwd: string): ProjectIdentity {
     name: root.split("/").pop() || root,
     pathPrefix,
   };
+}
+
+/** Git reports real paths, so a symlinked cwd (macOS /var, /tmp) must be resolved too. */
+function realpath(p: string): string {
+  try {
+    return realpathSync(p);
+  } catch {
+    return p;
+  }
 }
