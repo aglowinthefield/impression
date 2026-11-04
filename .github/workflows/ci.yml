@@ -5,6 +5,16 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: impression
+          POSTGRES_PASSWORD: impression
+          POSTGRES_DB: impression
+        ports: ["54329:5432"]
+        options: >-
+          --health-cmd "pg_isready -U impression" --health-interval 2s --health-retries 30
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4

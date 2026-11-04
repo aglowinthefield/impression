@@ -10,13 +10,18 @@
     "typecheck": "tsrs -p . --noEmit",
     "test": "vitest run --passWithNoTests",
     "lint": "biome check .",
-    "dev": "tsx watch src/index.ts"
+    "dev": "tsx watch src/index.ts",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx src/db/migrate-cli.ts"
   },
   "dependencies": {
-    "@impression/shared": "workspace:*",
-    "hono": "^4",
     "@hono/node-server": "^1",
-    "drizzle-orm": "^0",
+    "@impression/shared": "workspace:*",
+    "drizzle-orm": "^0.45.4",
+    "hono": "^4",
     "postgres": "^3"
+  },
+  "devDependencies": {
+    "drizzle-kit": "^0.31.11"
   }
 }

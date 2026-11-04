@@ -32,6 +32,14 @@ TypeScript monorepo (pnpm workspaces, Node 22+). Packages: `shared`, `api`, `cli
 
 ## Develop
 
+Needs Postgres with pgvector. `docker compose up -d --wait` starts one on port 54329 (see `.env.example`), then apply the schema:
+
+```
+pnpm --filter @impression/api db:migrate
+```
+
+Tests create and drop their own database on that server. After editing `packages/api/src/db/schema.ts`, run `pnpm --filter @impression/api db:generate` and commit the new file in `packages/api/drizzle`.
+
 ```
 corepack enable
 pnpm install
