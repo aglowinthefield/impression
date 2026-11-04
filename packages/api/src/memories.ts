@@ -6,6 +6,7 @@ import type { Db } from "./db/client.js";
 import { memories, projects } from "./db/schema.js";
 import type { Providers } from "./providers/index.js";
 import { decide, findCandidates, markSuperseded } from "./reconcile.js";
+import { isEmptyAfterScrub, scrub } from "./scrub.js";
 
 type MemoryRow = typeof memories.$inferSelect;
 
@@ -150,6 +151,15 @@ export function memoryRoutes(db: Db, providers: Providers) {
       projectId = p?.id ?? null;
     }
 
+    const clean = scrub(b.content);
+    if (clean.redactions.length > 0 && isEmptyAfterScrub(clean.text)) {
+      return c.json(
+        bad("content is only secrets or personal data, nothing was stored"),
+        422,
+      );
+    }
+    b.content = clean.text;
+
     // Embed first, so similar memories can be found before anything is written.
     let vector: number[] | null = null;
     try {
@@ -195,6 +205,7 @@ export function memoryRoutes(db: Db, providers: Providers) {
           {
             ...toDto(row as MemoryRow, b.project?.key ?? null),
             outcome: merged ? "merged" : "duplicate",
+            redactions: clean.redactions,
           },
           200,
         );
@@ -231,6 +242,7 @@ export function memoryRoutes(db: Db, providers: Providers) {
         ...toDto(created, b.project?.key ?? null),
         outcome: supersedes.length > 0 ? "superseded" : "created",
         supersedes,
+        redactions: clean.redactions,
       },
       201,
     );
@@ -303,6 +315,16 @@ export function memoryRoutes(db: Db, providers: Providers) {
     }
 
     const b = parsed.data;
+    if (b.content !== undefined) {
+      const clean = scrub(b.content);
+      if (clean.redactions.length > 0 && isEmptyAfterScrub(clean.text)) {
+        return c.json(
+          bad("content is only secrets or personal data, nothing was stored"),
+          422,
+        );
+      }
+      b.content = clean.text;
+    }
     const contentChanged =
       b.content !== undefined && b.content !== existing.content;
     const [m] = await db
