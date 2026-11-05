@@ -53,6 +53,14 @@ assistant: noted`,
     avoid: [],
   },
   {
+    name: "rule restated from AGENTS.md",
+    transcript: `assistant: I read AGENTS.md. It reserves merging PRs, pushing and closing for an explicit user request, so I won't do those without you asking.
+user: right, never push or merge unless I say so
+assistant: Understood. Separately, the api container needs host.docker.internal to reach Ollama on 11434.`,
+    want: [["host.docker.internal"]],
+    avoid: [/AGENTS\.md/i, /merg/i, /explicit/i],
+  },
+  {
     name: "chatter only",
     transcript: `user: yes
 assistant: ok

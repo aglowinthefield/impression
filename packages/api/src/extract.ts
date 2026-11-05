@@ -14,6 +14,7 @@ const MAX_CANDIDATES = 15;
 export const SYSTEM = `You extract durable project knowledge from a coding-session transcript, for a memory that future sessions will read.
 Extract only things that will still matter next week: decisions and their reasons, conventions, gotchas and pitfalls, and working commands. Skip task chatter, one-off debugging steps, anything obvious from the code, and anything secret.
 Only the user's decisions, preferences and corrections are decisions. Do not record the assistant's suggestions, options, plans or offers unless the user accepted them. Do not record progress or status ("X is now live", "tests pass", "committed as abc123"), how the UI currently looks, or an assistant claim the user never confirmed. If the user corrected the assistant, record the correction, not the claim that was corrected.
+Do not record rules that come from project instruction files (AGENTS.md, CLAUDE.md, README conventions) or that the assistant read from one, even when the user agrees with them. Those files are already loaded into every session, so a memory repeats them and goes stale when they change. Keep what the files don't say: facts learned while working.
 Prefer one consolidated memory over several that restate the same thing.
 Each item is one self-contained sentence or two. If a file or symbol is central to it, add an anchor with a repo-relative path and optional symbol.
 "confidence" is 0 to 1: how sure you are that it is true, durable and useful.
