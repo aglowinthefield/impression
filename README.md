@@ -225,6 +225,21 @@ DATABASE_URL=... OPENAI_API_KEY=... ANTHROPIC_API_KEY=... pnpm --filter @impress
 
 The migrations run `CREATE EXTENSION vector`, which Neon permits for the database owner.
 
+## Run on Fly
+
+Fly runs the API and web UI from the existing `Dockerfile` (it applies migrations on boot). Postgres comes from Neon (see above), and embeddings from OpenAI, since Ollama doesn't fit on a small Fly machine.
+
+```sh
+fly launch --copy-config --no-deploy --name <app>
+fly secrets set DATABASE_URL='postgres://...neon.tech/neondb?sslmode=require' OPENAI_API_KEY=sk-... ANTHROPIC_API_KEY=sk-ant-...
+fly deploy
+fly ssh console -C "pnpm --filter @impression/api token:create me"   # prints your token
+```
+
+Then each teammate runs `impression login --url https://<app>.fly.dev --token imp_...` with their own token (create one per person). The token is the only protection, so don't share one.
+
+`fly.toml` keeps one machine running, because a cold start would make the session-start hook time out and skip injection. Don't mix embedding models in one database. To move existing data from a local Ollama setup, restore a `pg_dump` into Neon and run `pnpm --filter @impression/api db:reembed` once with `EMBEDDING_PROVIDER=openai` set.
+
 ## Local embeddings
 
 ```sh

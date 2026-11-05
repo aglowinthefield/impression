@@ -1,0 +1,30 @@
+# `app` is set by `fly launch --copy-config --no-deploy --name <app>`.
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "3000"
+  EMBEDDING_PROVIDER = "openai"
+  EMBEDDING_DIMENSIONS = "768"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  # Stay up: a cold start (boot plus migrations) would make session-start hooks
+  # time out and silently skip memory injection.
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    method = "GET"
+    path = "/health"
+    interval = "15s"
+    timeout = "5s"
+    grace_period = "30s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"
