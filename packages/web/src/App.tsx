@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, api, getToken, type Project, setToken } from "./api";
+import { Memories } from "./Memories";
 
 const PROJECT_KEY = "impression.project";
 
@@ -106,8 +107,11 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
         </button>
       </header>
       <main>
-        <h2>{tab}</h2>
-        <p>Project: {project || "none"}</p>
+        {tab === "Memories" ? (
+          <Memories project={project} />
+        ) : (
+          <p>{tab} is coming soon.</p>
+        )}
       </main>
     </div>
   );
