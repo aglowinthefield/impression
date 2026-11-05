@@ -1,0 +1,53 @@
+:root {
+  color-scheme: light dark;
+  font:
+    15px / 1.5 system-ui,
+    sans-serif;
+}
+body {
+  margin: 0;
+}
+.login {
+  max-width: 22rem;
+  margin: 20vh auto;
+  display: grid;
+  gap: 1rem;
+  padding: 0 1rem;
+}
+.login label {
+  display: grid;
+  gap: 0.25rem;
+}
+input,
+select,
+button {
+  font: inherit;
+  padding: 0.35rem 0.6rem;
+}
+header {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  padding: 0.6rem 1rem;
+  border-bottom: 1px solid #8884;
+}
+header nav {
+  display: flex;
+  gap: 0.25rem;
+}
+header nav button[aria-current="true"] {
+  font-weight: 600;
+  text-decoration: underline;
+}
+.spacer {
+  flex: 1;
+}
+main {
+  padding: 1rem;
+  max-width: 60rem;
+  margin: 0 auto;
+}
+[role="alert"] {
+  color: #c0392b;
+  margin: 0;
+}

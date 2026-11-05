@@ -114,3 +114,7 @@ impression status
 ```
 
 `IMPRESSION_URL` and `IMPRESSION_TOKEN` override the saved config. The hooks read it too.
+
+## Web UI
+
+`packages/web` is a React single-page app. `pnpm build` produces `packages/web/dist`, and the API serves it at `/` when that directory exists (or set `WEB_DIR`). Sign in with an API token; the project switcher lists every project on the server. For hot reload run the API on :3000 and `pnpm --filter @impression/web dev`.
