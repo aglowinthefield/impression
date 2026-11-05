@@ -140,9 +140,9 @@ pnpm dev   # api on :3000, GET /health
 
 `pnpm --filter @impression/api eval` runs a small fixture (14 memories, 18 queries, 5 off-topic queries, 15 memory pairs) against the configured embedding model and prints hit@3, MRR and off-topic results per `minSimilarity`, plus pair similarities for dedup. It calls the real embeddings API, so it costs a little. CI runs the same fixture with a fake embedder to catch ranking regressions.
 
-With `nomic-embed-text` (768 dimensions), hit@3 is 1.00 and MRR 0.94. Off-topic queries return nothing from a 0.45 floor, which is its default. Paraphrases scored 0.76 to 0.91 and unrelated pairs at most 0.45, so the 0.55 dedup threshold still separates them.
+With `nomic-embed-text` (768 dimensions), hit@3 is 1.00 and MRR 0.94. Off-topic queries return nothing from a 0.45 floor, which is its default. Paraphrases scored 0.76 to 0.91 and unrelated pairs 0.37 to 0.45, so the 0.4 dedup candidate floor lets some unrelated pairs through to the LLM check. That costs extra calls, not wrong merges.
 
-With `text-embedding-3-small` (measured at 1536 dimensions, before the column went to 768; rerun the eval to confirm), the 0.25 search floor gave the best MRR (0.92), hit@3 1.00 and no off-topic results. Paraphrases scored 0.68 to 0.85, one conflicting pair scored 0.49 and unrelated pairs at most 0.14, so the dedup candidate floor is 0.4.
+With `text-embedding-3-small` at 768 dimensions, hit@3 is 1.00 and MRR 0.92 (the same as at 1536). The 0.25 search floor gave the best MRR (0.92), hit@3 1.00 and no off-topic results. Paraphrases scored 0.68 to 0.85, one conflicting pair scored 0.49 and unrelated pairs at most 0.14, so the dedup candidate floor is 0.4.
 
 ## MCP server
 
