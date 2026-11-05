@@ -118,3 +118,24 @@ impression status
 ## Web UI
 
 `packages/web` is a React single-page app. `pnpm build` produces `packages/web/dist`, and the API serves it at `/` when that directory exists (or set `WEB_DIR`). Sign in with an API token; the project switcher lists every project on the server. For hot reload run the API on :3000 and `pnpm --filter @impression/web dev`.
+
+## Run with Docker
+
+```sh
+export OPENAI_API_KEY=sk-... ANTHROPIC_API_KEY=sk-ant-...
+docker compose up -d --build --wait
+docker compose exec api pnpm --filter @impression/api token:create me   # prints your token
+```
+
+This starts Postgres with pgvector and the API, which applies migrations on boot and serves the web UI. Open http://localhost:3000 and sign in with the token. Without the two keys the server runs, but embeddings and extraction fail (memories are still saved and found by keyword).
+
+## Run on Neon
+
+Any Postgres with the `vector` extension works. On [Neon](https://neon.com), create a project (pgvector is available on all plans), copy the pooled connection string, and run only the API:
+
+```sh
+DATABASE_URL='postgres://...neon.tech/neondb?sslmode=require' pnpm --filter @impression/api db:migrate
+DATABASE_URL=... OPENAI_API_KEY=... ANTHROPIC_API_KEY=... pnpm --filter @impression/api exec tsx src/index.ts
+```
+
+The migrations run `CREATE EXTENSION vector`, which Neon permits for the database owner.

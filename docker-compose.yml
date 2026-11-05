@@ -13,5 +13,17 @@ services:
       test: ["CMD-SHELL", "pg_isready -U impression"]
       interval: 2s
       retries: 30
+  api:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://impression:impression@postgres:5432/impression
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      AUTO_ACCEPT_CONFIDENCE: ${AUTO_ACCEPT_CONFIDENCE:-0.9}
+    ports:
+      - "3000:3000"
 volumes:
   pgdata:
