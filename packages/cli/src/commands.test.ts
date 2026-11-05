@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, statSync } from "node:fs";
+import { mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
@@ -193,7 +193,22 @@ describe("config", () => {
     expect(JSON.parse(readFileSync(configPath(env), "utf8")).token).toBe(
       "imp_1",
     );
-    expect(loadConfig(env)).toEqual({ url: "http://a", token: "imp_1" });
+    expect(loadConfig(env)).toEqual({
+      url: "http://a",
+      token: "imp_1",
+      sendInstructions: false,
+    });
+    // Re-login keeps the option; the env var overrides it.
+    writeFileSync(
+      configPath(env),
+      JSON.stringify({ url: "http://a", sendInstructions: true }),
+    );
+    saveConfig({ url: "http://b", token: "imp_3" }, env);
+    expect(loadConfig(env).sendInstructions).toBe(true);
+    expect(
+      loadConfig({ ...env, IMPRESSION_SEND_INSTRUCTIONS: "0" })
+        .sendInstructions,
+    ).toBe(false);
     expect(loadConfig({ ...env, IMPRESSION_TOKEN: "imp_2" }).token).toBe(
       "imp_2",
     );

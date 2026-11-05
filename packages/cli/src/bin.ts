@@ -76,6 +76,7 @@ if (cmd === "hook" && sub === "session-start") {
     await Promise.race([
       sendSession(client, input, {
         extract: process.argv.includes("--extract"),
+        sendInstructions: config.sendInstructions,
       }),
       new Promise((r) => setTimeout(r, 30_000).unref()),
     ]);

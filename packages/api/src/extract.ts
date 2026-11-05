@@ -70,6 +70,8 @@ export interface ExtractInput {
   owner: string;
   commitSha: string | null;
   transcript: string;
+  /** Project instruction files the agent already loads. Used only to avoid restating them. */
+  instructions?: string;
 }
 
 export interface ExtractSummary {
@@ -95,7 +97,9 @@ export async function extractProposals(
   const text = input.transcript.slice(-MAX_PROMPT_CHARS);
   const reply = await providers.llm.complete({
     system: SYSTEM,
-    prompt: `Transcript:\n${text}`,
+    prompt: input.instructions
+      ? `Project instructions, already loaded into every session. Do not record anything they already say:\n${input.instructions}\n\nTranscript:\n${text}`
+      : `Transcript:\n${text}`,
     maxTokens: 2000,
   });
   const summary: ExtractSummary = {

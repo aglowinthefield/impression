@@ -1,9 +1,13 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
-import { sendSession, transcriptText } from "./session-end.js";
+import {
+  readInstructions,
+  sendSession,
+  transcriptText,
+} from "./session-end.js";
 
 const jsonl = [
   { type: "permission-mode" },
@@ -117,4 +121,44 @@ test("transcriptText reads pi session files", () => {
     '{"type":"message","message":{"role":"toolResult","content":[{"type":"text","text":"noise"}]}}',
   ].join("\n");
   expect(transcriptText(jsonl)).toBe("user: use pnpm\n\nassistant: ok");
+});
+
+describe("instructions", () => {
+  const home = mkdtempSync(join(tmpdir(), "imp-home-"));
+  test("readInstructions reads project and global files, skipping missing", () => {
+    const { dir } = setup();
+    writeFileSync(join(dir, "AGENTS.md"), "never push\n");
+    mkdirSync(join(home, ".pi", "agent"), { recursive: true });
+    writeFileSync(join(home, ".pi", "agent", "AGENTS.md"), "use pnpm");
+    const text = readInstructions(dir, home) ?? "";
+    expect(text).toContain("never push");
+    expect(text).toContain("use pnpm");
+    expect(text).not.toContain("CLAUDE.md");
+    expect(
+      readInstructions(mkdtempSync(join(tmpdir(), "e-")), "/nope"),
+    ).toBeUndefined();
+  });
+  test("sent to extract only when sendInstructions is on", async () => {
+    const { dir, file } = setup();
+    writeFileSync(join(dir, "AGENTS.md"), "never push");
+    const run = async (sendInstructions: boolean) => {
+      const calls: [string, unknown][] = [];
+      await sendSession(
+        {
+          get: async () => null,
+          post: async (p, b) => {
+            calls.push([p, b]);
+            return { id: "s1" };
+          },
+        },
+        { transcript_path: file, cwd: dir },
+        { extract: true, sendInstructions },
+      );
+      return calls[1]?.[1];
+    };
+    expect(await run(false)).toEqual({});
+    expect(await run(true)).toMatchObject({
+      instructions: expect.stringContaining("never push"),
+    });
+  });
 });

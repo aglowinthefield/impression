@@ -1,5 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { type ApiClient, resolveProject } from "@impression/shared";
 
 /** Keep well under the API's 2M character limit. */
@@ -41,6 +43,32 @@ export function transcriptText(jsonl: string): string {
   return all.length > MAX_CHARS ? all.slice(-MAX_CHARS) : all;
 }
 
+const MAX_INSTRUCTION_CHARS = 8_000;
+
+/**
+ * Instruction files the agent loads for this directory: project and global
+ * AGENTS.md / CLAUDE.md. Missing files are skipped. Each is cut to a cap.
+ */
+export function readInstructions(
+  cwd: string,
+  home: string = homedir(),
+): string | undefined {
+  const files = [
+    join(cwd, "AGENTS.md"),
+    join(cwd, "CLAUDE.md"),
+    join(home, ".pi", "agent", "AGENTS.md"),
+    join(home, ".claude", "CLAUDE.md"),
+  ];
+  const parts: string[] = [];
+  for (const f of files) {
+    try {
+      const text = readFileSync(f, "utf8").trim();
+      if (text) parts.push(`# ${f}\n${text.slice(0, MAX_INSTRUCTION_CHARS)}`);
+    } catch {}
+  }
+  return parts.length ? parts.join("\n\n") : undefined;
+}
+
 function headSha(cwd: string): string | undefined {
   try {
     const sha = execFileSync("git", ["rev-parse", "HEAD"], {
@@ -62,12 +90,13 @@ export interface SessionEndInput {
 /**
  * Sends the finished session to ingest. Returns the session id, or null when
  * there is nothing to send or anything fails: a hook must never break exit.
- * With extract, also asks the API to propose memories from it.
+ * With extract, also asks the API to propose memories from it, and with
+ * sendInstructions attaches the instruction files so it skips what they say.
  */
 export async function sendSession(
   client: ApiClient,
   input: SessionEndInput,
-  opts: { extract?: boolean; agent?: string } = {},
+  opts: { extract?: boolean; agent?: string; sendInstructions?: boolean } = {},
 ): Promise<string | null> {
   try {
     if (!input.transcript_path) return null;
@@ -83,7 +112,15 @@ export async function sendSession(
       commitSha: headSha(cwd),
       agent: opts.agent ?? "claude-code",
     })) as { id: string };
-    if (opts.extract) await client.post(`/sessions/${id}/extract`, {});
+    if (opts.extract) {
+      const instructions = opts.sendInstructions
+        ? readInstructions(cwd)
+        : undefined;
+      await client.post(
+        `/sessions/${id}/extract`,
+        instructions ? { instructions } : {},
+      );
+    }
     return id;
   } catch {
     return null;

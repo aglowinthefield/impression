@@ -198,6 +198,8 @@ Ids are the 8-character prefixes that `list`, `search` and `proposals` print.
 
 `IMPRESSION_URL` and `IMPRESSION_TOKEN` override the saved config. The hooks read it too.
 
+Set `"sendInstructions": true` in the saved config (or `IMPRESSION_SEND_INSTRUCTIONS=1`) to send your AGENTS.md and CLAUDE.md files (project and global) with each extraction, so it skips rules those files already state. Off by default. The text is scrubbed, cut to a cap, and not stored.
+
 ## Web UI
 
 `packages/web` is a React single-page app. `pnpm build` produces `packages/web/dist`, and the API serves it at `/` when that directory exists (or set `WEB_DIR`). Sign in with an API token; the project switcher lists every project on the server. For hot reload run the API on :3000 and `pnpm --filter @impression/web dev`.

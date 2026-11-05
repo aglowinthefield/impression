@@ -11,6 +11,13 @@ import { scrub } from "./scrub.js";
 /** About 2 MB of text. Longer transcripts should be summarized by the client first. */
 export const MAX_TRANSCRIPT_CHARS = 2_000_000;
 
+/** Instruction text sent with an extract request. Longer input is cut. */
+export const MAX_INSTRUCTIONS_CHARS = 20_000;
+
+const extractBody = z.object({
+  instructions: z.string().trim().min(1).optional(),
+});
+
 const body = z.object({
   project: z.object({
     key: z.string().min(1),
@@ -120,6 +127,12 @@ export function sessionRoutes(
       .from(sessions)
       .where(and(eq(sessions.id, id), eq(sessions.owner, c.get("principal"))));
     if (!s) return c.json({ error: "not found" }, 404);
+    const parsed = extractBody.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) return c.json({ error: "bad request" }, 400);
+    // Scrub like the transcript: instruction files can hold paths or keys.
+    const instructions = parsed.data.instructions
+      ? scrub(parsed.data.instructions.slice(0, MAX_INSTRUCTIONS_CHARS)).text
+      : undefined;
     try {
       const summary = await extractProposals(db, providers, {
         sessionId: s.id,
@@ -134,6 +147,7 @@ export function sessionRoutes(
         owner: s.owner,
         commitSha: s.commitSha,
         transcript: s.transcript,
+        ...(instructions ? { instructions } : {}),
       });
       return c.json(summary);
     } catch (err) {

@@ -245,3 +245,18 @@ test("proposal list shows the session excerpt only to its owner", async () => {
       ?.sessionExcerpt,
   ).toBeNull();
 });
+
+test("extract passes scrubbed instructions to the model, only when sent", async () => {
+  reply = '{"memories":[]}';
+  const id = await session("some transcript");
+  prompts = [];
+  await call("POST", `/sessions/${id}/extract`);
+  expect(prompts[0]).not.toContain("Project instructions");
+  prompts = [];
+  await call("POST", `/sessions/${id}/extract`, {
+    instructions: "never push. key AKIAIOSFODNN7EXAMPLE",
+  });
+  expect(prompts[0]).toContain("never push");
+  expect(prompts[0]).not.toContain("AKIAIOSFODNN7EXAMPLE");
+  expect(prompts[0]).toMatch(/Transcript:\nsome transcript$/);
+});
