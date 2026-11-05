@@ -107,3 +107,14 @@ describe("sendSession", () => {
     expect(await sendSession(bad, {})).toBeNull();
   });
 });
+
+test("transcriptText reads pi session files", () => {
+  const jsonl = [
+    '{"type":"session","id":"s"}',
+    '{"type":"message","message":{"role":"system","content":"prompt"}}',
+    '{"type":"message","message":{"role":"user","content":"use pnpm"}}',
+    '{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"ok"},{"type":"toolCall","name":"bash"}]}}',
+    '{"type":"message","message":{"role":"toolResult","content":[{"type":"text","text":"noise"}]}}',
+  ].join("\n");
+  expect(transcriptText(jsonl)).toBe("user: use pnpm\n\nassistant: ok");
+});

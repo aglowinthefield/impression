@@ -5,18 +5,26 @@ import { type ApiClient, resolveProject } from "@impression/shared";
 /** Keep well under the API's 2M character limit. */
 const MAX_CHARS = 1_500_000;
 
-/** Flattens a Claude Code JSONL transcript to "role: text" lines, skipping tool noise. */
+/**
+ * Flattens a Claude Code or pi JSONL transcript to "role: text" lines, skipping tool noise.
+ * Claude Code lines are `{type: "user"|"assistant", message}`; pi's are
+ * `{type: "message", message: {role, content}}`.
+ */
 export function transcriptText(jsonl: string): string {
   const out: string[] = [];
   for (const line of jsonl.split("\n")) {
     if (!line.trim()) continue;
-    let entry: { type?: string; message?: { content?: unknown } };
+    let entry: {
+      type?: string;
+      message?: { role?: string; content?: unknown };
+    };
     try {
       entry = JSON.parse(line);
     } catch {
       continue;
     }
-    if (entry.type !== "user" && entry.type !== "assistant") continue;
+    const role = entry.type === "message" ? entry.message?.role : entry.type;
+    if (role !== "user" && role !== "assistant") continue;
     const content = entry.message?.content;
     const parts =
       typeof content === "string"
@@ -27,7 +35,7 @@ export function transcriptText(jsonl: string): string {
             )
           : [];
     const text = parts.join("\n").trim();
-    if (text) out.push(`${entry.type}: ${text}`);
+    if (text) out.push(`${role}: ${text}`);
   }
   const all = out.join("\n\n");
   return all.length > MAX_CHARS ? all.slice(-MAX_CHARS) : all;
