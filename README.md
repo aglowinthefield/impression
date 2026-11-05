@@ -4,6 +4,73 @@ Memory for development work: a self-hostable, mem0-style service that keeps proj
 (conventions, decisions, gotchas, commands) and improves it over time. Built for one developer
 or a small team, not for consumer-facing agents.
 
+## Quick start
+
+1. Start the server and create a token: see [Run with Docker](#run-with-docker). Without Docker, see [Develop](#develop).
+2. Build the clients once with `pnpm install && pnpm build`. Below, `$IMP` stands for the checkout path.
+3. Sign in from the CLI: `node $IMP/packages/cli/dist/bin.js login --token imp_... --url http://localhost:3000`.
+4. Wire up your agent (below), then open http://localhost:3000 to review memories.
+
+## Wire it into your agent
+
+Every client reads `IMPRESSION_URL` (default `http://localhost:3000`) and `IMPRESSION_TOKEN`. The CLI and both hooks also fall back to the file `impression login` writes.
+
+### Claude Code
+
+MCP tools (`search`, `add`):
+
+```sh
+claude mcp add impression -e IMPRESSION_URL=http://localhost:3000 -e IMPRESSION_TOKEN=imp_... -- node $IMP/packages/mcp/dist/bin.js
+```
+
+Hooks, in `~/.claude/settings.json` (after `impression login`, no token is needed in the command):
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node $IMP/packages/cli/dist/bin.js hook session-start"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node $IMP/packages/cli/dist/bin.js hook session-end --extract"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Use the absolute path for `$IMP`. Session-start injects your core memories. Session-end sends the transcript and queues proposals, which you review in the web UI.
+
+### pi
+
+MCP tools:
+
+```sh
+pi mcp add impression --env IMPRESSION_URL=http://localhost:3000 --env IMPRESSION_TOKEN=imp_... -- node $IMP/packages/mcp/dist/bin.js
+```
+
+Run `/reload` or restart pi. The session hooks speak Claude Code's hook format, so pi gets search and add through MCP but no automatic injection or capture yet. `impression hook session-start --plain` prints the core set as plain text if you want to feed it in yourself.
+
+## Troubleshooting
+
+- **401 invalid token:** the token was mistyped or minted against another database. Mint a new one with `token:create`.
+- **Search returns nothing or `degraded: true`:** the embedding call failed (check `OPENAI_API_KEY`). Keyword search still works. Memories saved while embeddings were down have no vector until their text is edited.
+- **Extraction returns 502:** the LLM call failed (check `ANTHROPIC_API_KEY`). Nothing was stored; run extract again.
+- **Hook prints nothing:** by design, hooks never fail loudly. Run the command by hand to see whether `impression status` works.
+
 ## Design decisions
 
 - **Capture:** explicit adds, plus session-end LLM extraction into a proposal queue (deduped, auto-accepted above a confidence threshold).
@@ -22,7 +89,7 @@ Out of v1: team scope, roles and approval, per-prompt injection, extra local pro
 
 ## Stack
 
-TypeScript monorepo (pnpm workspaces, Node 22+). Packages: `shared`, `api`, `cli`, `mcp`. `web` arrives in M6.
+TypeScript monorepo (pnpm workspaces, Node 22+). Packages: `shared`, `api`, `cli`, `mcp`, `web`.
 
 - HTTP: Hono. Chosen for a small, typed API that is easy to test with `app.request()`.
 - Postgres access: Drizzle ORM with `postgres`. Chosen for SQL-close typed queries and pgvector support.
@@ -70,36 +137,15 @@ pnpm dev   # api on :3000, GET /health
 
 ## MCP server
 
-`packages/mcp` is a stdio MCP server with two tools, `search` and `add`. It resolves the project from the working directory and talks to the API over HTTP. Build it with `pnpm build`, then register `node packages/mcp/dist/bin.js` in your agent with `IMPRESSION_URL` (default `http://localhost:3000`) and `IMPRESSION_TOKEN` set. For Claude Code:
-
-```sh
-claude mcp add impression -e IMPRESSION_TOKEN=imp_... -- node /path/to/impression/packages/mcp/dist/bin.js
-```
+`packages/mcp` is a stdio MCP server with two tools, `search` and `add`. It resolves the project from the working directory and talks to the API over HTTP. Setup is under [Wire it into your agent](#wire-it-into-your-agent).
 
 ## Session-start hook
 
-`GET /api/core` returns a small set per project: pinned first, then by confidence and recency, within a token budget (`budget`, default 800). Flagged-stale and superseded memories are left out. `impression hook session-start` (from `packages/cli`) prints it as Claude Code `SessionStart` output, or as plain text with `--plain`. It exits 0 and prints nothing if the API is down. In `~/.claude/settings.json`:
-
-```json
-{
-  "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "IMPRESSION_TOKEN=imp_... node /path/to/impression/packages/cli/dist/bin.js hook session-start"
-          }
-        ]
-      }
-    ]
-  }
-}
-```
+`GET /api/core` returns a small set per project: pinned first, then by confidence and recency, within a token budget (`budget`, default 800). Flagged-stale and superseded memories are left out. `impression hook session-start` (from `packages/cli`) prints it as Claude Code `SessionStart` output, or as plain text with `--plain`. It exits 0 and prints nothing if the API is down. Setup is under [Wire it into your agent](#wire-it-into-your-agent).
 
 ## Session-end hook
 
-`impression hook session-end` reads Claude Code's `SessionEnd` JSON from stdin, flattens the transcript to user and assistant text, and posts it to `/api/sessions` with the project key and HEAD SHA. Add `--extract` to also queue proposals. It always exits 0, prints nothing on failure and gives up after 30 seconds. Add it under `hooks.SessionEnd` in `~/.claude/settings.json`, like the session-start hook.
+`impression hook session-end` reads Claude Code's `SessionEnd` JSON from stdin, flattens the transcript to user and assistant text, and posts it to `/api/sessions` with the project key and HEAD SHA. Add `--extract` to also queue proposals. It always exits 0, prints nothing on failure and gives up after 30 seconds. Setup is under [Wire it into your agent](#wire-it-into-your-agent).
 
 ## CLI
 
