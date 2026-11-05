@@ -96,3 +96,7 @@ claude mcp add impression -e IMPRESSION_TOKEN=imp_... -- node /path/to/impressio
   }
 }
 ```
+
+## Session-end hook
+
+`impression hook session-end` reads Claude Code's `SessionEnd` JSON from stdin, flattens the transcript to user and assistant text, and posts it to `/api/sessions` with the project key and HEAD SHA. Add `--extract` to also queue proposals. It always exits 0, prints nothing on failure and gives up after 30 seconds. Add it under `hooks.SessionEnd` in `~/.claude/settings.json`, like the session-start hook.
