@@ -51,3 +51,39 @@ main {
   color: #c0392b;
   margin: 0;
 }
+.filters {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+.filters input {
+  flex: 1;
+}
+.memories {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: 0.75rem;
+}
+.memory {
+  border: 1px solid #8884;
+  border-radius: 6px;
+  padding: 0.6rem 0.8rem;
+}
+.memory p {
+  margin: 0 0 0.25rem;
+  white-space: pre-wrap;
+}
+.memory textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+}
+.memory small {
+  opacity: 0.7;
+}
+.actions {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 0.4rem;
+}
