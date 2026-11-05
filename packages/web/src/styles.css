@@ -87,3 +87,9 @@ main {
   gap: 0.4rem;
   margin-top: 0.4rem;
 }
+.memory pre {
+  white-space: pre-wrap;
+  max-height: 12rem;
+  overflow: auto;
+  font-size: 13px;
+}
