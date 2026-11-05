@@ -100,3 +100,17 @@ claude mcp add impression -e IMPRESSION_TOKEN=imp_... -- node /path/to/impressio
 ## Session-end hook
 
 `impression hook session-end` reads Claude Code's `SessionEnd` JSON from stdin, flattens the transcript to user and assistant text, and posts it to `/api/sessions` with the project key and HEAD SHA. Add `--extract` to also queue proposals. It always exits 0, prints nothing on failure and gives up after 30 seconds. Add it under `hooks.SessionEnd` in `~/.claude/settings.json`, like the session-start hook.
+
+## CLI
+
+`packages/cli` builds the `impression` binary (`node packages/cli/dist/bin.js`). Create a token on the server with `pnpm --filter @impression/api token:create <name>`, then:
+
+```sh
+impression login --token imp_... --url http://localhost:3000   # saved to ~/.config/impression/config.json (0600)
+impression add "Migrations run via db:migrate" [--user] [--pin]
+impression search "how do migrations run"
+impression list
+impression status
+```
+
+`IMPRESSION_URL` and `IMPRESSION_TOKEN` override the saved config. The hooks read it too.
