@@ -12,43 +12,45 @@ function Login({ onDone }: { onDone: () => void }) {
   const [token, setTok] = useState("");
   const [error, setError] = useState<string | null>(null);
   return (
-    <form
-      className="login"
-      onSubmit={async (e) => {
-        e.preventDefault();
-        try {
-          await api("/whoami", { token: token.trim() });
-          setToken(token.trim());
-          onDone();
-        } catch (err) {
-          setError(
-            err instanceof ApiError && err.status === 401
-              ? "That token isn't valid."
-              : "Couldn't reach the server.",
-          );
-        }
-      }}
-    >
-      <h1>Impression</h1>
-      <label>
-        API token
-        <input
-          className="input input-sm"
-          type="password"
-          value={token}
-          onChange={(e) => setTok(e.target.value)}
-          placeholder="imp_..."
-        />
-      </label>
-      {error && <p role="alert">{error}</p>}
-      <button
-        className="btn btn-sm btn-primary"
-        type="submit"
-        disabled={!token.trim()}
+    <div className="login-page">
+      <form
+        className="login"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          try {
+            await api("/whoami", { token: token.trim() });
+            setToken(token.trim());
+            onDone();
+          } catch (err) {
+            setError(
+              err instanceof ApiError && err.status === 401
+                ? "That token isn't valid."
+                : "Couldn't reach the server.",
+            );
+          }
+        }}
       >
-        Sign in
-      </button>
-    </form>
+        <h1>Impression</h1>
+        <label>
+          API token
+          <input
+            className="input input-sm"
+            type="password"
+            value={token}
+            onChange={(e) => setTok(e.target.value)}
+            placeholder="imp_..."
+          />
+        </label>
+        {error && <p role="alert">{error}</p>}
+        <button
+          className="btn btn-sm btn-primary"
+          type="submit"
+          disabled={!token.trim()}
+        >
+          Sign in
+        </button>
+      </form>
+    </div>
   );
 }
 

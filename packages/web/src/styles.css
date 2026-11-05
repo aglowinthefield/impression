@@ -84,8 +84,14 @@
 }
 
 @layer components {
+  .login-page {
+    @apply grid min-h-screen place-items-center bg-cover bg-center p-4;
+    background-image: url("/login-bg.png");
+    image-rendering: pixelated;
+  }
   .login {
-    @apply card bg-base-100 mx-auto mt-[20vh] grid max-w-sm gap-4 p-6 shadow;
+    @apply card bg-base-100 grid w-full max-w-sm gap-4 p-6 shadow-lg;
+    image-rendering: auto;
   }
   .login label {
     @apply grid gap-1;
