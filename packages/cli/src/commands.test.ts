@@ -3,7 +3,18 @@ import { mkdtempSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
-import { add, list, search, status } from "./commands.js";
+import {
+  accept,
+  add,
+  edit,
+  keep,
+  list,
+  proposals,
+  reject,
+  retire,
+  search,
+  status,
+} from "./commands.js";
 import { configPath, loadConfig, saveConfig } from "./config.js";
 
 const repo = () => {
@@ -18,16 +29,17 @@ const repo = () => {
 };
 const fake = (reply: (path: string) => unknown) => {
   const calls: [string, unknown][] = [];
+  const call = async (m: string, p: string, b?: unknown) => {
+    calls.push([m === "GET" ? p : `${m} ${p}`, b]);
+    return reply(p);
+  };
   return {
     calls,
-    get: async (p: string) => {
-      calls.push([p, undefined]);
-      return reply(p);
-    },
-    post: async (p: string, b: unknown) => {
-      calls.push([p, b]);
-      return reply(p);
-    },
+    get: (p: string) => call("GET", p),
+    post: (p: string, b: unknown) => call("POST", p, b),
+    patch: (p: string, b: unknown) => call("PATCH", p, b),
+    put: (p: string, b: unknown) => call("PUT", p, b),
+    delete: (p: string) => call("DELETE", p),
   };
 };
 
@@ -98,6 +110,78 @@ describe("commands", () => {
     expect(await status(c, repo(), "http://h")).toBe(
       "Server:    http://h\nSigned in: me\nProject:   github.com/acme/ex\nReview:    2 possibly stale\nProposals: 2 pending",
     );
+  });
+});
+
+describe("review commands", () => {
+  const ID = "abcdef12-0000-4000-8000-000000000001";
+  const OTHER = "abcdef99-0000-4000-8000-000000000002";
+  const mem = (id: string) => ({
+    id,
+    content: "x",
+    scope: "project",
+    status: "active",
+    pinned: false,
+  });
+  const reply = (p: string) =>
+    p.startsWith("/proposals?")
+      ? { items: [{ id: ID, content: "Use pnpm", confidence: 0.8 }] }
+      : p === "/memories/review"
+        ? { items: [] }
+        : p.startsWith("/memories?")
+          ? { items: [mem(ID), mem(OTHER)] }
+          : { id: ID };
+
+  test("proposals lists pending with short ids", async () => {
+    const c = fake(reply);
+    expect(await proposals(c, repo())).toBe("abcdef12  0.80  Use pnpm");
+    expect(c.calls[0]?.[0]).toContain("project=github.com%2Facme%2Fex");
+  });
+
+  test("accept resolves a prefix and sends edited text", async () => {
+    const c = fake(reply);
+    expect(await accept(c, repo(), "abcdef12", "Use pnpm 12")).toBe(
+      `Accepted: ${ID}`,
+    );
+    expect(c.calls.at(-1)).toEqual([
+      `POST /proposals/${ID}/accept`,
+      { content: "Use pnpm 12" },
+    ]);
+  });
+
+  test("reject posts to the proposal", async () => {
+    const c = fake(reply);
+    await reject(c, repo(), "abcdef12");
+    expect(c.calls.at(-1)?.[0]).toBe(`POST /proposals/${ID}/reject`);
+  });
+
+  test("retire, edit and keep resolve memory prefixes", async () => {
+    const c = fake(reply);
+    await retire(c, repo(), "abcdef12");
+    expect(c.calls.at(-1)?.[0]).toBe(`DELETE /memories/${ID}`);
+    await edit(c, repo(), "abcdef12", "new text");
+    expect(c.calls.at(-1)).toEqual([
+      `PATCH /memories/${ID}`,
+      { content: "new text" },
+    ]);
+    await keep(c, repo(), "abcdef12");
+    expect(c.calls.at(-1)).toEqual([
+      `PUT /memories/${ID}/staleness`,
+      { stale: false },
+    ]);
+  });
+
+  test("ambiguous and unknown prefixes are errors; full uuids skip lookup", async () => {
+    const c = fake(reply);
+    await expect(retire(c, repo(), "abcdef")).rejects.toThrow(
+      /matches 2 memory entries/,
+    );
+    await expect(retire(c, repo(), "ffff")).rejects.toThrow(
+      /No memory starts with ffff/,
+    );
+    const n = c.calls.length;
+    await retire(c, repo(), OTHER);
+    expect(c.calls.length).toBe(n + 1);
   });
 });
 

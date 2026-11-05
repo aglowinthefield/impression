@@ -163,7 +163,15 @@ impression add "Migrations run via db:migrate" [--user] [--pin]
 impression search "how do migrations run"
 impression list
 impression status
+impression proposals                 # pending, with 8-character ids
+impression accept <id> [edited text]
+impression reject <id>
+impression edit <id> <text>
+impression retire <id>               # kept as history
+impression keep <id>                 # clears a possibly-stale flag
 ```
+
+Ids are the 8-character prefixes that `list`, `search` and `proposals` print.
 
 `IMPRESSION_URL` and `IMPRESSION_TOKEN` override the saved config. The hooks read it too.
 

@@ -1,6 +1,17 @@
 #!/usr/bin/env node
 import { createClient } from "@impression/shared";
-import { add, list, search, status } from "./commands.js";
+import {
+  accept,
+  add,
+  edit,
+  keep,
+  list,
+  proposals,
+  reject,
+  retire,
+  search,
+  status,
+} from "./commands.js";
 import { loadConfig, saveConfig } from "./config.js";
 import { claudeCodeOutput, sessionStartContext } from "./hook.js";
 import { sendSession } from "./session-end.js";
@@ -70,7 +81,21 @@ if (cmd === "hook" && sub === "session-start") {
     console.error((e as Error).message);
     process.exit(1);
   }
-} else if (cmd && ["search", "add", "list", "status"].includes(cmd)) {
+} else if (
+  cmd &&
+  [
+    "search",
+    "add",
+    "list",
+    "status",
+    "proposals",
+    "accept",
+    "reject",
+    "retire",
+    "edit",
+    "keep",
+  ].includes(cmd)
+) {
   if (!token) {
     console.error("Not signed in. Run: impression login --token imp_...");
     process.exit(1);
@@ -79,28 +104,41 @@ if (cmd === "hook" && sub === "session-start") {
   const args = process.argv.slice(3);
   const words = args.filter((a) => !a.startsWith("--")).join(" ");
   try {
-    if (cmd === "search" || cmd === "add") {
-      if (!words) throw new Error(`usage: impression ${cmd} <text>`);
-    }
-    console.log(
-      cmd === "search"
-        ? await search(client, process.cwd(), words)
-        : cmd === "add"
-          ? await add(client, process.cwd(), words, {
-              user: args.includes("--user"),
-              pin: args.includes("--pin"),
-            })
-          : cmd === "list"
-            ? await list(client, process.cwd())
-            : await status(client, process.cwd(), url),
-    );
+    const [id, ...restWords] = args.filter((a) => !a.startsWith("--"));
+    const text = restWords.join(" ");
+    const cwd = process.cwd();
+    if ((cmd === "search" || cmd === "add") && !words)
+      throw new Error(`usage: impression ${cmd} <text>`);
+    if (["accept", "reject", "retire", "edit", "keep"].includes(cmd) && !id)
+      throw new Error(
+        `usage: impression ${cmd} <id>${cmd === "edit" ? " <text>" : ""}`,
+      );
+    if (cmd === "edit" && !text)
+      throw new Error("usage: impression edit <id> <text>");
+    const run = {
+      search: () => search(client, cwd, words),
+      add: () =>
+        add(client, cwd, words, {
+          user: args.includes("--user"),
+          pin: args.includes("--pin"),
+        }),
+      list: () => list(client, cwd),
+      status: () => status(client, cwd, url),
+      proposals: () => proposals(client, cwd),
+      accept: () => accept(client, cwd, id ?? "", text || undefined),
+      reject: () => reject(client, cwd, id ?? ""),
+      retire: () => retire(client, cwd, id ?? ""),
+      edit: () => edit(client, cwd, id ?? "", text),
+      keep: () => keep(client, cwd, id ?? ""),
+    }[cmd as "search"];
+    console.log(await run());
   } catch (e) {
     console.error((e as Error).message);
     process.exit(1);
   }
 } else {
   console.error(
-    "usage: impression login | search <q> | add <text> [--user] [--pin] | list | status\n       impression hook session-start [--plain] | session-end [--extract]",
+    "usage: impression login | search <q> | add <text> [--user] [--pin] | list | status\n       impression proposals | accept <id> [edited text] | reject <id> | retire <id> | edit <id> <text> | keep <id>\n       impression hook session-start [--plain] | session-end [--extract]",
   );
   process.exit(2);
 }

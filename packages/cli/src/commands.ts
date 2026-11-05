@@ -1,4 +1,8 @@
-import { type ApiClient, resolveProject } from "@impression/shared";
+import {
+  type ApiClient,
+  type FullApiClient,
+  resolveProject,
+} from "@impression/shared";
 
 interface Mem {
   id: string;
@@ -70,4 +74,116 @@ export async function status(client: ApiClient, cwd: string, url: string) {
     `Review:    ${review.items.length} possibly stale`,
     `Proposals: ${props.items.length} pending`,
   ].join("\n");
+}
+
+interface Proposal {
+  id: string;
+  content: string;
+  confidence: number;
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Resolves the 8-character ids shown by `list` and `search` to full ids. */
+function byPrefix<T extends { id: string }>(
+  items: T[],
+  prefix: string,
+  what: string,
+): T {
+  const hits = items.filter((i) => i.id.startsWith(prefix.toLowerCase()));
+  if (hits.length === 0) throw new Error(`No ${what} starts with ${prefix}`);
+  if (hits.length > 1)
+    throw new Error(
+      `${prefix} matches ${hits.length} ${what} entries; use more characters`,
+    );
+  return hits[0] as T;
+}
+
+async function memoryId(client: ApiClient, cwd: string, prefix: string) {
+  if (UUID.test(prefix)) return prefix;
+  const p = resolveProject(cwd);
+  const qs = new URLSearchParams({ project: p.key, limit: "200" });
+  const [mine, stale] = await Promise.all([
+    client.get(`/memories?${qs}`) as Promise<{ items: Mem[] }>,
+    client.get("/memories/review") as Promise<{ items: Mem[] }>,
+  ]);
+  const all = new Map([...mine.items, ...stale.items].map((m) => [m.id, m]));
+  return byPrefix([...all.values()], prefix, "memory").id;
+}
+
+async function pending(client: ApiClient, cwd: string) {
+  const p = resolveProject(cwd);
+  const qs = new URLSearchParams({ project: p.key, limit: "100" });
+  return ((await client.get(`/proposals?${qs}`)) as { items: Proposal[] })
+    .items;
+}
+
+export async function proposals(client: ApiClient, cwd: string) {
+  const items = await pending(client, cwd);
+  return items.length
+    ? items
+        .map(
+          (i) =>
+            `${i.id.slice(0, 8)}  ${i.confidence.toFixed(2)}  ${i.content}`,
+        )
+        .join("\n")
+    : "No pending proposals.";
+}
+
+export async function accept(
+  client: ApiClient,
+  cwd: string,
+  prefix: string,
+  content?: string,
+) {
+  const id = UUID.test(prefix)
+    ? prefix
+    : byPrefix(await pending(client, cwd), prefix, "proposal").id;
+  const r = (await client.post(
+    `/proposals/${id}/accept`,
+    content ? { content } : {},
+  )) as {
+    id?: string;
+  };
+  return `Accepted${r.id ? `: ${r.id}` : ""}`;
+}
+
+export async function reject(client: ApiClient, cwd: string, prefix: string) {
+  const id = UUID.test(prefix)
+    ? prefix
+    : byPrefix(await pending(client, cwd), prefix, "proposal").id;
+  await client.post(`/proposals/${id}/reject`, {});
+  return "Rejected";
+}
+
+export async function retire(
+  client: FullApiClient,
+  cwd: string,
+  prefix: string,
+) {
+  await client.delete(`/memories/${await memoryId(client, cwd, prefix)}`);
+  return "Retired";
+}
+
+export async function edit(
+  client: FullApiClient,
+  cwd: string,
+  prefix: string,
+  content: string,
+) {
+  await client.patch(`/memories/${await memoryId(client, cwd, prefix)}`, {
+    content,
+  });
+  return "Updated";
+}
+
+/** Clears the possibly-stale flag. */
+export async function keep(client: FullApiClient, cwd: string, prefix: string) {
+  await client.put(
+    `/memories/${await memoryId(client, cwd, prefix)}/staleness`,
+    {
+      stale: false,
+    },
+  );
+  return "Kept";
 }
