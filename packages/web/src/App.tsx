@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { ApiError, api, getToken, type Project, setToken } from "./api";
 import { Memories } from "./Memories";
 import { Proposals } from "./Proposals";
+import { Review } from "./Review";
 
 const PROJECT_KEY = "impression.project";
 
@@ -113,7 +114,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
         ) : tab === "Proposals" ? (
           <Proposals project={project} />
         ) : (
-          <p>{tab} is coming soon.</p>
+          <Review project={project} />
         )}
       </main>
     </div>
