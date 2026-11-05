@@ -21,6 +21,7 @@ function Card({ m, onDone }: { m: Flagged; onDone: () => void }) {
     <li className="memory">
       {editing ? (
         <textarea
+ className="textarea w-full"
           aria-label="Update memory"
           value={text}
           onChange={(e) => setText(e.target.value)}
@@ -38,7 +39,7 @@ function Card({ m, onDone }: { m: Flagged; onDone: () => void }) {
       <div className="actions">
         {editing ? (
           <>
-            <button className="btn-primary"
+            <button className="btn btn-sm btn-primary"
               type="button"
               onClick={() =>
                 act(() =>
@@ -51,13 +52,13 @@ function Card({ m, onDone }: { m: Flagged; onDone: () => void }) {
             >
               Save update
             </button>
-            <button className="btn-outline" type="button" onClick={() => setEditing(false)}>
+            <button className="btn btn-sm btn-outline" type="button" onClick={() => setEditing(false)}>
               Cancel
             </button>
           </>
         ) : (
           <>
-            <button className="btn-primary"
+            <button className="btn btn-sm btn-primary"
               type="button"
               onClick={() =>
                 act(() =>
@@ -70,10 +71,10 @@ function Card({ m, onDone }: { m: Flagged; onDone: () => void }) {
             >
               Still true
             </button>
-            <button className="btn-outline" type="button" onClick={() => setEditing(true)}>
+            <button className="btn btn-sm btn-outline" type="button" onClick={() => setEditing(true)}>
               Update
             </button>
-            <button className="btn-error btn-outline"
+            <button className="btn btn-sm btn-error btn-outline"
               type="button"
               onClick={() =>
                 act(() => api(`/memories/${m.id}`, { method: "DELETE" }))

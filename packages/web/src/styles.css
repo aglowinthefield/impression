@@ -5,36 +5,6 @@
   body {
     @apply bg-base-200 text-base-content;
   }
-  input:not([type="checkbox"]) {
-    @apply input input-sm;
-  }
-  select {
-    @apply select select-sm w-auto;
-  }
-  textarea {
-    @apply textarea w-full;
-  }
-  button {
-    @apply btn btn-sm;
-  }
-  button[type="submit"] {
-    @apply btn-primary;
-  }
-  header {
-    @apply navbar bg-base-100 border-base-300 min-h-0 gap-3 border-b px-4 py-2;
-  }
-  header nav {
-    @apply flex gap-1;
-  }
-  header nav {
-    @apply gap-0;
-  }
-  header nav button {
-    @apply btn-ghost rounded-none border-0 border-b-2 border-transparent;
-  }
-  header nav button[aria-current="true"] {
-    @apply border-primary font-semibold;
-  }
   [role="alert"] {
     @apply alert alert-error alert-soft m-0 py-2;
   }

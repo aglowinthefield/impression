@@ -28,6 +28,7 @@ function Card({ p, onDone }: { p: Proposal; onDone: () => void }) {
   return (
     <li className="memory">
       <textarea
+ className="textarea w-full"
         aria-label="Proposed memory"
         value={text}
         onChange={(e) => setText(e.target.value)}
@@ -48,7 +49,7 @@ function Card({ p, onDone }: { p: Proposal; onDone: () => void }) {
         </details>
       )}
       <div className="actions">
-        <button className="btn-primary"
+        <button className="btn btn-sm btn-primary"
           type="button"
           onClick={() =>
             act("accept", edited ? { content: text.trim() } : undefined)
@@ -56,7 +57,7 @@ function Card({ p, onDone }: { p: Proposal; onDone: () => void }) {
         >
           {edited ? "Accept edited" : "Accept"}
         </button>
-        <button className="btn-error btn-outline" type="button" onClick={() => act("reject")}>
+        <button className="btn btn-sm btn-error btn-outline" type="button" onClick={() => act("reject")}>
           Reject
         </button>
       </div>
