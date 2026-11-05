@@ -3,16 +3,23 @@ export interface ApiClient {
   post(path: string, body: unknown): Promise<unknown>;
 }
 
+/** Adds the write verbs the review commands need. */
+export interface FullApiClient extends ApiClient {
+  patch(path: string, body: unknown): Promise<unknown>;
+  put(path: string, body: unknown): Promise<unknown>;
+  delete(path: string): Promise<unknown>;
+}
+
 /** Minimal HTTP client for the Impression API. */
 export function createClient(
   baseUrl: string,
   token: string,
   fetchImpl: typeof fetch = fetch,
-): ApiClient {
+): FullApiClient {
   const root = baseUrl.replace(/\/+$/, "");
-  const send = async (path: string, body?: unknown) => {
+  const send = async (method: string, path: string, body?: unknown) => {
     const res = await fetchImpl(`${root}/api${path}`, {
-      method: body === undefined ? "GET" : "POST",
+      method,
       headers: {
         authorization: `Bearer ${token}`,
         "content-type": "application/json",
@@ -34,7 +41,10 @@ export function createClient(
     return json;
   };
   return {
-    get: (path) => send(path),
-    post: (path, body) => send(path, body),
+    get: (path) => send("GET", path),
+    post: (path, body) => send("POST", path, body),
+    patch: (path, body) => send("PATCH", path, body),
+    put: (path, body) => send("PUT", path, body),
+    delete: (path) => send("DELETE", path),
   };
 }
