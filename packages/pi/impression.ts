@@ -34,6 +34,9 @@ function run(
 /** Send a chunk once this much new text has built up. Each send costs one extraction call. */
 const CHUNK_CHARS = 3000;
 
+/** Prompts shorter than this ("yes", "continue") carry nothing to search on. */
+const MIN_PROMPT_CHARS = 15;
+
 export default function (pi: ExtensionAPI) {
   let context = "";
   let injected = false;
@@ -93,12 +96,15 @@ export default function (pi: ExtensionAPI) {
       injected = true;
       parts.push(context);
     }
-    // Search on every prompt, skipping memories already shown this session.
+    // Search on each substantial prompt, skipping memories already shown this session.
+    const prompt = event.prompt?.trim() ?? "";
     const found = (
-      await run(["hook", "prompt"], ctx.cwd, {
-        input: event.prompt,
-        timeout: 2_000,
-      })
+      prompt.length < MIN_PROMPT_CHARS
+        ? ""
+        : await run(["hook", "prompt"], ctx.cwd, {
+            input: prompt,
+            timeout: 2_000,
+          })
     )
       .split("\n")
       .filter((l) => l.startsWith("- ") && !seen.has(l));
