@@ -38,7 +38,7 @@ function Card({ m, onDone }: { m: Flagged; onDone: () => void }) {
       <div className="actions">
         {editing ? (
           <>
-            <button
+            <button className="btn-primary"
               type="button"
               onClick={() =>
                 act(() =>
@@ -51,13 +51,13 @@ function Card({ m, onDone }: { m: Flagged; onDone: () => void }) {
             >
               Save update
             </button>
-            <button type="button" onClick={() => setEditing(false)}>
+            <button className="btn-outline" type="button" onClick={() => setEditing(false)}>
               Cancel
             </button>
           </>
         ) : (
           <>
-            <button
+            <button className="btn-primary"
               type="button"
               onClick={() =>
                 act(() =>
@@ -70,10 +70,10 @@ function Card({ m, onDone }: { m: Flagged; onDone: () => void }) {
             >
               Still true
             </button>
-            <button type="button" onClick={() => setEditing(true)}>
+            <button className="btn-outline" type="button" onClick={() => setEditing(true)}>
               Update
             </button>
-            <button
+            <button className="btn-error btn-outline"
               type="button"
               onClick={() =>
                 act(() => api(`/memories/${m.id}`, { method: "DELETE" }))

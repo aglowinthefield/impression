@@ -56,7 +56,7 @@ function Row({ m, onChange }: { m: Memory; onChange: () => void }) {
         <div className="actions">
           {editing ? (
             <>
-              <button
+              <button className="btn-primary"
                 type="button"
                 onClick={() =>
                   act(() =>
@@ -69,16 +69,16 @@ function Row({ m, onChange }: { m: Memory; onChange: () => void }) {
               >
                 Save
               </button>
-              <button type="button" onClick={() => setEditing(false)}>
+              <button className="btn-outline" type="button" onClick={() => setEditing(false)}>
                 Cancel
               </button>
             </>
           ) : (
             <>
-              <button type="button" onClick={() => setEditing(true)}>
+              <button className="btn-outline" type="button" onClick={() => setEditing(true)}>
                 Edit
               </button>
-              <button
+              <button className="btn-outline"
                 type="button"
                 onClick={() =>
                   act(() =>
@@ -91,7 +91,7 @@ function Row({ m, onChange }: { m: Memory; onChange: () => void }) {
               >
                 {m.pinned ? "Unpin" : "Pin to core"}
               </button>
-              <button
+              <button className="btn-error btn-outline"
                 type="button"
                 onClick={() => {
                   if (

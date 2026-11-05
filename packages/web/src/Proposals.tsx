@@ -48,7 +48,7 @@ function Card({ p, onDone }: { p: Proposal; onDone: () => void }) {
         </details>
       )}
       <div className="actions">
-        <button
+        <button className="btn-primary"
           type="button"
           onClick={() =>
             act("accept", edited ? { content: text.trim() } : undefined)
@@ -56,7 +56,7 @@ function Card({ p, onDone }: { p: Proposal; onDone: () => void }) {
         >
           {edited ? "Accept edited" : "Accept"}
         </button>
-        <button type="button" onClick={() => act("reject")}>
+        <button className="btn-error btn-outline" type="button" onClick={() => act("reject")}>
           Reject
         </button>
       </div>

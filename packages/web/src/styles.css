@@ -26,11 +26,14 @@
   header nav {
     @apply flex gap-1;
   }
+  header nav {
+    @apply gap-0;
+  }
   header nav button {
-    @apply btn-ghost;
+    @apply btn-ghost rounded-none border-0 border-b-2 border-transparent;
   }
   header nav button[aria-current="true"] {
-    @apply btn-active;
+    @apply border-primary font-semibold;
   }
   [role="alert"] {
     @apply alert alert-error alert-soft m-0 py-2;
