@@ -11,6 +11,26 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
+const CLI_DIR = fileURLToPath(new URL("../cli/dist/", import.meta.url));
+
+/**
+ * Loads the CLI library into this process, so the per-prompt search skips a node
+ * start-up and reuses one HTTP connection. Null if the CLI isn't built.
+ */
+async function loadLib() {
+  try {
+    const cli = await import(`${CLI_DIR}index.js`);
+    const shared = await import(
+      new URL("../../shared/dist/index.js", `file://${CLI_DIR}`).href
+    );
+    const { url, token } = cli.loadConfig();
+    if (!token) return null;
+    return { cli, client: shared.createClient(url, token) };
+  } catch {
+    return null;
+  }
+}
+
 const CLI =
   process.env.IMPRESSION_CLI ??
   fileURLToPath(new URL("../cli/dist/bin.js", import.meta.url));
@@ -41,6 +61,7 @@ export default function (pi: ExtensionAPI) {
   let context = "";
   let injected = false;
   const seen = new Set<string>();
+  let lib: Awaited<ReturnType<typeof loadLib>> = null;
   let sent = 0; // entries of the session file already sent
   let sending: Promise<void> = Promise.resolve();
 
@@ -82,11 +103,10 @@ export default function (pi: ExtensionAPI) {
     injected = false;
     seen.clear();
     sent = ctx.sessionManager.getEntries().length;
-    context = (
-      await run(["hook", "session-start", "--plain"], ctx.cwd, {
-        timeout: 10_000,
-      })
-    ).trim();
+    lib = await loadLib();
+    context = lib
+      ? ((await lib.cli.sessionStartContext(lib.client, ctx.cwd)) ?? "")
+      : "";
   });
 
   pi.on("before_agent_start", async (event, ctx) => {
@@ -98,16 +118,16 @@ export default function (pi: ExtensionAPI) {
     }
     // Search on each substantial prompt, skipping memories already shown this session.
     const prompt = event.prompt?.trim() ?? "";
-    const found = (
-      prompt.length < MIN_PROMPT_CHARS
-        ? ""
-        : await run(["hook", "prompt"], ctx.cwd, {
-            input: prompt,
-            timeout: 2_000,
-          })
-    )
+    const result =
+      lib && prompt.length >= MIN_PROMPT_CHARS
+        ? await Promise.race([
+            lib.cli.promptContext(lib.client, ctx.cwd, prompt),
+            new Promise<null>((r) => setTimeout(r, 2_000, null).unref()),
+          ])
+        : null;
+    const found = (result ?? "")
       .split("\n")
-      .filter((l) => l.startsWith("- ") && !seen.has(l));
+      .filter((l: string) => l.startsWith("- ") && !seen.has(l));
     for (const l of found) seen.add(l);
     if (found.length)
       parts.push(
