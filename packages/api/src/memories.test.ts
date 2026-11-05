@@ -229,7 +229,11 @@ describe("list", () => {
     expect(
       (
         await (
-          await call(alice, "GET", "?project=github.com/nobody/none")
+          await call(
+            alice,
+            "GET",
+            "?scope=project&project=github.com/nobody/none",
+          )
         ).json()
       ).items,
     ).toEqual([]);
