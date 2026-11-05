@@ -146,11 +146,23 @@ With `text-embedding-3-small` at 768 dimensions, hit@3 is 1.00 and MRR 0.92 (the
 
 ## Memory quality evals
 
-Three local checks. None run in CI, because they need a real model or your own session logs.
+Rating happens in the web UI's **Evals** tab. Fill it from your pi session logs:
+
+```
+impression eval push [path-substring]
+```
+
+This uploads every prompt from `~/.pi/agent/sessions` with the memories that were injected for it (scrubbed, and visible only to your token). Run it again any time. Ratings you've given stay.
+
+- **Sessions:** each prompt with its injected memories. Mark each one Useful, Irrelevant or Wrong. A Wrong rating offers to retire the memory.
+- **Memories:** per active memory, how often it was injected and how you rated it, plus the ones never injected. Often injected and often irrelevant means reword or retire.
+- **Extraction:** the memories the extractor wrote. Mark each Good or Junk. For junk, "Copy eval case" puts a case for `packages/api/src/eval/extraction-fixture.ts` on your clipboard, built from the source transcript.
+
+Terminal checks, none of which run in CI because they need a real model or your logs:
 
 - `pnpm --filter @impression/api eval` ranks search results and shows where the similarity floors should sit.
-- `pnpm --filter @impression/api eval:extract` runs the extraction prompt over transcripts in `packages/api/src/eval/extraction-fixture.ts` and fails if it keeps assistant suggestions, status updates or chatter, or misses a decision. It uses `LLM_PROVIDER`. Add a case whenever extraction saves something it shouldn't.
-- `pnpm --filter @impression/api eval:sessions [project] [--turns]` reads your pi session logs and reports how many prompts got memories, which memories were injected most, and which active memories were never injected. `--turns` lists each prompt with its injected memories and the start of the reply, so you can judge whether they were used.
+- `pnpm --filter @impression/api eval:extract` runs the extraction prompt over the fixture transcripts and fails if it keeps assistant suggestions, status updates or chatter, or misses a decision. It uses `LLM_PROVIDER`.
+- `pnpm --filter @impression/api eval:sessions [project] [--turns]` prints the injection rate and the most and least injected memories without the server's ratings.
 
 ## MCP server
 

@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { parseSession, summarize } from "./sessions.js";
+import { parseSession, summarize } from "@impression/shared";
 
 // Local only. Reads pi session logs and the live server's memories.
 // `pnpm --filter @impression/api eval:sessions [sessionDirSubstring] [--turns]`

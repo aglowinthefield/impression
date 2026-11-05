@@ -4,6 +4,7 @@ import { Hono } from "hono";
 import { type AuthEnv, requireAuth } from "./auth.js";
 import { coreRoutes } from "./core.js";
 import type { Db } from "./db/client.js";
+import { evalRoutes } from "./evals.js";
 import { memoryRoutes } from "./memories.js";
 import { projectRoutes } from "./projects.js";
 import { proposalRoutes } from "./proposals.js";
@@ -40,6 +41,7 @@ export function createApp(
     sessionRoutes(db, providers, opts.autoAcceptConfidence ?? null),
   );
   api.route("/projects", projectRoutes(db));
+  api.route("/evals", evalRoutes(db));
   api.route("/proposals", proposalRoutes(db, providers));
   api.get("/whoami", (c) => c.json({ name: c.get("principal") }));
   app.route("/api", api);

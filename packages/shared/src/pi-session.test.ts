@@ -1,5 +1,10 @@
 import { expect, test } from "vitest";
-import { injectedMemories, parseSession, summarize } from "./sessions.js";
+import {
+  injectedMemories,
+  parseSession,
+  sessionHeader,
+  summarize,
+} from "./pi-session.js";
 
 const line = (o: unknown) => JSON.stringify(o);
 const log = [
@@ -32,6 +37,8 @@ test("pairs each user prompt with the memories injected after it", () => {
   const turns = parseSession(log);
   expect(turns).toHaveLength(2);
   expect(turns[0]).toEqual({
+    index: 0,
+    at: null,
     prompt: "how do I build",
     injected: ["Run pnpm install first", "Use tsrs"],
     reply: "Run pnpm install first.",
@@ -51,4 +58,13 @@ test("injectedMemories keeps only bullet lines", () => {
     "a",
     "b",
   ]);
+});
+
+test("sessionHeader reads the first line", () => {
+  expect(
+    sessionHeader(
+      '{"type":"session","id":"s1","cwd":"/a/b"}\n{"type":"message"}',
+    ),
+  ).toEqual({ id: "s1", cwd: "/a/b" });
+  expect(sessionHeader("garbage")).toBeNull();
 });

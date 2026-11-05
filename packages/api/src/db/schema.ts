@@ -8,9 +8,11 @@ import {
   jsonb,
   pgEnum,
   pgTable,
+  primaryKey,
   real,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
   vector,
 } from "drizzle-orm/pg-core";
@@ -149,3 +151,49 @@ export const apiTokens = pgTable("api_tokens", {
   createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   revokedAt: timestamp({ withTimezone: true }),
 });
+
+/**
+ * One user prompt from a pi session, with the memories injected for it. Uploaded by
+ * `impression eval push`, so a person can rate whether those memories helped.
+ */
+export const evalTurns = pgTable(
+  "eval_turns",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    owner: text().notNull(),
+    projectId: uuid().references(() => projects.id, { onDelete: "cascade" }),
+    /** The agent's own session id, so a re-push updates the same rows. */
+    agentSessionId: text().notNull(),
+    turnIndex: integer().notNull(),
+    prompt: text().notNull(),
+    reply: text().notNull(),
+    /** Memory texts injected for this prompt. */
+    injected: jsonb().$type<string[]>().notNull().default([]),
+    /** Rating per injected memory text: useful, irrelevant or wrong. */
+    ratings: jsonb().$type<Record<string, string>>().notNull().default({}),
+    at: timestamp({ withTimezone: true }),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("eval_turns_turn_idx").on(
+      t.owner,
+      t.agentSessionId,
+      t.turnIndex,
+    ),
+    index("eval_turns_project_idx").on(t.projectId),
+  ],
+);
+
+/** A person's verdict on a stored memory: was it worth extracting? */
+export const memoryRatings = pgTable(
+  "memory_ratings",
+  {
+    memoryId: uuid()
+      .notNull()
+      .references(() => memories.id, { onDelete: "cascade" }),
+    owner: text().notNull(),
+    rating: text().notNull(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.memoryId, t.owner] })],
+);

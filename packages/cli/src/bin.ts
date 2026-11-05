@@ -13,6 +13,7 @@ import {
   status,
 } from "./commands.js";
 import { loadConfig, saveConfig } from "./config.js";
+import { pushEvalTurns } from "./eval-push.js";
 import {
   claudeCodeOutput,
   promptContext,
@@ -104,6 +105,21 @@ if (cmd === "hook" && sub === "session-start") {
     console.error((e as Error).message);
     process.exit(1);
   }
+} else if (cmd === "eval" && sub === "push") {
+  if (!token) {
+    console.error("Not signed in. Run: impression login --token imp_...");
+    process.exit(1);
+  }
+  const match =
+    process.argv[4] && !process.argv[4].startsWith("--")
+      ? process.argv[4]
+      : undefined;
+  try {
+    console.log(await pushEvalTurns(createClient(url, token), { match }));
+  } catch (e) {
+    console.error((e as Error).message);
+    process.exit(1);
+  }
 } else if (
   cmd &&
   [
@@ -161,7 +177,7 @@ if (cmd === "hook" && sub === "session-start") {
   }
 } else {
   console.error(
-    "usage: impression login | search <q> | add <text> [--user] [--pin] | list | status\n       impression proposals | accept <id> [edited text] | reject <id> | retire <id> | edit <id> <text> | keep <id>\n       impression hook session-start [--plain] | prompt (text on stdin) | session-end [--extract]",
+    "usage: impression login | search <q> | add <text> [--user] [--pin] | list | status\n       impression proposals | accept <id> [edited text] | reject <id> | retire <id> | edit <id> <text> | keep <id>\n       impression hook session-start [--plain] | prompt (text on stdin) | session-end [--extract]\n       impression eval push [path-substring]",
   );
   process.exit(2);
 }
