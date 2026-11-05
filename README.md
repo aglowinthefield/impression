@@ -156,7 +156,7 @@ This uploads every prompt from `~/.pi/agent/sessions` with the memories that wer
 
 - **Sessions:** each prompt with its injected memories. Mark each one Useful, Irrelevant or Wrong. A Wrong rating offers to retire the memory.
 - **Memories:** per active memory, how often it was injected and how you rated it, plus the ones never injected. Often injected and often irrelevant means reword or retire.
-- **Extraction:** the memories the extractor wrote. Mark each Good or Junk. For junk, "Copy eval case" puts a case for `packages/api/src/eval/extraction-fixture.ts` on your clipboard, built from the source transcript.
+- **Extraction:** what the extractor wrote, with the share judged good. Accepting a proposal in Review counts as Good and rejecting one counts as Junk, so you only rate the auto-accepted ones by hand. Your own rating wins over the review one. Mark each Good or Junk. For junk, "Copy eval case" puts a case for `packages/api/src/eval/extraction-fixture.ts` on your clipboard, built from the source transcript.
 
 Terminal checks, none of which run in CI because they need a real model or your logs:
 

@@ -42,6 +42,32 @@ beforeEach(() => {
             ],
           }),
         );
+      if (url.startsWith("/api/evals/extraction?"))
+        return new Response(
+          JSON.stringify({
+            precision: 0.5,
+            items: [
+              {
+                id: "m2",
+                kind: "memory",
+                content: "Use pnpm, never npm",
+                status: "active",
+                createdAt: "2026-01-01T00:00:00.000Z",
+                rating: null,
+                verdict: "good",
+              },
+              {
+                id: "p1",
+                kind: "proposal",
+                content: "Tests passed just now",
+                status: "rejected",
+                createdAt: "2026-01-01T00:00:00.000Z",
+                rating: null,
+                verdict: "junk",
+              },
+            ],
+          }),
+        );
       return new Response(JSON.stringify({ ok: true }));
     }),
   );
@@ -80,6 +106,19 @@ test("a wrong rating offers to retire the memory", async () => {
   render(<Evals project="a/x" />);
   fireEvent.click(await screen.findByText("Wrong"));
   expect(await screen.findByText("Retire memory")).toBeTruthy();
+});
+
+test("extraction view shows what review decided and the share that was good", async () => {
+  render(<Evals project="" />);
+  fireEvent.click(screen.getByRole("button", { name: "Extraction" }));
+  expect(await screen.findByText("50%")).toBeTruthy();
+  expect(screen.getByText("Accepted in review")).toBeTruthy();
+  expect(screen.getByText("Rejected in review")).toBeTruthy();
+  // The rejected proposal has no rating buttons but can become an eval case.
+  expect(screen.getAllByRole("button", { name: "Good" })).toHaveLength(1);
+  expect(
+    screen.getAllByRole("button", { name: "Copy eval case" }),
+  ).toHaveLength(1);
 });
 
 test("fixtureSnippet escapes the transcript and builds an avoid pattern", () => {

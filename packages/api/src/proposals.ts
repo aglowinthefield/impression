@@ -114,6 +114,11 @@ export function proposalRoutes(db: Db, providers: Providers) {
     );
     if (!result)
       return c.json({ error: `proposal is already ${r.p.status}` }, 409);
+    if (result.status !== 422)
+      await db
+        .update(proposals)
+        .set({ reviewedAt: new Date() })
+        .where(eq(proposals.id, r.p.id));
     return c.json(result.body, result.status);
   });
 
@@ -122,7 +127,7 @@ export function proposalRoutes(db: Db, providers: Providers) {
     if (!r) return c.json({ error: "not found" }, 404);
     const [p] = await db
       .update(proposals)
-      .set({ status: "rejected" })
+      .set({ status: "rejected", reviewedAt: new Date() })
       .where(and(eq(proposals.id, r.p.id), eq(proposals.status, "pending")))
       .returning();
     if (!p) return c.json({ error: `proposal is already ${r.p.status}` }, 409);

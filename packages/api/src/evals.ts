@@ -1,4 +1,13 @@
-import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
+import {
+  and,
+  desc,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+  or,
+  sql,
+} from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AuthEnv } from "./auth.js";
@@ -8,6 +17,7 @@ import {
   memories,
   memoryRatings,
   projects,
+  proposals,
   sessions,
 } from "./db/schema.js";
 import { scrub } from "./scrub.js";
@@ -231,15 +241,20 @@ export function evalRoutes(db: Db) {
     return c.json({ items, turns: turns.length });
   });
 
-  /** Memories written by extraction, newest first, with the rating you gave and the source. */
+  /**
+   * What extraction produced, newest first. A memory's `verdict` is your rating,
+   * or "good" if you accepted its proposal in review. A proposal you rejected
+   * is listed as junk. Auto-accepted memories have no verdict until you rate them.
+   */
   app.get("/extraction", async (c) => {
     const owner = c.get("principal");
     const key = c.req.query("project");
     const [project] = key
       ? await db.select().from(projects).where(eq(projects.key, key))
       : [];
-    if (key && !project) return c.json({ items: [] });
-    const rows = await db
+    if (key && !project) return c.json({ items: [], precision: null });
+    const mine = or(eq(memories.scope, "project"), eq(memories.owner, owner));
+    const memRows = await db
       .select({
         id: memories.id,
         content: memories.content,
@@ -247,6 +262,7 @@ export function evalRoutes(db: Db) {
         createdAt: memories.createdAt,
         rating: memoryRatings.rating,
         sessionId: memories.sessionId,
+        reviewedAt: proposals.reviewedAt,
       })
       .from(memories)
       .leftJoin(
@@ -256,16 +272,60 @@ export function evalRoutes(db: Db) {
           eq(memoryRatings.owner, owner),
         ),
       )
+      .leftJoin(proposals, eq(proposals.memoryId, memories.id))
       .where(
         and(
           eq(memories.agent, "extraction"),
-          or(eq(memories.scope, "project"), eq(memories.owner, owner)),
+          mine,
           project ? eq(memories.projectId, project.id) : undefined,
         ),
       )
       .orderBy(desc(memories.createdAt))
       .limit(100);
-    return c.json({ items: rows });
+    const rejected = await db
+      .select({
+        id: proposals.id,
+        content: proposals.content,
+        createdAt: proposals.createdAt,
+        sessionId: proposals.sessionId,
+      })
+      .from(proposals)
+      .leftJoin(sessions, eq(sessions.id, proposals.sessionId))
+      .where(
+        and(
+          eq(proposals.status, "rejected"),
+          isNotNull(proposals.reviewedAt),
+          // A proposal from someone else's session is theirs to judge.
+          or(isNull(proposals.sessionId), eq(sessions.owner, owner)),
+          project ? eq(proposals.projectId, project.id) : undefined,
+        ),
+      )
+      .orderBy(desc(proposals.createdAt))
+      .limit(100);
+    const items = [
+      ...memRows.map(({ reviewedAt, ...m }) => ({
+        ...m,
+        kind: "memory" as const,
+        verdict: (m.rating ?? (reviewedAt ? "good" : null)) as
+          | "good"
+          | "junk"
+          | null,
+      })),
+      ...rejected.map((p) => ({
+        ...p,
+        kind: "proposal" as const,
+        status: "rejected",
+        rating: null,
+        verdict: "junk" as const,
+      })),
+    ].sort((a, b) => +b.createdAt - +a.createdAt);
+    const good = items.filter((i) => i.verdict === "good").length;
+    const junk = items.filter((i) => i.verdict === "junk").length;
+    return c.json({
+      items,
+      /** Share of judged extractions that were good, or null with nothing judged. */
+      precision: good + junk > 0 ? good / (good + junk) : null,
+    });
   });
 
   const extractionBody = z.object({
@@ -310,18 +370,22 @@ export function evalRoutes(db: Db) {
   });
 
   /** The end of the transcript a memory was extracted from, to turn a junk rating into a fixture. */
-  app.get("/extraction/:memoryId/source", async (c) => {
+  app.get("/extraction/:id/source", async (c) => {
     const owner = c.get("principal");
-    const [row] = await db
+    const id = c.req.param("id");
+    const [fromMemory] = await db
       .select({ transcript: sessions.transcript })
       .from(memories)
       .innerJoin(sessions, eq(sessions.id, memories.sessionId))
-      .where(
-        and(
-          eq(memories.id, c.req.param("memoryId")),
-          eq(sessions.owner, owner),
-        ),
-      );
+      .where(and(eq(memories.id, id), eq(sessions.owner, owner)));
+    const [fromProposal] = fromMemory
+      ? []
+      : await db
+          .select({ transcript: sessions.transcript })
+          .from(proposals)
+          .innerJoin(sessions, eq(sessions.id, proposals.sessionId))
+          .where(and(eq(proposals.id, id), eq(sessions.owner, owner)));
+    const row = fromMemory ?? fromProposal;
     if (!row) return c.json({ error: "not found" }, 404);
     return c.json({ transcriptTail: row.transcript.slice(-3000) });
   });

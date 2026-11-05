@@ -137,6 +137,8 @@ export const proposals = pgTable(
     status: proposalStatusEnum().notNull().default("pending"),
     /** The memory created when the proposal was accepted. */
     memoryId: uuid().references(() => memories.id, { onDelete: "set null" }),
+    /** When a person accepted or rejected it. Null for pending and auto-accepted ones. */
+    reviewedAt: timestamp({ withTimezone: true }),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("proposals_project_status_idx").on(t.projectId, t.status)],

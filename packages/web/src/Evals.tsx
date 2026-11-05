@@ -29,7 +29,11 @@ interface Extracted {
   content: string;
   status: string;
   createdAt: string;
+  kind: "memory" | "proposal";
+  /** Your rating, if you gave one. */
   rating: "good" | "junk" | null;
+  /** The rating, or what accepting or rejecting it in review implies. */
+  verdict: "good" | "junk" | null;
 }
 
 const qs = (project: string, extra = "") =>
@@ -249,18 +253,32 @@ export function fixtureSnippet(content: string, transcript: string): string {
 
 function Extraction({ project }: { project: string }) {
   const [items, setItems] = useState<Extracted[] | null>(null);
+  const [precision, setPrecision] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   useEffect(() => {
-    api<{ items: Extracted[] }>(`/evals/extraction${qs(project)}`)
-      .then((r) => setItems(r.items))
+    api<{ items: Extracted[]; precision: number | null }>(
+      `/evals/extraction${qs(project)}`,
+    )
+      .then((r) => {
+        setItems(r.items);
+        setPrecision(r.precision);
+      })
       .catch((e: Error) => setError(e.message));
   }, [project]);
   const rate = async (m: Extracted, rating: "good" | "junk") => {
     const next = m.rating === rating ? null : rating;
     setItems(
       (xs) =>
-        xs?.map((x) => (x.id === m.id ? { ...x, rating: next } : x)) ?? null,
+        xs?.map((x) =>
+          x.id === m.id
+            ? {
+                ...x,
+                rating: next,
+                verdict: next ?? (x.verdict === x.rating ? null : x.verdict),
+              }
+            : x,
+        ) ?? null,
     );
     try {
       await api(`/evals/extraction/${m.id}`, {
@@ -290,10 +308,17 @@ function Extraction({ project }: { project: string }) {
     <section>
       <p>
         <small>
-          Memories the extractor wrote. Mark each good or junk. For junk, copy
-          an eval case so the extraction prompt gets tested against it.
+          What the extractor wrote. Accepting a proposal in Review counts as
+          good and rejecting one counts as junk. Rate the rest here. For junk,
+          copy an eval case so the extraction prompt gets tested against it.
         </small>
       </p>
+      {precision !== null && (
+        <p>
+          <strong>{Math.round(precision * 100)}%</strong> of judged extractions
+          were good.
+        </p>
+      )}
       {error && <p role="alert">{error}</p>}
       {note && <p>{note}</p>}
       {items?.length === 0 && <p>No extracted memories yet.</p>}
@@ -306,23 +331,31 @@ function Extraction({ project }: { project: string }) {
               {m.status !== "active" ? ` · ${m.status}` : ""}
             </small>
             <div className="actions">
-              <button
-                type="button"
-                className={`btn btn-sm ${m.rating === "good" ? "btn-success" : "btn-outline"}`}
-                aria-pressed={m.rating === "good"}
-                onClick={() => rate(m, "good")}
-              >
-                Good
-              </button>
-              <button
-                type="button"
-                className={`btn btn-sm ${m.rating === "junk" ? "btn-error" : "btn-outline"}`}
-                aria-pressed={m.rating === "junk"}
-                onClick={() => rate(m, "junk")}
-              >
-                Junk
-              </button>
-              {m.rating === "junk" && (
+              {m.kind === "memory" && (
+                <>
+                  <button
+                    type="button"
+                    className={`btn btn-sm ${m.verdict === "good" ? "btn-success" : "btn-outline"}`}
+                    aria-pressed={m.verdict === "good"}
+                    onClick={() => rate(m, "good")}
+                  >
+                    Good
+                  </button>
+                  <button
+                    type="button"
+                    className={`btn btn-sm ${m.verdict === "junk" ? "btn-error" : "btn-outline"}`}
+                    aria-pressed={m.verdict === "junk"}
+                    onClick={() => rate(m, "junk")}
+                  >
+                    Junk
+                  </button>
+                </>
+              )}
+              {m.kind === "proposal" && <small>Rejected in review</small>}
+              {m.verdict === "good" && !m.rating && (
+                <small>Accepted in review</small>
+              )}
+              {m.verdict === "junk" && (
                 <button
                   type="button"
                   className="btn btn-sm btn-outline"

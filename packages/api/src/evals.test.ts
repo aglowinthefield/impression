@@ -1,6 +1,8 @@
+import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { createApp } from "./app.js";
 import { createToken } from "./auth.js";
+import { projects, proposals } from "./db/schema.js";
 import { createTestDb } from "./test-db.js";
 import { fakeProviders } from "./test-providers.js";
 
@@ -163,6 +165,120 @@ test("rating extraction output as good or junk", async () => {
     await call(alice, "GET", "/evals/extraction")
   ).json()) as typeof list;
   expect(cleared.items.find((m) => m.id === created.id)?.rating).toBeNull();
+});
+
+test("reviewing proposals counts as rating extraction", async () => {
+  const eproject = { key: "github.com/acme/review-ratings" };
+  const sess = await call(alice, "POST", "/sessions", {
+    project: eproject,
+    agent: "claude-code",
+    transcript: "user: always use pnpm\nassistant: ok",
+  });
+  expect(sess.status).toBe(201);
+  const { id: sessionId } = (await sess.json()) as { id: string };
+  const ids: string[] = [];
+  for (const content of ["Use pnpm, never npm", "Tests passed just now"]) {
+    const [p] = await t.db
+      .insert(proposals)
+      .values({
+        projectId: (
+          await t.db
+            .select()
+            .from(projects)
+            .where(eq(projects.key, eproject.key))
+        )[0]?.id as string,
+        sessionId,
+        content,
+        confidence: 0.5,
+      })
+      .returning();
+    ids.push(p?.id as string);
+  }
+  const accepted = await call(alice, "POST", `/proposals/${ids[0]}/accept`, {});
+  expect(accepted.status).toBe(201);
+  await call(alice, "POST", `/proposals/${ids[1]}/reject`);
+
+  const list = (await (
+    await call(
+      alice,
+      "GET",
+      `/evals/extraction?project=${encodeURIComponent(eproject.key)}`,
+    )
+  ).json()) as {
+    items: {
+      id: string;
+      kind: string;
+      content: string;
+      verdict: string | null;
+    }[];
+    precision: number | null;
+  };
+  const byContent = Object.fromEntries(list.items.map((i) => [i.content, i]));
+  expect(byContent["Use pnpm, never npm"]?.verdict).toBe("good");
+  expect(byContent["Tests passed just now"]).toMatchObject({
+    kind: "proposal",
+    verdict: "junk",
+  });
+  expect(list.precision).toBe(0.5);
+
+  // A rejected proposal can still be turned into an eval case.
+  const src = await call(
+    alice,
+    "GET",
+    `/evals/extraction/${byContent["Tests passed just now"]?.id}/source`,
+  );
+  expect(
+    ((await src.json()) as { transcriptTail: string }).transcriptTail,
+  ).toContain("always use pnpm");
+
+  // An explicit rating beats the implicit one.
+  await call(
+    alice,
+    "PUT",
+    `/evals/extraction/${byContent["Use pnpm, never npm"]?.id}`,
+    { rating: "junk" },
+  );
+  const after = (await (
+    await call(
+      alice,
+      "GET",
+      `/evals/extraction?project=${encodeURIComponent(eproject.key)}`,
+    )
+  ).json()) as typeof list;
+  expect(after.precision).toBe(0);
+
+  // Bob can't see or use Alice's rejected proposal.
+  const bobs = (await (
+    await call(
+      bob,
+      "GET",
+      `/evals/extraction?project=${encodeURIComponent(eproject.key)}`,
+    )
+  ).json()) as typeof list;
+  expect(bobs.items.some((i) => i.kind === "proposal")).toBe(false);
+});
+
+test("auto-accepted memories have no verdict until rated", async () => {
+  const mem = (await (
+    await call(alice, "POST", "/memories", {
+      scope: "project",
+      project: { key: "github.com/acme/auto" },
+      content: "Auto-accepted one",
+      agent: "extraction",
+    })
+  ).json()) as { id: string };
+  const list = (await (
+    await call(
+      alice,
+      "GET",
+      "/evals/extraction?project=github.com%2Facme%2Fauto",
+    )
+  ).json()) as {
+    items: { id: string; verdict: string | null }[];
+    precision: null;
+  };
+  expect(list.items.find((i) => i.id === mem.id)?.verdict).toBeNull();
+  expect(list.precision).toBeNull();
 });
 
 test("a memory injected twice in one turn is listed once", async () => {
