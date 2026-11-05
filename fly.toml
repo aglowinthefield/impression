@@ -1,3 +1,4 @@
+app = "impression-cool-ocean-6435"
 # `app` is set by `fly launch --copy-config --no-deploy --name <app>`.
 primary_region = "iad"
 
