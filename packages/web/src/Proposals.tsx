@@ -9,26 +9,16 @@ interface Proposal {
   sessionExcerpt: string | null;
 }
 
-function Card({ p, onDone }: { p: Proposal; onDone: () => void }) {
+function Card({
+  p,
+  onAct,
+}: {
+  p: Proposal;
+  onAct: (p: Proposal, path: string, body?: unknown) => void;
+}) {
   const [text, setText] = useState(p.content);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState<string | null>(null);
   const edited = text.trim() !== p.content;
-  const act = async (path: string, body?: unknown) => {
-    try {
-      setError(null);
-      setBusy(path);
-      await api(`/proposals/${p.id}/${path}`, {
-        method: "POST",
-        body: body ?? {},
-      });
-      onDone();
-      setBusy(null);
-    } catch (e) {
-      setError((e as Error).message);
-      setBusy(null);
-    }
-  };
+  const act = onAct.bind(null, p);
   return (
     <li className="memory">
       <textarea
@@ -56,30 +46,20 @@ function Card({ p, onDone }: { p: Proposal; onDone: () => void }) {
         <button
           className="btn btn-sm btn-primary"
           type="button"
-          disabled={busy !== null}
           onClick={() =>
             act("accept", edited ? { content: text.trim() } : undefined)
           }
         >
-          {busy === "accept" && (
-            <span className="loading loading-spinner loading-xs" />
-          )}
-          {busy === "accept"
-            ? "Accepting…"
-            : edited
-              ? "Accept edited"
-              : "Accept"}
+          {edited ? "Accept edited" : "Accept"}
         </button>
         <button
           className="btn btn-sm btn-error btn-outline"
           type="button"
-          disabled={busy !== null}
           onClick={() => act("reject")}
         >
           Reject
         </button>
       </div>
-      {error && <p role="alert">{error}</p>}
     </li>
   );
 }
@@ -87,6 +67,7 @@ function Card({ p, onDone }: { p: Proposal; onDone: () => void }) {
 export function Proposals({ project }: { project: string }) {
   const [items, setItems] = useState<Proposal[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [hidden, setHidden] = useState<Set<string>>(new Set());
   const load = useCallback(async () => {
     try {
       const q = project ? `?project=${encodeURIComponent(project)}` : "";
@@ -99,13 +80,32 @@ export function Proposals({ project }: { project: string }) {
   useEffect(() => {
     load();
   }, [load]);
+  // The card leaves the list at once. The server may still be deduping, which
+  // can take seconds, so on failure the card comes back with an error.
+  const act = (p: Proposal, path: string, body?: unknown) => {
+    setError(null);
+    setHidden((h) => new Set(h).add(p.id));
+    const show = () =>
+      setHidden((h) => {
+        const n = new Set(h);
+        n.delete(p.id);
+        return n;
+      });
+    api(`/proposals/${p.id}/${path}`, { method: "POST", body: body ?? {} })
+      .then(() => load().then(show))
+      .catch((e: Error) => {
+        setError(`Could not ${path} "${p.content.slice(0, 40)}": ${e.message}`);
+        show();
+      });
+  };
+  const visible = items?.filter((p) => !hidden.has(p.id));
   return (
     <section>
       {error && <p role="alert">{error}</p>}
-      {items?.length === 0 && <p>Nothing waiting for review.</p>}
+      {visible?.length === 0 && <p>Nothing waiting for review.</p>}
       <ul className="memories">
-        {items?.map((p) => (
-          <Card key={p.id} p={p} onDone={load} />
+        {visible?.map((p) => (
+          <Card key={p.id} p={p} onAct={act} />
         ))}
       </ul>
     </section>
