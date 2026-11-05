@@ -19,6 +19,7 @@ export interface Memory {
 function Row({ m, onChange }: { m: Memory; onChange: () => void }) {
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(m.content);
+  const [newTag, setNewTag] = useState("");
   const [error, setError] = useState<string | null>(null);
   const act = async (fn: () => Promise<unknown>) => {
     try {
@@ -44,15 +45,51 @@ function Row({ m, onChange }: { m: Memory; onChange: () => void }) {
       ) : (
         <p>{m.content}</p>
       )}
-      {m.tags?.length ? (
-        <p className="m-0">
-          {m.tags.map((t) => (
-            <span key={t} className="badge badge-info badge-sm mr-1">
-              {t}
-            </span>
-          ))}
-        </p>
-      ) : null}
+      <div className="flex flex-wrap items-center gap-1">
+        {m.tags?.map((t) => (
+          <span key={t} className="badge badge-info badge-sm gap-1">
+            {t}
+            {!history && (
+              <button
+                type="button"
+                className="cursor-pointer"
+                aria-label={`Remove tag ${t}`}
+                onClick={() =>
+                  act(() =>
+                    api(`/memories/${m.id}`, {
+                      method: "PATCH",
+                      body: { tags: (m.tags ?? []).filter((x) => x !== t) },
+                    }),
+                  )
+                }
+              >
+                ×
+              </button>
+            )}
+          </span>
+        ))}
+        {!history && (
+          <input
+            className="input input-xs w-28"
+            aria-label="Add tag"
+            placeholder="+ tag"
+            value={newTag}
+            onChange={(e) => setNewTag(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key !== "Enter") return;
+              e.preventDefault();
+              const tag = newTag.trim().toLowerCase().replace(/\s+/g, "-");
+              if (!tag || m.tags?.includes(tag)) return setNewTag("");
+              act(() =>
+                api(`/memories/${m.id}`, {
+                  method: "PATCH",
+                  body: { tags: [...(m.tags ?? []), tag] },
+                }),
+              ).then(() => setNewTag(""));
+            }}
+          />
+        )}
+      </div>
       <small>
         {m.scope}
         {m.pathPrefix ? ` · ${m.pathPrefix}` : ""}

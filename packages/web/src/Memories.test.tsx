@@ -124,3 +124,33 @@ test("the tag filter lists with that tag, and tags seen are offered", async () =
     expect(calls.at(-1)?.url).toBe("/api/memories?project=a%2Fx&tag=design"),
   );
 });
+
+test("adds a tag with Enter and removes one with its ×", async () => {
+  stub(() => ({ items: [mem({ tags: ["practice"] })] }));
+  render(<Memories project="a/x" />);
+  await screen.findByText("Use pnpm");
+  fireEvent.change(screen.getByLabelText("Add tag"), {
+    target: { value: "Design Pass" },
+  });
+  fireEvent.keyDown(screen.getByLabelText("Add tag"), { key: "Enter" });
+  await waitFor(() =>
+    expect(calls.find((c) => c.method === "PATCH")?.body).toBe(
+      JSON.stringify({ tags: ["practice", "design-pass"] }),
+    ),
+  );
+  calls = [];
+  fireEvent.click(screen.getByLabelText("Remove tag practice"));
+  await waitFor(() =>
+    expect(calls.find((c) => c.method === "PATCH")?.body).toBe(
+      JSON.stringify({ tags: [] }),
+    ),
+  );
+});
+
+test("history rows can't be tagged", async () => {
+  stub(() => ({ items: [mem({ status: "retired", tags: ["x"] })] }));
+  render(<Memories project="a/x" />);
+  await screen.findByText("Use pnpm");
+  expect(screen.queryByLabelText("Add tag")).toBeNull();
+  expect(screen.queryByLabelText("Remove tag x")).toBeNull();
+});
