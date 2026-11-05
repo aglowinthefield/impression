@@ -135,6 +135,12 @@ pnpm lint && pnpm typecheck && pnpm test
 pnpm dev   # api on :3000, GET /health
 ```
 
+## Retrieval eval
+
+`pnpm --filter @impression/api eval` runs a small fixture (14 memories, 18 queries, 5 off-topic queries, 15 memory pairs) against the configured embedding model and prints hit@3, MRR and off-topic results per `minSimilarity`, plus pair similarities for dedup. It calls the real embeddings API, so it costs a little. CI runs the same fixture with a fake embedder to catch ranking regressions.
+
+With `text-embedding-3-small`, the 0.25 search floor gave the best MRR (0.92), hit@3 1.00 and no off-topic results. Paraphrases scored 0.68 to 0.85, one conflicting pair scored 0.49 and unrelated pairs at most 0.14, so the dedup candidate floor is 0.4.
+
 ## MCP server
 
 `packages/mcp` is a stdio MCP server with two tools, `search` and `add`. It resolves the project from the working directory and talks to the API over HTTP. Setup is under [Wire it into your agent](#wire-it-into-your-agent).
