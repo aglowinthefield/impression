@@ -1,11 +1,14 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AuthEnv } from "./auth.js";
 import type { Db } from "./db/client.js";
-import { projects, proposals } from "./db/schema.js";
+import { projects, proposals, sessions } from "./db/schema.js";
 import { acceptProposal } from "./extract.js";
 import type { Providers } from "./providers/index.js";
+
+/** How much of the source session the review queue shows. */
+const EXCERPT_CHARS = 600;
 
 type Row = typeof proposals.$inferSelect;
 
@@ -57,9 +60,17 @@ export function proposalRoutes(db: Db, providers: Providers) {
       return c.json({ error: z.prettifyError(parsed.error) }, 400);
     const q = parsed.data;
     const rows = await db
-      .select({ p: proposals, key: projects.key })
+      .select({
+        p: proposals,
+        key: projects.key,
+        owner: sessions.owner,
+        head: sql<
+          string | null
+        >`left(${sessions.transcript}, ${EXCERPT_CHARS})`,
+      })
       .from(proposals)
       .innerJoin(projects, eq(proposals.projectId, projects.id))
+      .leftJoin(sessions, eq(proposals.sessionId, sessions.id))
       .where(
         and(
           eq(proposals.status, q.status),
@@ -68,7 +79,14 @@ export function proposalRoutes(db: Db, providers: Providers) {
       )
       .orderBy(desc(proposals.confidence), desc(proposals.createdAt))
       .limit(q.limit);
-    return c.json({ items: rows.map((r) => dto(r.p, r.key)) });
+    const me = c.get("principal");
+    return c.json({
+      items: rows.map((r) => ({
+        ...dto(r.p, r.key),
+        // Transcripts are private to whoever ended the session.
+        sessionExcerpt: r.owner === me ? r.head : null,
+      })),
+    });
   });
 
   app.get("/:id", async (c) => {

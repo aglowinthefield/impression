@@ -221,3 +221,27 @@ describe("proposal review", () => {
     expect(list.items.some((m) => m.content.includes("Zebra"))).toBe(true);
   });
 });
+
+test("proposal list shows the session excerpt only to its owner", async () => {
+  reply = JSON.stringify({
+    memories: [{ content: "Excerpt check memory", confidence: 0.4 }],
+  });
+  const id = await session(`secret-ish ${"y".repeat(1000)}`);
+  await call("POST", `/sessions/${id}/extract`);
+  const mine = (await (await call("GET", "/proposals")).json()) as {
+    items: { content: string; sessionExcerpt: string | null }[];
+  };
+  const p = mine.items.find((x) => x.content === "Excerpt check memory");
+  expect(p?.sessionExcerpt).toHaveLength(600);
+  expect(p?.sessionExcerpt?.startsWith("secret-ish")).toBe(true);
+  const bob = await createToken(t.db, "bob2");
+  const theirs = (await (
+    await app.request("/api/proposals", {
+      headers: { authorization: `Bearer ${bob}` },
+    })
+  ).json()) as { items: { content: string; sessionExcerpt: string | null }[] };
+  expect(
+    theirs.items.find((x) => x.content === "Excerpt check memory")
+      ?.sessionExcerpt,
+  ).toBeNull();
+});
