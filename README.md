@@ -238,7 +238,9 @@ fly ssh console -C "pnpm --filter @impression/api token:create me"   # prints yo
 
 Then each teammate runs `impression login --url https://<app>.fly.dev --token imp_...` with their own token (create one per person). The token is the only protection, so don't share one.
 
-`fly.toml` keeps one machine running, because a cold start would make the session-start hook time out and skip injection. Don't mix embedding models in one database. To move existing data from a local Ollama setup, restore a `pg_dump` into Neon and run `pnpm --filter @impression/api db:reembed` once with `EMBEDDING_PROVIDER=openai` set.
+`fly.toml` keeps one machine running, because a cold start would make the session-start hook time out and skip injection. Don't mix embedding models in one database. To move existing data from a local Ollama setup, restore a data-only `pg_dump` (skip `api_tokens` and the `drizzle` schema) into the migrated Neon database, set `embedding` to null on `memories` and `proposals`, then run `pnpm --filter @impression/api db:reembed` with `EMBEDDING_PROVIDER=openai`. `db:reembed` only fills rows with no vector.
+
+Pushes to `main` deploy automatically: the `deploy` job in `.github/workflows/ci.yml` runs after CI passes, using a `FLY_API_TOKEN` repo secret (`fly tokens create deploy -a <app>`).
 
 ## Local embeddings
 
