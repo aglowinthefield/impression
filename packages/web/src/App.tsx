@@ -47,14 +47,40 @@ function Login({ onDone }: { onDone: () => void }) {
 }
 
 const tabs = ["Memories", "Proposals", "Review", "Debug"] as const;
+type Tab = (typeof tabs)[number];
+
+const tabFromPath = (): Tab =>
+  tabs.find((t) => `/${t.toLowerCase()}` === location.pathname) ?? "Memories";
+
+/** Keeps the tab in the path and the project in `?project=`, so views can be linked and reloaded. */
+function useLocation(): [Tab, string, (t: Tab, p: string) => void] {
+  const [, bump] = useState(0);
+  useEffect(() => {
+    const on = () => bump((n) => n + 1);
+    window.addEventListener("popstate", on);
+    return () => window.removeEventListener("popstate", on);
+  }, []);
+  const go = (t: Tab, p: string) => {
+    const url = `/${t.toLowerCase()}${p ? `?project=${encodeURIComponent(p)}` : ""}`;
+    if (url !== location.pathname + location.search) {
+      history.pushState(null, "", url);
+      bump((n) => n + 1);
+    }
+  };
+  return [
+    tabFromPath(),
+    new URLSearchParams(location.search).get("project") ??
+      localStorage.getItem(PROJECT_KEY) ??
+      "",
+    go,
+  ];
+}
 
 function Shell({ onSignOut }: { onSignOut: () => void }) {
   const [who, setWho] = useState("");
   const [projects, setProjects] = useState<Project[]>([]);
-  const [project, setProject] = useState(
-    () => localStorage.getItem(PROJECT_KEY) ?? "",
-  );
-  const [tab, setTab] = useState<(typeof tabs)[number]>("Memories");
+  const [tab, project, go] = useLocation();
+  const setProject = (p: string) => go(tab, p);
 
   useEffect(() => {
     api<{ name: string }>("/whoami").then(
@@ -64,9 +90,21 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
     api<{ items: Project[] }>("/projects").then(
       (r) => {
         setProjects(r.items);
-        setProject((cur) =>
-          r.items.some((p) => p.key === cur) ? cur : (r.items[0]?.key ?? ""),
-        );
+        const cur =
+          new URLSearchParams(location.search).get("project") ??
+          localStorage.getItem(PROJECT_KEY) ??
+          "";
+        const next = r.items.some((p) => p.key === cur)
+          ? cur
+          : (r.items[0]?.key ?? "");
+        if (next !== cur)
+          history.replaceState(
+            null,
+            "",
+            `${location.pathname}?project=${encodeURIComponent(next)}`,
+          );
+        localStorage.setItem(PROJECT_KEY, next);
+        window.dispatchEvent(new PopStateEvent("popstate"));
       },
       () => {},
     );
@@ -97,7 +135,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
               type="button"
               key={t}
               aria-current={t === tab}
-              onClick={() => setTab(t)}
+              onClick={() => go(t, project)}
             >
               {t}
             </button>

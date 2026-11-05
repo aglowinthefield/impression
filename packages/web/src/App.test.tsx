@@ -66,3 +66,19 @@ test("signs in, lists projects and remembers the choice", async () => {
   expect(localStorage.getItem("impression.token")).toBeNull();
   expect(screen.getByLabelText("API token")).toBeTruthy();
 });
+
+test("tab and project live in the URL", async () => {
+  history.replaceState(null, "", "/");
+  localStorage.setItem("impression.token", "imp_ok");
+  respond({
+    "/whoami": { name: "alice" },
+    "/projects": { items: [{ key: "a/x", name: "x" }] },
+    "/debug/requests": { items: [] },
+  });
+  render(<App />);
+  fireEvent.click(await screen.findByText("Debug"));
+  expect(location.pathname).toBe("/debug");
+  expect(location.search).toBe("?project=a%2Fx");
+  history.back();
+  await waitFor(() => expect(location.pathname).not.toBe("/debug"));
+});
