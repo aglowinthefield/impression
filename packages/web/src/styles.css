@@ -83,6 +83,21 @@
   body {
     @apply bg-base-200 text-base-content;
   }
+  /* The login background, blurred and washed toward the page colour. */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: -4rem;
+    z-index: -1;
+    background:
+      linear-gradient(
+        color-mix(in oklab, var(--color-base-200) 72%, transparent),
+        color-mix(in oklab, var(--color-base-200) 72%, transparent)
+      ),
+      url("/login-bg.png") center / cover;
+    filter: blur(28px) saturate(0.7);
+    pointer-events: none;
+  }
   [role="alert"] {
     @apply alert alert-error alert-soft m-0 py-2;
   }
