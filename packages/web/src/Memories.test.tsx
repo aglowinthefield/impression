@@ -97,10 +97,10 @@ test("edit saves with PATCH, pin toggles, delete confirms first", async () => {
     expect(calls.some((c) => c.body === '{"pinned":true}')).toBe(true),
   );
   vi.spyOn(window, "confirm").mockReturnValueOnce(false);
-  fireEvent.click(screen.getByText("Delete"));
+  fireEvent.click(screen.getByText("Retire"));
   expect(calls.some((c) => c.method === "DELETE")).toBe(false);
   vi.spyOn(window, "confirm").mockReturnValueOnce(true);
-  fireEvent.click(screen.getByText("Delete"));
+  fireEvent.click(screen.getByText("Retire"));
   await waitFor(() =>
     expect(calls.some((c) => c.method === "DELETE")).toBe(true),
   );
