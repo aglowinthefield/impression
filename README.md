@@ -1,4 +1,4 @@
-# impression
+# impression 💭₊˚⊹♡
 
 Memory for development work: a self-hostable, mem0-style service that keeps project context
 (conventions, decisions, gotchas, commands) and improves it over time. Built for one developer
