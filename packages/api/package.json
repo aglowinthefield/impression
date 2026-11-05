@@ -11,6 +11,7 @@
     "test": "vitest run --passWithNoTests",
     "lint": "biome check .",
     "dev": "tsx watch src/index.ts",
+    "eval": "tsx src/eval/cli.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate-cli.ts",
     "token:create": "tsx src/token-cli.ts"

@@ -5,7 +5,7 @@ import { memories } from "./db/schema.js";
 import type { LlmProvider } from "./providers/index.js";
 
 /** Existing memories closer than this (cosine similarity) are shown to the LLM as candidates. */
-export const CANDIDATE_MIN_SIMILARITY = 0.55;
+export const CANDIDATE_MIN_SIMILARITY = 0.4;
 const MAX_CANDIDATES = 5;
 
 export type Verdict =
