@@ -164,3 +164,24 @@ test("rating extraction output as good or junk", async () => {
   ).json()) as typeof list;
   expect(cleared.items.find((m) => m.id === created.id)?.rating).toBeNull();
 });
+
+test("a memory injected twice in one turn is listed once", async () => {
+  await call(alice, "POST", "/evals/turns", {
+    turns: [
+      {
+        ...turn(7, ["Dup memory", "Dup memory", "Other"]),
+        project: { key: "github.com/acme/dups" },
+        agentSessionId: "dup",
+      },
+    ],
+  });
+  const res = (await (
+    await call(
+      alice,
+      "GET",
+      `/evals/turns?project=${encodeURIComponent("github.com/acme/dups")}`,
+    )
+  ).json()) as { items: { prompt: string; injected: { text: string }[] }[] };
+  const item = res.items.find((i) => i.prompt === "prompt 7");
+  expect(item?.injected.map((i) => i.text)).toEqual(["Dup memory", "Other"]);
+});

@@ -71,7 +71,9 @@ export function parseSession(jsonl: string): Turn[] {
         reply: "",
       });
     } else if (e.type === "custom_message" && e.customType === "impression") {
-      last?.injected.push(...injectedMemories(String(e.content ?? "")));
+      if (last)
+        for (const m of injectedMemories(String(e.content ?? "")))
+          if (!last.injected.includes(m)) last.injected.push(m);
     } else if (
       e.type === "message" &&
       e.message?.role === "assistant" &&

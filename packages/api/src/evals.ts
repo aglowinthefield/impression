@@ -135,7 +135,9 @@ export function evalRoutes(db: Db) {
         at: r.at,
         prompt: r.prompt,
         reply: r.reply,
-        injected: r.injected.map((text) => ({
+        // Stored rows may repeat a memory (core set + per-prompt search);
+        // ratings are keyed by text, so show each once.
+        injected: [...new Set(r.injected)].map((text) => ({
           text,
           memoryId: byText.get(text)?.id ?? null,
           status: byText.get(text)?.status ?? null,
