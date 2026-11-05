@@ -12,17 +12,21 @@ interface Proposal {
 function Card({ p, onDone }: { p: Proposal; onDone: () => void }) {
   const [text, setText] = useState(p.content);
   const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
   const edited = text.trim() !== p.content;
   const act = async (path: string, body?: unknown) => {
     try {
       setError(null);
+      setBusy(path);
       await api(`/proposals/${p.id}/${path}`, {
         method: "POST",
         body: body ?? {},
       });
       onDone();
+      setBusy(null);
     } catch (e) {
       setError((e as Error).message);
+      setBusy(null);
     }
   };
   return (
@@ -52,15 +56,24 @@ function Card({ p, onDone }: { p: Proposal; onDone: () => void }) {
         <button
           className="btn btn-sm btn-primary"
           type="button"
+          disabled={busy !== null}
           onClick={() =>
             act("accept", edited ? { content: text.trim() } : undefined)
           }
         >
-          {edited ? "Accept edited" : "Accept"}
+          {busy === "accept" && (
+            <span className="loading loading-spinner loading-xs" />
+          )}
+          {busy === "accept"
+            ? "Accepting…"
+            : edited
+              ? "Accept edited"
+              : "Accept"}
         </button>
         <button
           className="btn btn-sm btn-error btn-outline"
           type="button"
+          disabled={busy !== null}
           onClick={() => act("reject")}
         >
           Reject
