@@ -25,7 +25,7 @@ const body = z.object({
     .optional(),
   limit: z.number().int().min(1).max(50).default(10),
   /** Cosine similarity floor for the vector leg, 0 to 1. Weaker matches are dropped. */
-  minSimilarity: z.number().min(0).max(1).default(DEFAULT_MIN_SIMILARITY),
+  minSimilarity: z.number().min(0).max(1).optional(),
 });
 
 /** How many candidates each ranking contributes before fusion. */
@@ -67,6 +67,10 @@ export function searchRoutes(db: Db, providers: Providers) {
         sql`(m.path_prefix IS NULL OR ${path} = m.path_prefix OR starts_with(${path}, m.path_prefix || '/'))`,
       );
     }
+    const minSimilarity =
+      q.minSimilarity ??
+      providers.embeddings.minSimilarity ??
+      DEFAULT_MIN_SIMILARITY;
     const where = sql.join(conds, sql` AND `);
 
     // Vector ranking. If the embedding call fails, search degrades to full text only.
@@ -79,7 +83,7 @@ export function searchRoutes(db: Db, providers: Providers) {
         const rows = await db.execute<{ id: string }>(sql`
           SELECT m.id FROM memories m
           WHERE ${where} AND m.embedding IS NOT NULL
-            AND 1 - (m.embedding <=> ${literal}::vector) >= ${q.minSimilarity}
+            AND 1 - (m.embedding <=> ${literal}::vector) >= ${minSimilarity}
           ORDER BY m.embedding <=> ${literal}::vector
           LIMIT ${CANDIDATES}`);
         vectorRanks = rows.map((r, i) => ({ id: r.id, rank: i + 1 }));

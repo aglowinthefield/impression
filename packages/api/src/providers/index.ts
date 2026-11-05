@@ -26,6 +26,7 @@ function need(env: Env, key: string, why: string): string {
  *   EMBEDDING_PROVIDER = openai (default) | ollama
  *   LLM_PROVIDER       = anthropic (default) | ollama
  *   EMBEDDING_MODEL, LLM_MODEL, OLLAMA_URL override model names and the Ollama host.
+ *   EMBEDDING_MIN_SIMILARITY sets the search floor (Ollama default 0.45, tuned on nomic-embed-text).
  *
  * The embedding column is `EMBEDDING_DIM` wide, so a provider with another
  * dimension is rejected here rather than failing on the first insert.
@@ -42,7 +43,7 @@ export function createProviders(
   if (embeddingKind === "openai") {
     embeddings = openaiEmbeddings({
       apiKey: need(env, "OPENAI_API_KEY", "when EMBEDDING_PROVIDER=openai"),
-      model: env.EMBEDDING_MODEL,
+      model: env.EMBEDDING_MODEL || undefined,
       dimensions: EMBEDDING_DIM,
       fetch: fetchFn,
     });
@@ -52,6 +53,8 @@ export function createProviders(
       dimensions: Number(
         need(env, "EMBEDDING_DIMENSIONS", "when EMBEDDING_PROVIDER=ollama"),
       ),
+      // nomic-embed-text scores unrelated text near 0.45, so 0.25 would let everything through.
+      minSimilarity: Number(env.EMBEDDING_MIN_SIMILARITY ?? 0.45),
       baseUrl: ollamaUrl,
       fetch: fetchFn,
     });

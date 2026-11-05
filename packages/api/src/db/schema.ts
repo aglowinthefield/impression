@@ -16,7 +16,7 @@ import {
 } from "drizzle-orm/pg-core";
 
 /** Dimension of the `embedding` column. Changing it needs a migration and a re-embed. */
-export const EMBEDDING_DIM = 1536;
+export const EMBEDDING_DIM = 768;
 
 const tsvector = customType<{ data: string }>({
   dataType: () => "tsvector",

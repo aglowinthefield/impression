@@ -2,6 +2,8 @@ export interface EmbeddingProvider {
   /** Recorded on each memory, so a model change means a re-embed. */
   readonly model: string;
   readonly dimensions: number;
+  /** Search similarity floor tuned for this model. Cosine scores differ a lot between models. */
+  readonly minSimilarity?: number;
   embed(texts: string[]): Promise<number[][]>;
 }
 

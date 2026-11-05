@@ -52,10 +52,10 @@ describe("embed on write", () => {
       .select()
       .from(memories)
       .where(eq(memories.id, m.id));
-    expect(row?.embedding).toHaveLength(1536);
+    expect(row?.embedding).toHaveLength(768);
     expect(row).toMatchObject({
       embeddingModel: "fake-bow",
-      embeddingDim: 1536,
+      embeddingDim: 768,
     });
   });
 

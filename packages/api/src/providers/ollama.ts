@@ -12,13 +12,18 @@ export interface OllamaOptions {
 }
 
 export function ollamaEmbeddings(
-  opts: OllamaOptions & { model: string; dimensions: number },
+  opts: OllamaOptions & {
+    model: string;
+    dimensions: number;
+    minSimilarity?: number;
+  },
 ): EmbeddingProvider {
   const fetchFn = opts.fetch ?? fetch;
   const baseUrl = opts.baseUrl ?? "http://localhost:11434";
   return {
     model: opts.model,
     dimensions: opts.dimensions,
+    minSimilarity: opts.minSimilarity,
     async embed(texts) {
       if (texts.length === 0) return [];
       const json = (await postJson(

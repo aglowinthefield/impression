@@ -33,10 +33,10 @@ describe("openaiEmbeddings", () => {
     );
     expect(f.body()).toMatchObject({
       model: "text-embedding-3-small",
-      dimensions: 1536,
+      dimensions: 768,
       input: ["a", "b"],
     });
-    expect([p.model, p.dimensions]).toEqual(["text-embedding-3-small", 1536]);
+    expect([p.model, p.dimensions]).toEqual(["text-embedding-3-small", 768]);
   });
 
   test("makes no request for empty input", async () => {
@@ -145,9 +145,9 @@ describe("createProviders", () => {
       createProviders({
         ...keys,
         EMBEDDING_PROVIDER: "ollama",
-        EMBEDDING_MODEL: "nomic-embed-text",
-        EMBEDDING_DIMENSIONS: "768",
+        EMBEDDING_MODEL: "mxbai-embed-large",
+        EMBEDDING_DIMENSIONS: "1024",
       }),
-    ).toThrow(/768 dimensions but the database column is 1536/);
+    ).toThrow(/1024 dimensions but the database column is 768/);
   });
 });

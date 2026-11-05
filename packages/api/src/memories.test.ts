@@ -123,10 +123,10 @@ describe("read, update, delete", () => {
     const m = await (
       await call(alice, "POST", "", { scope: "user", content: "old text" })
     ).json();
-    const sentinel = new Array(1536).fill(0.1);
+    const sentinel = new Array(768).fill(0.1);
     await t.db
       .update(memories)
-      .set({ embedding: sentinel, embeddingModel: "m", embeddingDim: 1536 })
+      .set({ embedding: sentinel, embeddingModel: "m", embeddingDim: 768 })
       .where(eq(memories.id, m.id));
 
     await call(alice, "PATCH", `/${m.id}`, { pinned: true });

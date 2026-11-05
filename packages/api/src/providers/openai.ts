@@ -17,7 +17,7 @@ export function openaiEmbeddings(
   opts: OpenAIEmbeddingOptions,
 ): EmbeddingProvider {
   const model = opts.model ?? "text-embedding-3-small";
-  const dimensions = opts.dimensions ?? 1536;
+  const dimensions = opts.dimensions ?? 768;
   const fetchFn = opts.fetch ?? fetch;
   const baseUrl = opts.baseUrl ?? "https://api.openai.com/v1";
   return {

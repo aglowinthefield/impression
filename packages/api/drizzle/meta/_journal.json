@@ -36,6 +36,13 @@
       "when": 1793831078910,
       "tag": "0004_proposal_embedding",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1793852929423,
+      "tag": "0005_embedding_768",
+      "breakpoints": true
     }
   ]
 }

@@ -79,7 +79,7 @@ Run `/reload` or restart pi. That gives pi search and add. For automatic injecti
 - **Staleness:** memories carry anchors (paths, symbols, commit SHA). Anchors are checked at retrieval and changed or missing ones are flagged. Contradictions supersede the old memory, which is kept as history.
 - **Storage:** Postgres with pgvector.
 - **Integration:** one HTTP API server owns storage, extraction and anchor checks. MCP server, CLI, hooks and a web UI are clients.
-- **Models:** pluggable providers. Defaults are OpenAI `text-embedding-3-small` and a Haiku-class extractor. Ollama is configurable. The embedding model and dimension are stored per memory.
+- **Models:** pluggable providers. Defaults are OpenAI `text-embedding-3-small` (at 768 dimensions) and a Haiku-class extractor. Ollama is configurable; `nomic-embed-text` answers in about 10ms locally. The embedding model and dimension are stored per memory.
 - **Team (after v1):** per-person tokens, member and admin roles, explicit promotion to team scope, provenance, and a secret and PII scrubber.
 
 ## v1
@@ -107,7 +107,8 @@ TypeScript monorepo (pnpm workspaces, Node 22+). Packages: `shared`, `api`, `cli
 | `LLM_PROVIDER`                       | `anthropic`                                  | or `ollama`. Needs `ANTHROPIC_API_KEY` for anthropic.                                 |
 | `EMBEDDING_MODEL`, `LLM_MODEL`       | `text-embedding-3-small`, `claude-haiku-4-5` | Required for ollama.                                                                  |
 | `AUTO_ACCEPT_CONFIDENCE`             | `0.9`                                        | Extracted memories at or above this become memories without review. `off` queues all. |
-| `EMBEDDING_DIMENSIONS`, `OLLAMA_URL` |                                              | Ollama only. The dimension must be 1536 to match the column.                          |
+| `EMBEDDING_DIMENSIONS`, `OLLAMA_URL` |                                              | Ollama only. The dimension must be 768 to match the column.                           |
+| `EMBEDDING_MIN_SIMILARITY`           | `0.25` openai, `0.45` ollama                 | Search floor. Cosine scores differ between models, so retune with the eval.           |
 
 ## Develop
 
@@ -139,7 +140,9 @@ pnpm dev   # api on :3000, GET /health
 
 `pnpm --filter @impression/api eval` runs a small fixture (14 memories, 18 queries, 5 off-topic queries, 15 memory pairs) against the configured embedding model and prints hit@3, MRR and off-topic results per `minSimilarity`, plus pair similarities for dedup. It calls the real embeddings API, so it costs a little. CI runs the same fixture with a fake embedder to catch ranking regressions.
 
-With `text-embedding-3-small`, the 0.25 search floor gave the best MRR (0.92), hit@3 1.00 and no off-topic results. Paraphrases scored 0.68 to 0.85, one conflicting pair scored 0.49 and unrelated pairs at most 0.14, so the dedup candidate floor is 0.4.
+With `nomic-embed-text` (768 dimensions), hit@3 is 1.00 and MRR 0.94. Off-topic queries return nothing from a 0.45 floor, which is its default. Paraphrases scored 0.76 to 0.91 and unrelated pairs at most 0.45, so the 0.55 dedup threshold still separates them.
+
+With `text-embedding-3-small` (measured at 1536 dimensions, before the column went to 768; rerun the eval to confirm), the 0.25 search floor gave the best MRR (0.92), hit@3 1.00 and no off-topic results. Paraphrases scored 0.68 to 0.85, one conflicting pair scored 0.49 and unrelated pairs at most 0.14, so the dedup candidate floor is 0.4.
 
 ## MCP server
 
@@ -199,3 +202,11 @@ DATABASE_URL=... OPENAI_API_KEY=... ANTHROPIC_API_KEY=... pnpm --filter @impress
 ```
 
 The migrations run `CREATE EXTENSION vector`, which Neon permits for the database owner.
+
+## Local embeddings
+
+```sh
+brew install ollama && ollama pull nomic-embed-text
+```
+
+Put `EMBEDDING_PROVIDER=ollama` and `EMBEDDING_MODEL=nomic-embed-text` in `.env` next to `docker-compose.yml`, then `docker compose up -d --build api`. The container reaches the host's Ollama at `host.docker.internal:11434`. After changing the embedding model or the column size, run `pnpm --filter @impression/api db:reembed` to fill in the vectors that are missing. Migration 0005 clears them when it changes the column to 768 dimensions.

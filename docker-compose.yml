@@ -21,8 +21,14 @@ services:
     environment:
       DATABASE_URL: postgres://impression:impression@postgres:5432/impression
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-openai}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-}
+      EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-768}
+      OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       AUTO_ACCEPT_CONFIDENCE: ${AUTO_ACCEPT_CONFIDENCE:-0.9}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "3000:3000"
 volumes:
