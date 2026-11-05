@@ -13,7 +13,11 @@ import {
   status,
 } from "./commands.js";
 import { loadConfig, saveConfig } from "./config.js";
-import { claudeCodeOutput, sessionStartContext } from "./hook.js";
+import {
+  claudeCodeOutput,
+  promptContext,
+  sessionStartContext,
+} from "./hook.js";
 import { sendSession } from "./session-end.js";
 
 const [cmd, sub] = process.argv.slice(2);
@@ -33,6 +37,25 @@ if (cmd === "hook" && sub === "session-start") {
       process.stdout.write(`${plain ? ctx : claudeCodeOutput(ctx)}\n`);
     }
   }
+} else if (cmd === "hook" && sub === "prompt") {
+  // The prompt text arrives on stdin. Quiet on failure, like the other hooks.
+  if (token) {
+    const prompt = await new Promise<string>((resolve) => {
+      let data = "";
+      process.stdin.on("data", (d) => {
+        data += d;
+      });
+      process.stdin.on("end", () => resolve(data));
+      setTimeout(() => resolve(data), 2000).unref();
+    });
+    const ctx = await promptContext(
+      createClient(url, token),
+      process.cwd(),
+      prompt,
+    );
+    if (ctx) process.stdout.write(`${ctx}\n`);
+  }
+  process.exit(0);
 } else if (cmd === "hook" && sub === "session-end") {
   // Fail quietly, and give up after a few seconds so exit is never held up.
   if (token) {
@@ -138,7 +161,7 @@ if (cmd === "hook" && sub === "session-start") {
   }
 } else {
   console.error(
-    "usage: impression login | search <q> | add <text> [--user] [--pin] | list | status\n       impression proposals | accept <id> [edited text] | reject <id> | retire <id> | edit <id> <text> | keep <id>\n       impression hook session-start [--plain] | session-end [--extract]",
+    "usage: impression login | search <q> | add <text> [--user] [--pin] | list | status\n       impression proposals | accept <id> [edited text] | reject <id> | retire <id> | edit <id> <text> | keep <id>\n       impression hook session-start [--plain] | prompt (text on stdin) | session-end [--extract]",
   );
   process.exit(2);
 }

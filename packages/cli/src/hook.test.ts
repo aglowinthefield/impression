@@ -56,3 +56,22 @@ describe("sessionStartContext", () => {
     });
   });
 });
+
+test("promptContext lists matching memories and is null on failure", async () => {
+  const { promptContext } = await import("./hook.js");
+  const ok = {
+    post: async () => ({ results: [{ content: "use pnpm" }] }),
+  } as never;
+  expect(await promptContext(ok, "/tmp", "how do I install")).toBe(
+    "Memories from Impression that match this prompt:\n- use pnpm",
+  );
+  const none = { post: async () => ({ results: [] }) } as never;
+  expect(await promptContext(none, "/tmp", "x")).toBeNull();
+  const down = {
+    post: async () => {
+      throw new Error("down");
+    },
+  } as never;
+  expect(await promptContext(down, "/tmp", "x")).toBeNull();
+  expect(await promptContext(ok, "/tmp", "  ")).toBeNull();
+});

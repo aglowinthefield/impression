@@ -62,7 +62,7 @@ MCP tools:
 pi mcp add impression --env IMPRESSION_URL=http://localhost:3000 --env IMPRESSION_TOKEN=imp_... -- node $IMP/packages/mcp/dist/bin.js
 ```
 
-Run `/reload` or restart pi. That gives pi search and add. For automatic injection and capture, load the extension at `packages/pi/impression.ts` by adding its absolute path to `"extensions"` in `~/.pi/agent/settings.json`. It runs `impression hook session-start --plain` on session start and `hook session-end --extract` on exit, so build the CLI first and run `impression login`.
+Run `/reload` or restart pi. That gives pi search and add. For automatic injection and capture, load the extension at `packages/pi/impression.ts` by adding its absolute path to `"extensions"` in `~/.pi/agent/settings.json`. It runs `impression hook session-start --plain` on session start, `hook prompt` (a search on the prompt text) before each prompt, and `hook session-end --extract` on exit, so build the CLI first and run `impression login`.
 
 ## Troubleshooting
 

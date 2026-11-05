@@ -38,3 +38,33 @@ export function claudeCodeOutput(context: string): string {
     },
   });
 }
+
+/**
+ * Memories relevant to one prompt, or null when none match or the API is
+ * unreachable. Run on every prompt, so it keeps the result short.
+ */
+export async function promptContext(
+  client: ApiClient,
+  cwd: string,
+  prompt: string,
+  limit = 5,
+): Promise<string | null> {
+  try {
+    const query = prompt.trim().slice(0, 2000);
+    if (!query) return null;
+    const p = resolveProject(cwd);
+    const r = (await client.post("/search", {
+      query,
+      project: p.key,
+      limit,
+      ...(p.pathPrefix ? { path: p.pathPrefix } : {}),
+    })) as { results?: { content: string }[] };
+    if (!r.results?.length) return null;
+    return [
+      "Memories from Impression that match this prompt:",
+      ...r.results.map((m) => `- ${m.content}`),
+    ].join("\n");
+  } catch {
+    return null;
+  }
+}

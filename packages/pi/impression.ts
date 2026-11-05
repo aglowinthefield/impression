@@ -1,4 +1,4 @@
-// pi extension: injects saved memories at the start of a session and sends the
+// pi extension: injects saved memories at session start and for each prompt, and sends the
 // transcript to Impression when it ends. Shells out to the `impression` CLI, so it
 // shares config (`impression login`) and fail-quietly behaviour with the Claude Code hooks.
 //
@@ -31,9 +31,11 @@ function run(
 export default function (pi: ExtensionAPI) {
   let context = "";
   let injected = false;
+  const seen = new Set<string>();
 
   pi.on("session_start", async (_event, ctx) => {
     injected = false;
+    seen.clear();
     context = (
       await run(["hook", "session-start", "--plain"], ctx.cwd, {
         timeout: 10_000,
@@ -41,11 +43,34 @@ export default function (pi: ExtensionAPI) {
     ).trim();
   });
 
-  pi.on("before_agent_start", async (event) => {
-    if (injected || !context || event.messageType !== "user") return;
-    injected = true;
+  pi.on("before_agent_start", async (event, ctx) => {
+    if (event.messageType !== "user") return;
+    const parts: string[] = [];
+    if (!injected && context) {
+      injected = true;
+      parts.push(context);
+    }
+    // Search on every prompt, skipping memories already shown this session.
+    const found = (
+      await run(["hook", "prompt"], ctx.cwd, {
+        input: event.prompt,
+        timeout: 8_000,
+      })
+    )
+      .split("\n")
+      .filter((l) => l.startsWith("- ") && !seen.has(l));
+    for (const l of found) seen.add(l);
+    if (found.length)
+      parts.push(
+        `Memories from Impression that match this prompt:\n${found.join("\n")}`,
+      );
+    if (!parts.length) return;
     return {
-      message: { customType: "impression", content: context, display: false },
+      message: {
+        customType: "impression",
+        content: parts.join("\n\n"),
+        display: false,
+      },
     };
   });
 
