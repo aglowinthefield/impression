@@ -97,7 +97,7 @@ export default function (pi: ExtensionAPI) {
     const found = (
       await run(["hook", "prompt"], ctx.cwd, {
         input: event.prompt,
-        timeout: 8_000,
+        timeout: 2_000,
       })
     )
       .split("\n")
