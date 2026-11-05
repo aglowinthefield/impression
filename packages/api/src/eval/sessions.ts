@@ -1,0 +1,76 @@
+/** Reads pi session logs to show which memories were injected into which prompts. */
+
+export interface Turn {
+  prompt: string;
+  /** Memory texts injected for this prompt (per-prompt search or the session-start core set). */
+  injected: string[];
+  /** Start of the assistant's first reply text, for judging whether the memory was used. */
+  reply: string;
+}
+
+const text = (content: unknown): string =>
+  typeof content === "string"
+    ? content
+    : Array.isArray(content)
+      ? content
+          .map((p) => (p?.type === "text" ? String(p.text ?? "") : ""))
+          .join("")
+      : "";
+
+/** Memory lines from an injected block: every "- " bullet after the header. */
+export function injectedMemories(block: string): string[] {
+  return block
+    .split("\n")
+    .filter((l) => l.startsWith("- "))
+    .map((l) => l.slice(2).trim());
+}
+
+/** Splits a pi session .jsonl into turns. Injection entries follow the user prompt they belong to. */
+export function parseSession(jsonl: string): Turn[] {
+  const turns: Turn[] = [];
+  for (const line of jsonl.split("\n")) {
+    let e: {
+      type?: string;
+      customType?: string;
+      content?: unknown;
+      message?: { role?: string; content?: unknown };
+    };
+    try {
+      e = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const last = turns.at(-1);
+    if (e.type === "message" && e.message?.role === "user") {
+      turns.push({ prompt: text(e.message.content), injected: [], reply: "" });
+    } else if (e.type === "custom_message" && e.customType === "impression") {
+      last?.injected.push(...injectedMemories(String(e.content ?? "")));
+    } else if (
+      e.type === "message" &&
+      e.message?.role === "assistant" &&
+      last &&
+      !last.reply
+    ) {
+      last.reply = text(e.message.content).slice(0, 300);
+    }
+  }
+  return turns;
+}
+
+export interface Report {
+  prompts: number;
+  withMemories: number;
+  /** How many times each memory was injected. */
+  counts: Map<string, number>;
+}
+
+export function summarize(turns: Turn[]): Report {
+  const counts = new Map<string, number>();
+  let withMemories = 0;
+  for (const t of turns) {
+    if (t.injected.length) withMemories++;
+    for (const m of new Set(t.injected))
+      counts.set(m, (counts.get(m) ?? 0) + 1);
+  }
+  return { prompts: turns.length, withMemories, counts };
+}

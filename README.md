@@ -144,6 +144,14 @@ With `nomic-embed-text` (768 dimensions), hit@3 is 1.00 and MRR 0.94. Off-topic 
 
 With `text-embedding-3-small` at 768 dimensions, hit@3 is 1.00 and MRR 0.92 (the same as at 1536). The 0.25 search floor gave the best MRR (0.92), hit@3 1.00 and no off-topic results. Paraphrases scored 0.68 to 0.85, one conflicting pair scored 0.49 and unrelated pairs at most 0.14, so the dedup candidate floor is 0.4.
 
+## Memory quality evals
+
+Three local checks. None run in CI, because they need a real model or your own session logs.
+
+- `pnpm --filter @impression/api eval` ranks search results and shows where the similarity floors should sit.
+- `pnpm --filter @impression/api eval:extract` runs the extraction prompt over transcripts in `packages/api/src/eval/extraction-fixture.ts` and fails if it keeps assistant suggestions, status updates or chatter, or misses a decision. It uses `LLM_PROVIDER`. Add a case whenever extraction saves something it shouldn't.
+- `pnpm --filter @impression/api eval:sessions [project] [--turns]` reads your pi session logs and reports how many prompts got memories, which memories were injected most, and which active memories were never injected. `--turns` lists each prompt with its injected memories and the start of the reply, so you can judge whether they were used.
+
 ## MCP server
 
 `packages/mcp` is a stdio MCP server with two tools, `search` and `add`. It resolves the project from the working directory and talks to the API over HTTP. Setup is under [Wire it into your agent](#wire-it-into-your-agent).
