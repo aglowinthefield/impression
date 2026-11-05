@@ -1,8 +1,10 @@
 @import "tailwindcss";
-@import "@fontsource-variable/geist";
+@import "@fontsource/ibm-plex-sans/400.css";
+@import "@fontsource/ibm-plex-sans/500.css";
+@import "@fontsource/ibm-plex-sans/600.css";
 
 @theme {
-  --font-sans: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
 }
 @plugin "daisyui" {
   themes:
@@ -139,7 +141,7 @@
     @apply card bg-base-100 border-base-300 border p-3 shadow-sm;
   }
   .memory p {
-    @apply mb-1 whitespace-pre-wrap;
+    @apply mb-1 text-sm whitespace-pre-wrap;
   }
   .memory small {
     @apply opacity-70;
