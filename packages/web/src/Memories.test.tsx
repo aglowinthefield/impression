@@ -112,3 +112,15 @@ test("history view has no edit actions", async () => {
   await screen.findByText("Use pnpm");
   expect(screen.queryByText("Edit")).toBeNull();
 });
+
+test("the tag filter lists with that tag, and tags seen are offered", async () => {
+  stub(() => ({ items: [mem({ tags: ["practice", "design"] })] }));
+  render(<Memories project="a/x" />);
+  await screen.findByText("Use pnpm");
+  fireEvent.change(screen.getByLabelText("Tag"), {
+    target: { value: "design" },
+  });
+  await waitFor(() =>
+    expect(calls.at(-1)?.url).toBe("/api/memories?project=a%2Fx&tag=design"),
+  );
+});

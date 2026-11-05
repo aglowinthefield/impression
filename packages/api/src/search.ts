@@ -18,6 +18,7 @@ const body = z.object({
   query: z.string().trim().min(1).max(2000),
   scope: z.enum(["user", "project"]).optional(),
   project: z.string().min(1).optional(),
+  tag: z.string().min(1).optional(),
   /** Working path relative to the repo root. Memories narrowed to other paths are left out. */
   path: z.string().min(1).optional(),
   status: z
@@ -56,6 +57,7 @@ export function searchRoutes(db: Db, providers: Providers) {
         : sql`m.status IN ('active', 'possibly_stale')`,
     ];
     if (q.scope) conds.push(sql`m.scope = ${q.scope}`);
+    if (q.tag) conds.push(sql`${q.tag} = ANY(m.tags)`);
     if (q.project) {
       conds.push(
         sql`m.project_id = (SELECT id FROM projects WHERE key = ${q.project})`,

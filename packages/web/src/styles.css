@@ -1,4 +1,9 @@
 @import "tailwindcss";
+@import "@fontsource-variable/geist";
+
+@theme {
+  --font-sans: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
+}
 @plugin "daisyui" {
   themes:
     compline-light --default,

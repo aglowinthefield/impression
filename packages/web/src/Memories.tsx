@@ -134,6 +134,8 @@ function Row({ m, onChange }: { m: Memory; onChange: () => void }) {
 }
 
 export function Memories({ project }: { project: string }) {
+  const [tag, setTag] = useState("");
+  const [knownTags, setKnownTags] = useState<string[]>(["practice"]);
   const [query, setQuery] = useState("");
   const [scope, setScope] = useState("");
   const [status, setStatus] = useState("");
@@ -148,6 +150,7 @@ export function Memories({ project }: { project: string }) {
       if (project) q.set("project", project);
       if (scope) q.set("scope", scope);
       if (status) q.set("status", status);
+      if (tag) q.set("tag", tag);
       const r = query.trim()
         ? await api<{ results: Memory[] }>("/search", {
             body: {
@@ -155,17 +158,21 @@ export function Memories({ project }: { project: string }) {
               ...(project ? { project } : {}),
               ...(scope ? { scope } : {}),
               ...(status ? { status } : {}),
+              ...(tag ? { tag } : {}),
             },
           }).then((x) => x.results)
         : await api<{ items: Memory[] }>(`/memories?${q}`).then((x) => x.items);
       setItems(r);
+      setKnownTags((k) =>
+        [...new Set([...k, ...r.flatMap((m) => m.tags ?? [])])].sort(),
+      );
       setError(null);
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setLoading(false);
     }
-  }, [project, scope, status, query]);
+  }, [project, scope, status, tag, query]);
 
   useEffect(() => {
     const t = setTimeout(load, query ? 250 : 0);
@@ -192,6 +199,19 @@ export function Memories({ project }: { project: string }) {
           <option value="">All scopes</option>
           <option value="project">Project</option>
           <option value="user">Mine</option>
+        </select>
+        <select
+          className="select select-sm w-auto"
+          aria-label="Tag"
+          value={tag}
+          onChange={(e) => setTag(e.target.value)}
+        >
+          <option value="">All tags</option>
+          {knownTags.map((t) => (
+            <option key={t} value={t}>
+              {t}
+            </option>
+          ))}
         </select>
         <select
           className="select select-sm w-auto"

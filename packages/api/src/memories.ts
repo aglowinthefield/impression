@@ -1,4 +1,14 @@
-import { and, desc, eq, inArray, ne, or, type SQL, sql } from "drizzle-orm";
+import {
+  and,
+  desc,
+  eq,
+  inArray,
+  isNull,
+  ne,
+  or,
+  type SQL,
+  sql,
+} from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AuthEnv } from "./auth.js";
@@ -398,8 +408,18 @@ export function memoryRoutes(db: Db, providers: Providers) {
         .select({ id: projects.id })
         .from(projects)
         .where(eq(projects.key, q.project));
-      if (!p) return c.json({ items: [], limit: q.limit, offset: q.offset });
-      where.push(eq(memories.projectId, p.id));
+      // Your user-scoped memories (practices) belong to no project and apply in all of them.
+      where.push(
+        p
+          ? (or(
+              eq(memories.projectId, p.id),
+              and(eq(memories.scope, "user"), isNull(memories.projectId)),
+            ) as SQL)
+          : (and(
+              eq(memories.scope, "user"),
+              isNull(memories.projectId),
+            ) as SQL),
+      );
     }
 
     const rows = await db

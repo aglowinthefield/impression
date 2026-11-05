@@ -199,7 +199,9 @@ describe("list", () => {
       ).json();
       ids.push(r.id);
     }
-    const all = await (await call(alice, "GET", `?project=${p2.key}`)).json();
+    const all = await (
+      await call(alice, "GET", `?scope=project&project=${p2.key}`)
+    ).json();
     expect(all.items.map((m: { content: string }) => m.content)).toEqual([
       "three",
       "two",
@@ -207,14 +209,18 @@ describe("list", () => {
     ]);
 
     const pinned = await (
-      await call(alice, "GET", `?project=${p2.key}&pinned=true`)
+      await call(alice, "GET", `?scope=project&project=${p2.key}&pinned=true`)
     ).json();
     expect(pinned.items.map((m: { content: string }) => m.content)).toEqual([
       "two",
     ]);
 
     const page = await (
-      await call(alice, "GET", `?project=${p2.key}&limit=1&offset=1`)
+      await call(
+        alice,
+        "GET",
+        `?scope=project&project=${p2.key}&limit=1&offset=1`,
+      )
     ).json();
     expect(page.items.map((m: { content: string }) => m.content)).toEqual([
       "two",
@@ -412,5 +418,56 @@ describe("review queue", () => {
       }
     ).items;
     expect(items.map((i) => i.id)).not.toContain(m.id);
+  });
+});
+
+describe("tags", () => {
+  test("filter by tag, and a project filter still lists your user-scoped memories", async () => {
+    const tagged = await call(alice, "POST", "", {
+      scope: "user",
+      content: "Run design sessions against production forks",
+      tags: ["Practice", "design", "design"],
+    });
+    expect(tagged.status).toBe(201);
+    expect(((await tagged.json()) as { tags: string[] }).tags).toEqual([
+      "practice",
+      "design",
+    ]);
+    await call(alice, "POST", "", {
+      scope: "project",
+      project,
+      content: "Untagged project note",
+    });
+
+    const q = encodeURIComponent(project.key);
+    const byTag = (await (
+      await call(alice, "GET", `?tag=practice&project=${q}`)
+    ).json()) as { items: { content: string }[] };
+    expect(byTag.items.map((m) => m.content)).toEqual([
+      "Run design sessions against production forks",
+    ]);
+    const inProject = (await (
+      await call(alice, "GET", `?project=${q}`)
+    ).json()) as { items: { content: string }[] };
+    expect(inProject.items.map((m) => m.content)).toEqual(
+      expect.arrayContaining([
+        "Run design sessions against production forks",
+        "Untagged project note",
+      ]),
+    );
+    // Someone else's user-scoped memory never shows up.
+    const bobs = (await (
+      await call(bob, "GET", `?project=${q}&tag=practice`)
+    ).json()) as { items: unknown[] };
+    expect(bobs.items).toEqual([]);
+    expect(
+      (
+        await call(alice, "POST", "", {
+          scope: "user",
+          content: "x",
+          tags: ["Bad Tag!"],
+        })
+      ).status,
+    ).toBe(400);
   });
 });
