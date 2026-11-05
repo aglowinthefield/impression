@@ -80,8 +80,12 @@
 }
 
 @layer base {
+  /* The colour sits on html, not body: a body background would paint over the image layer behind it. */
+  html {
+    @apply bg-base-200;
+  }
   body {
-    @apply bg-base-200 text-base-content;
+    @apply text-base-content bg-transparent;
   }
   /* The login background, blurred and washed toward the page colour. */
   body::before {
