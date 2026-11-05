@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, api, getToken, type Project, setToken } from "./api";
+import { Debug } from "./Debug";
 import { Memories } from "./Memories";
 import { Proposals } from "./Proposals";
 import { Review } from "./Review";
@@ -45,7 +46,7 @@ function Login({ onDone }: { onDone: () => void }) {
   );
 }
 
-const tabs = ["Memories", "Proposals", "Review"] as const;
+const tabs = ["Memories", "Proposals", "Review", "Debug"] as const;
 
 function Shell({ onSignOut }: { onSignOut: () => void }) {
   const [who, setWho] = useState("");
@@ -113,6 +114,8 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
           <Memories project={project} />
         ) : tab === "Proposals" ? (
           <Proposals project={project} />
+        ) : tab === "Debug" ? (
+          <Debug />
         ) : (
           <Review project={project} />
         )}

@@ -8,6 +8,7 @@ import { memoryRoutes } from "./memories.js";
 import { projectRoutes } from "./projects.js";
 import { proposalRoutes } from "./proposals.js";
 import type { Providers } from "./providers/index.js";
+import { RequestLog } from "./request-log.js";
 import { searchRoutes } from "./search.js";
 import { sessionRoutes } from "./sessions.js";
 
@@ -25,8 +26,12 @@ export function createApp(
   // Unauthenticated: used by load balancers and `doctor`-style checks.
   app.get("/health", (c) => c.json({ ok: true }));
 
+  const log = new RequestLog();
   const api = new Hono<AuthEnv>();
+  // Before auth, so rejected tokens show up in the log too.
+  api.use(log.middleware());
   api.use(requireAuth(db));
+  api.route("/debug", log.routes());
   api.route("/memories", memoryRoutes(db, providers));
   api.route("/core", coreRoutes(db));
   api.route("/search", searchRoutes(db, providers));

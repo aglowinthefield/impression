@@ -93,3 +93,16 @@ main {
   overflow: auto;
   font-size: 13px;
 }
+
+.debug {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+.debug td {
+  padding: 0.2rem 0.5rem;
+  white-space: nowrap;
+}
+.debug tr[data-ok="false"] {
+  color: #b00020;
+}

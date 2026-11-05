@@ -76,3 +76,30 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ PORT: "abc" })).toThrow(/PORT/);
   });
 });
+
+describe("request log", () => {
+  test("records requests, including rejected ones, and omits bodies", async () => {
+    await get("/api/core?project=p1&path=src", `Bearer ${token}`);
+    await get("/api/core?project=p1", "Bearer imp_nope");
+    const res = await get("/api/debug/requests", `Bearer ${token}`);
+    const { items } = (await res.json()) as {
+      items: {
+        path: string;
+        query: Record<string, string>;
+        status: number;
+        principal: string | null;
+      }[];
+    };
+    expect(items[0]).toMatchObject({
+      path: "/api/core",
+      status: 401,
+      principal: null,
+    });
+    expect(items[1]).toMatchObject({
+      path: "/api/core",
+      query: { project: "p1", path: "src" },
+      principal: "alice",
+    });
+    expect(items.some((e) => e.path.startsWith("/api/debug"))).toBe(false);
+  });
+});
