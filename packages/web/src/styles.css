@@ -1,108 +1,86 @@
-:root {
-  color-scheme: light dark;
-  font:
-    15px / 1.5 system-ui,
-    sans-serif;
-}
-body {
-  margin: 0;
-}
-.login {
-  max-width: 22rem;
-  margin: 20vh auto;
-  display: grid;
-  gap: 1rem;
-  padding: 0 1rem;
-}
-.login label {
-  display: grid;
-  gap: 0.25rem;
-}
-input,
-select,
-button {
-  font: inherit;
-  padding: 0.35rem 0.6rem;
-}
-header {
-  display: flex;
-  gap: 0.75rem;
-  align-items: center;
-  padding: 0.6rem 1rem;
-  border-bottom: 1px solid #8884;
-}
-header nav {
-  display: flex;
-  gap: 0.25rem;
-}
-header nav button[aria-current="true"] {
-  font-weight: 600;
-  text-decoration: underline;
-}
-.spacer {
-  flex: 1;
-}
-main {
-  padding: 1rem;
-  max-width: 60rem;
-  margin: 0 auto;
-}
-[role="alert"] {
-  color: #c0392b;
-  margin: 0;
-}
-.filters {
-  display: flex;
-  gap: 0.5rem;
-  margin-bottom: 1rem;
-}
-.filters input {
-  flex: 1;
-}
-.memories {
-  list-style: none;
-  padding: 0;
-  display: grid;
-  gap: 0.75rem;
-}
-.memory {
-  border: 1px solid #8884;
-  border-radius: 6px;
-  padding: 0.6rem 0.8rem;
-}
-.memory p {
-  margin: 0 0 0.25rem;
-  white-space: pre-wrap;
-}
-.memory textarea {
-  width: 100%;
-  box-sizing: border-box;
-  font: inherit;
-}
-.memory small {
-  opacity: 0.7;
-}
-.actions {
-  display: flex;
-  gap: 0.4rem;
-  margin-top: 0.4rem;
-}
-.memory pre {
-  white-space: pre-wrap;
-  max-height: 12rem;
-  overflow: auto;
-  font-size: 13px;
+@import "tailwindcss";
+@plugin "daisyui";
+
+@layer base {
+  body {
+    @apply bg-base-200 text-base-content;
+  }
+  input:not([type="checkbox"]) {
+    @apply input input-sm;
+  }
+  select {
+    @apply select select-sm w-auto;
+  }
+  textarea {
+    @apply textarea w-full;
+  }
+  button {
+    @apply btn btn-sm;
+  }
+  button[type="submit"] {
+    @apply btn-primary;
+  }
+  header {
+    @apply navbar bg-base-100 border-base-300 min-h-0 gap-3 border-b px-4 py-2;
+  }
+  header nav {
+    @apply flex gap-1;
+  }
+  header nav button {
+    @apply btn-ghost;
+  }
+  header nav button[aria-current="true"] {
+    @apply btn-active;
+  }
+  [role="alert"] {
+    @apply alert alert-error alert-soft m-0 py-2;
+  }
 }
 
-.debug {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.8rem;
-}
-.debug td {
-  padding: 0.2rem 0.5rem;
-  white-space: nowrap;
-}
-.debug tr[data-ok="false"] {
-  color: #b00020;
+@layer components {
+  .login {
+    @apply card bg-base-100 mx-auto mt-[20vh] grid max-w-sm gap-4 p-6 shadow;
+  }
+  .login label {
+    @apply grid gap-1;
+  }
+  .spacer {
+    @apply flex-1;
+  }
+  main {
+    @apply mx-auto max-w-4xl p-4;
+  }
+  .filters {
+    @apply mb-4 flex gap-2;
+  }
+  .filters input {
+    @apply flex-1;
+  }
+  .memories {
+    @apply m-0 grid list-none gap-3 p-0;
+  }
+  .memory {
+    @apply card bg-base-100 border-base-300 border p-3 shadow-sm;
+  }
+  .memory p {
+    @apply mb-1 whitespace-pre-wrap;
+  }
+  .memory small {
+    @apply opacity-70;
+  }
+  .memory pre {
+    @apply max-h-48 overflow-auto text-xs whitespace-pre-wrap;
+  }
+  .actions {
+    @apply mt-2 flex gap-2;
+  }
+  .debug {
+    @apply table table-xs bg-base-100 w-full;
+  }
+  .debug td {
+    @apply whitespace-nowrap;
+  }
+  .debug tr[data-ok="false"] {
+    @apply text-error;
+  }
 }

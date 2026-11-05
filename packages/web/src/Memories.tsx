@@ -94,7 +94,9 @@ function Row({ m, onChange }: { m: Memory; onChange: () => void }) {
               <button
                 type="button"
                 onClick={() => {
-                  if (window.confirm("Retire this memory? It stays in history."))
+                  if (
+                    window.confirm("Retire this memory? It stays in history.")
+                  )
                     act(() => api(`/memories/${m.id}`, { method: "DELETE" }));
                 }}
               >
