@@ -19,10 +19,12 @@ export interface Memory {
 function Row({
   m,
   project,
+  knownTags,
   onChange,
 }: {
   m: Memory;
   project: string;
+  knownTags: string[];
   onChange: () => void;
 }) {
   const [editing, setEditing] = useState(false);
@@ -38,6 +40,28 @@ function Row({
     } catch (e) {
       setError((e as Error).message);
     }
+  };
+  const [open, setOpen] = useState(false);
+  const clean = newTag.trim().toLowerCase().replace(/\s+/g, "-");
+  const options = knownTags.filter(
+    (t) => !m.tags?.includes(t) && t.includes(clean),
+  );
+  const canCreate =
+    clean !== "" && !knownTags.includes(clean) && !m.tags?.includes(clean);
+  const addTag = (tag: string) => {
+    setNewTag("");
+    if (!tag || m.tags?.includes(tag)) return;
+    if (
+      tag === "practice" &&
+      !window.confirm("A practice follows you into every project. Continue?")
+    )
+      return;
+    void act(() =>
+      api(`/memories/${m.id}`, {
+        method: "PATCH",
+        body: { tags: [...(m.tags ?? []), tag] },
+      }),
+    );
   };
   const history = m.status === "superseded" || m.status === "retired";
   return (
@@ -83,32 +107,57 @@ function Row({
           </span>
         ))}
         {!history && (
-          <input
-            className="input input-xs w-28"
-            aria-label="Add tag"
-            placeholder="+ tag"
-            value={newTag}
-            onChange={(e) => setNewTag(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key !== "Enter") return;
-              e.preventDefault();
-              const tag = newTag.trim().toLowerCase().replace(/\s+/g, "-");
-              if (!tag || m.tags?.includes(tag)) return setNewTag("");
-              if (
-                tag === "practice" &&
-                !window.confirm(
-                  "A practice follows you into every project. Continue?",
-                )
-              )
-                return;
-              act(() =>
-                api(`/memories/${m.id}`, {
-                  method: "PATCH",
-                  body: { tags: [...(m.tags ?? []), tag] },
-                }),
-              ).then(() => setNewTag(""));
-            }}
-          />
+          <div className="relative">
+            <input
+              className="input input-xs w-28"
+              aria-label="Add tag"
+              placeholder="+ tag"
+              value={newTag}
+              onFocus={() => setOpen(true)}
+              onBlur={() => setOpen(false)}
+              onChange={(e) => setNewTag(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") return setOpen(false);
+                if (e.key !== "Enter") return;
+                e.preventDefault();
+                addTag(clean);
+              }}
+            />
+            {open && options.length + (canCreate ? 1 : 0) > 0 && (
+              <ul
+                aria-label="Tag suggestions"
+                className="menu bg-base-100 border-base-300 absolute z-10 mt-1 max-h-48 w-44 overflow-auto rounded-box border p-1 shadow"
+              >
+                {options.map((t) => (
+                  <li key={t}>
+                    {/* mouseDown, not click: the input's blur would close the list first. */}
+                    <button
+                      type="button"
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        addTag(t);
+                      }}
+                    >
+                      {t}
+                    </button>
+                  </li>
+                ))}
+                {canCreate && (
+                  <li>
+                    <button
+                      type="button"
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        addTag(clean);
+                      }}
+                    >
+                      Create “{clean}”
+                    </button>
+                  </li>
+                )}
+              </ul>
+            )}
+          </div>
         )}
       </div>
       <small>
@@ -287,7 +336,13 @@ export function Memories({ project }: { project: string }) {
       {!loading && items.length === 0 && !error && <p>No memories.</p>}
       <ul className="memories">
         {items.map((m) => (
-          <Row key={m.id} m={m} project={project} onChange={load} />
+          <Row
+            key={m.id}
+            m={m}
+            project={project}
+            knownTags={knownTags}
+            onChange={load}
+          />
         ))}
       </ul>
     </section>

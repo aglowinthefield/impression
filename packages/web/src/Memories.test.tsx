@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { Memories } from "./Memories";
@@ -163,6 +164,40 @@ test("tagging practice confirms, and un-tagging it sends the project back", asyn
   await waitFor(() =>
     expect(calls.find((c) => c.method === "PATCH")?.body).toBe(
       JSON.stringify({ tags: [], project: { key: "a/x" } }),
+    ),
+  );
+});
+
+test("the tag box offers known tags and lets you create a new one", async () => {
+  stub(() => ({
+    items: [
+      mem({ tags: ["design"] }),
+      mem({ id: "2", content: "Other", tags: [] }),
+    ],
+  }));
+  render(<Memories project="a/x" />);
+  await screen.findByText("Other");
+  const box = screen.getAllByLabelText("Add tag")[1] as HTMLInputElement;
+  fireEvent.focus(box);
+  // Known tags are listed; picking one adds it.
+  fireEvent.mouseDown(
+    within(await screen.findByLabelText("Tag suggestions")).getByText("design"),
+  );
+  await waitFor(() =>
+    expect(calls.find((c) => c.method === "PATCH")?.body).toBe(
+      JSON.stringify({ tags: ["design"] }),
+    ),
+  );
+  calls = [];
+  fireEvent.change(box, { target: { value: "Brand New" } });
+  fireEvent.mouseDown(
+    within(await screen.findByLabelText("Tag suggestions")).getByText(
+      "Create “brand-new”",
+    ),
+  );
+  await waitFor(() =>
+    expect(calls.find((c) => c.method === "PATCH")?.body).toBe(
+      JSON.stringify({ tags: ["brand-new"] }),
     ),
   );
 });
