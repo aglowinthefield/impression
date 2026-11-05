@@ -50,8 +50,12 @@
   .debug {
     @apply table table-xs bg-base-100 w-full;
   }
+  .debug th,
   .debug td {
     @apply whitespace-nowrap;
+  }
+  .debug td:nth-child(3) {
+    @apply max-w-md truncate;
   }
   .debug tr[data-ok="false"] {
     @apply text-error;

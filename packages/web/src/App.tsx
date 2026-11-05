@@ -32,7 +32,7 @@ function Login({ onDone }: { onDone: () => void }) {
       <label>
         API token
         <input
- className="input input-sm"
+          className="input input-sm"
           type="password"
           value={token}
           onChange={(e) => setTok(e.target.value)}
@@ -40,7 +40,11 @@ function Login({ onDone }: { onDone: () => void }) {
         />
       </label>
       {error && <p role="alert">{error}</p>}
-      <button className="btn btn-sm btn-primary" type="submit" disabled={!token.trim()}>
+      <button
+        className="btn btn-sm btn-primary"
+        type="submit"
+        disabled={!token.trim()}
+      >
         Sign in
       </button>
     </form>
@@ -119,7 +123,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
       <header className="navbar bg-base-100 border-base-300 min-h-0 gap-3 border-b px-4 py-2">
         <strong>Impression</strong>
         <select
- className="select select-sm w-auto"
+          className="select select-sm w-auto"
           aria-label="Project"
           value={project}
           onChange={(e) => setProject(e.target.value)}
@@ -146,7 +150,11 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
         </nav>
         <span className="spacer" />
         <span>{who}</span>
-        <button className="btn btn-sm btn-ghost" type="button" onClick={onSignOut}>
+        <button
+          className="btn btn-sm btn-ghost"
+          type="button"
+          onClick={onSignOut}
+        >
           Sign out
         </button>
       </header>

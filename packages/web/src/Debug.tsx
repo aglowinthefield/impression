@@ -14,6 +14,14 @@ interface Entry {
   items?: number;
 }
 
+/** "Mozilla/5.0 ... Chrome/156.0" becomes "Chrome 156"; other agents keep their first token. */
+export function shortClient(ua: string): string {
+  const browser = /(Edg|Firefox|HeadlessChrome|Chrome|Safari)\/(\d+)/.exec(ua);
+  if (ua.startsWith("Mozilla/") && browser)
+    return `${browser[1] === "Edg" ? "Edge" : browser[1]} ${browser[2]}`;
+  return ua.split(" ")[0]?.split("/")[0] || "unknown";
+}
+
 /** Recent API requests from your token, to check whether an agent is reaching the server. */
 export function Debug() {
   const [items, setItems] = useState<Entry[] | null>(null);
@@ -44,30 +52,43 @@ export function Debug() {
           No requests yet. If your agent is running, it isn't reaching here.
         </p>
       )}
-      <table className="debug">
-        <tbody>
-          {items?.map((e) => (
-            <tr
-              key={`${e.at}${e.method}${e.path}${e.client}`}
-              data-ok={e.status < 400}
-            >
-              <td>{new Date(e.at).toLocaleTimeString()}</td>
-              <td>{e.status}</td>
-              <td>
-                {e.method} {e.path.replace(/^\/api/, "")}
-                {Object.keys(e.query).length > 0 &&
-                  `?${new URLSearchParams(e.query)}`}
-              </td>
-              <td>
-                {e.error ?? (e.items !== undefined ? `${e.items} items` : "")}
-              </td>
-              <td>{e.principal ?? "no auth"}</td>
-              <td>{e.client}</td>
-              <td>{e.ms}ms</td>
+      <div className="overflow-x-auto">
+        <table className="debug">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Status</th>
+              <th>Request</th>
+              <th>Result</th>
+              <th>User</th>
+              <th>Client</th>
+              <th className="text-right">Duration</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {items?.map((e) => (
+              <tr
+                key={`${e.at}${e.method}${e.path}${e.client}`}
+                data-ok={e.status < 400}
+              >
+                <td>{new Date(e.at).toLocaleTimeString()}</td>
+                <td>{e.status}</td>
+                <td>
+                  {e.method} {e.path.replace(/^\/api/, "")}
+                  {Object.keys(e.query).length > 0 &&
+                    `?${new URLSearchParams(e.query)}`}
+                </td>
+                <td>
+                  {e.error ?? (e.items !== undefined ? `${e.items} items` : "")}
+                </td>
+                <td>{e.principal ?? "no auth"}</td>
+                <td>{shortClient(e.client)}</td>
+                <td className="text-right">{e.ms}ms</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </section>
   );
 }

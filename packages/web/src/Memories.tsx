@@ -34,7 +34,7 @@ function Row({ m, onChange }: { m: Memory; onChange: () => void }) {
     <li className="memory">
       {editing ? (
         <textarea
- className="textarea w-full"
+          className="textarea w-full"
           aria-label="Edit memory"
           value={text}
           onChange={(e) => setText(e.target.value)}
@@ -57,7 +57,8 @@ function Row({ m, onChange }: { m: Memory; onChange: () => void }) {
         <div className="actions">
           {editing ? (
             <>
-              <button className="btn btn-sm btn-primary"
+              <button
+                className="btn btn-sm btn-primary"
                 type="button"
                 onClick={() =>
                   act(() =>
@@ -70,16 +71,25 @@ function Row({ m, onChange }: { m: Memory; onChange: () => void }) {
               >
                 Save
               </button>
-              <button className="btn btn-sm btn-outline" type="button" onClick={() => setEditing(false)}>
+              <button
+                className="btn btn-sm btn-outline"
+                type="button"
+                onClick={() => setEditing(false)}
+              >
                 Cancel
               </button>
             </>
           ) : (
             <>
-              <button className="btn btn-sm btn-outline" type="button" onClick={() => setEditing(true)}>
+              <button
+                className="btn btn-sm btn-outline"
+                type="button"
+                onClick={() => setEditing(true)}
+              >
                 Edit
               </button>
-              <button className="btn btn-sm btn-outline"
+              <button
+                className="btn btn-sm btn-outline"
                 type="button"
                 onClick={() =>
                   act(() =>
@@ -92,7 +102,8 @@ function Row({ m, onChange }: { m: Memory; onChange: () => void }) {
               >
                 {m.pinned ? "Unpin" : "Pin to core"}
               </button>
-              <button className="btn btn-sm btn-error btn-outline"
+              <button
+                className="btn btn-sm btn-error btn-outline"
                 type="button"
                 onClick={() => {
                   if (
@@ -155,7 +166,7 @@ export function Memories({ project }: { project: string }) {
     <section>
       <div className="filters">
         <input
- className="input input-sm"
+          className="input input-sm"
           type="search"
           aria-label="Search memories"
           placeholder="Search…"
@@ -163,7 +174,7 @@ export function Memories({ project }: { project: string }) {
           onChange={(e) => setQuery(e.target.value)}
         />
         <select
- className="select select-sm w-auto"
+          className="select select-sm w-auto"
           aria-label="Scope"
           value={scope}
           onChange={(e) => setScope(e.target.value)}
@@ -173,7 +184,7 @@ export function Memories({ project }: { project: string }) {
           <option value="user">Mine</option>
         </select>
         <select
- className="select select-sm w-auto"
+          className="select select-sm w-auto"
           aria-label="Status"
           value={status}
           onChange={(e) => setStatus(e.target.value)}
