@@ -475,3 +475,29 @@ describe("tags", () => {
     ).toBe(400);
   });
 });
+
+describe("the practice tag", () => {
+  test("adding it makes a memory user-scoped, removing it sends it back to a project", async () => {
+    const made = await (
+      await call(alice, "POST", "", {
+        scope: "project",
+        project,
+        content: "Practice tag subject",
+      })
+    ).json();
+    expect(
+      (await call(bob, "PATCH", `/${made.id}`, { tags: ["practice"] })).status,
+    ).toBe(403);
+    const up = await (
+      await call(alice, "PATCH", `/${made.id}`, { tags: ["practice"] })
+    ).json();
+    expect(up).toMatchObject({ scope: "user", project: null });
+    expect(
+      (await call(alice, "PATCH", `/${made.id}`, { tags: [] })).status,
+    ).toBe(400);
+    const down = await (
+      await call(alice, "PATCH", `/${made.id}`, { tags: [], project })
+    ).json();
+    expect(down).toMatchObject({ scope: "project", project: project.key });
+  });
+});

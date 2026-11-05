@@ -142,7 +142,7 @@ test("adds a tag with Enter and removes one with its ×", async () => {
   fireEvent.click(screen.getByLabelText("Remove tag practice"));
   await waitFor(() =>
     expect(calls.find((c) => c.method === "PATCH")?.body).toBe(
-      JSON.stringify({ tags: [] }),
+      JSON.stringify({ tags: [], project: { key: "a/x" } }),
     ),
   );
 });
@@ -153,4 +153,16 @@ test("history rows can't be tagged", async () => {
   await screen.findByText("Use pnpm");
   expect(screen.queryByLabelText("Add tag")).toBeNull();
   expect(screen.queryByLabelText("Remove tag x")).toBeNull();
+});
+
+test("tagging practice confirms, and un-tagging it sends the project back", async () => {
+  stub(() => ({ items: [mem({ tags: ["practice"], scope: "user" })] }));
+  render(<Memories project="a/x" />);
+  await screen.findByText("Use pnpm");
+  fireEvent.click(screen.getByLabelText("Remove tag practice"));
+  await waitFor(() =>
+    expect(calls.find((c) => c.method === "PATCH")?.body).toBe(
+      JSON.stringify({ tags: [], project: { key: "a/x" } }),
+    ),
+  );
 });

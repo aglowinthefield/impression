@@ -18,6 +18,9 @@ import type { Providers } from "./providers/index.js";
 import { decide, findCandidates, markSuperseded } from "./reconcile.js";
 import { isEmptyAfterScrub, scrub } from "./scrub.js";
 
+// Same value as PRACTICE_TAG in extract.ts, which imports this file.
+const PRACTICE_TAG = "practice";
+
 type MemoryRow = typeof memories.$inferSelect;
 
 const projectRef = z.object({
@@ -74,6 +77,8 @@ const patchBody = z
     pathPrefix: z.string().min(1).nullable(),
     pinned: z.boolean(),
     tags: z.array(tagSchema).max(10),
+    /** Needed when removing "practice": where the memory goes back to. */
+    project: projectRef,
   })
   .partial()
   .refine((b) => Object.keys(b).length > 0, "nothing to update");
@@ -478,10 +483,50 @@ export function memoryRoutes(db: Db, providers: Providers) {
     }
     const contentChanged =
       b.content !== undefined && b.content !== existing.content;
+    // The "practice" tag is what makes a memory yours everywhere: adding it moves
+    // the memory to user scope, removing it moves it back to the given project.
+    const principal = c.get("principal");
+    const wasPractice = existing.tags.includes(PRACTICE_TAG);
+    const isPractice = b.tags?.includes(PRACTICE_TAG);
+    let move: { scope: "user" | "project"; projectId: string | null } | null =
+      null;
+    if (b.tags && isPractice && existing.scope === "project") {
+      if (existing.owner !== principal) {
+        return c.json(bad("only the author can make a memory a practice"), 403);
+      }
+      move = { scope: "user", projectId: null };
+    } else if (
+      b.tags &&
+      !isPractice &&
+      wasPractice &&
+      existing.scope === "user"
+    ) {
+      if (!b.project) {
+        return c.json(
+          bad("project is required to remove the practice tag"),
+          400,
+        );
+      }
+      const name =
+        b.project.name ?? b.project.key.split("/").pop() ?? b.project.key;
+      const [p] = await db
+        .insert(projects)
+        .values({ key: b.project.key, name })
+        .onConflictDoUpdate({
+          target: projects.key,
+          set: { key: b.project.key },
+        })
+        .returning();
+      move = { scope: "project", projectId: p?.id ?? null };
+    }
+    const { project: _p, ...fields } = b;
     const [m] = await db
       .update(memories)
       .set({
-        ...b,
+        ...fields,
+        // A path prefix is a place in one repo, meaningless once a memory applies everywhere.
+        ...(move?.scope === "user" ? { pathPrefix: null } : {}),
+        ...(move ?? {}),
         ...(b.tags ? { tags: [...new Set(b.tags)] } : {}),
         updatedAt: new Date(),
         // Rewriting a flagged memory is the "update" review outcome.

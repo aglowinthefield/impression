@@ -16,7 +16,15 @@ export interface Memory {
   anchors?: { path: string; symbol: string | null }[];
 }
 
-function Row({ m, onChange }: { m: Memory; onChange: () => void }) {
+function Row({
+  m,
+  project,
+  onChange,
+}: {
+  m: Memory;
+  project: string;
+  onChange: () => void;
+}) {
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(m.content);
   const [newTag, setNewTag] = useState("");
@@ -58,7 +66,13 @@ function Row({ m, onChange }: { m: Memory; onChange: () => void }) {
                   act(() =>
                     api(`/memories/${m.id}`, {
                       method: "PATCH",
-                      body: { tags: (m.tags ?? []).filter((x) => x !== t) },
+                      body: {
+                        tags: (m.tags ?? []).filter((x) => x !== t),
+                        // Un-practicing sends it back to the project you're looking at.
+                        ...(t === "practice"
+                          ? { project: { key: project } }
+                          : {}),
+                      },
                     }),
                   )
                 }
@@ -80,6 +94,13 @@ function Row({ m, onChange }: { m: Memory; onChange: () => void }) {
               e.preventDefault();
               const tag = newTag.trim().toLowerCase().replace(/\s+/g, "-");
               if (!tag || m.tags?.includes(tag)) return setNewTag("");
+              if (
+                tag === "practice" &&
+                !window.confirm(
+                  "A practice follows you into every project. Continue?",
+                )
+              )
+                return;
               act(() =>
                 api(`/memories/${m.id}`, {
                   method: "PATCH",
@@ -266,7 +287,7 @@ export function Memories({ project }: { project: string }) {
       {!loading && items.length === 0 && !error && <p>No memories.</p>}
       <ul className="memories">
         {items.map((m) => (
-          <Row key={m.id} m={m} onChange={load} />
+          <Row key={m.id} m={m} project={project} onChange={load} />
         ))}
       </ul>
     </section>
