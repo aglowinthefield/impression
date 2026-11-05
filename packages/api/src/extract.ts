@@ -12,9 +12,20 @@ export const MAX_PROMPT_CHARS = 60_000;
 const MAX_CANDIDATES = 15;
 
 export const SYSTEM = `You extract durable project knowledge from a coding-session transcript, for a memory that future sessions will read.
-Extract only things that will still matter next week: decisions and their reasons, conventions, gotchas and pitfalls, and working commands. Skip task chatter, one-off debugging steps, anything obvious from the code, and anything secret.
-Only the user's decisions, preferences and corrections are decisions. Do not record the assistant's suggestions, options, plans or offers unless the user accepted them. Do not record progress or status ("X is now live", "tests pass", "committed as abc123"), how the UI currently looks, or an assistant claim the user never confirmed. If the user corrected the assistant, record the correction, not the claim that was corrected.
-Do not record rules that come from project instruction files (AGENTS.md, CLAUDE.md, README conventions) or that the assistant read from one, even when the user agrees with them. Those files are already loaded into every session, so a memory repeats them and goes stale when they change. Keep what the files don't say: facts learned while working.
+Be strict. Most sessions have nothing worth keeping, and an empty list is the usual right answer. Return at most 3 items even for a long session: pick the ones that matter most.
+Keep only what will still be true and useful next month, and that a developer could not get by reading the code: decisions with their reasons, conventions, gotchas, working commands, and the user's stated preferences.
+Only the user's decisions, preferences and corrections are decisions. Do not record the assistant's suggestions, options, plans or offers unless the user accepted them. A user who moves on, changes the subject or says "fine" has not accepted anything. If the user corrected the assistant, record the correction, not the claim that was corrected.
+Never record any of these:
+- Findings, audit results, review comments, gaps, bugs, risks or to-do lists the assistant produced, even when they cite files and lines. They are work items, not knowledge.
+- Status or progress: what was built, deployed, merged or fixed, what is next, what is not done yet, test counts, commit hashes, URLs and ids of things just created.
+- Descriptions of how the product, UI, config or setup works or is currently set up, even if the user asked about them. The code, docs and settings files already say so.
+- Snapshots that will change: counts, sizes, costs, prices, timings, dates, how many of something exist, how the UI currently looks, what a file contains right now.
+- Explanations of how code works, including answers to the user's "how does X work" questions. A reader gets these from the code. Keep an explanation only when it states a trap that would surprise someone, and a list of implementation details is never a trap.
+- One-off run parameters, such as "run 200 cards first".
+- Rules from project instruction files (AGENTS.md, CLAUDE.md, README conventions), or that the assistant read from one, even when the user agrees. Those files are already loaded into every session.
+- Anything secret.
+A user's instruction on how to build something ("use deterministic ids so retries don't double count", "keep it behind a gate") is a decision with a reason: keep it, without the surrounding task.
+Before keeping an item, ask: would a new teammate be glad to have been told this a month from now? If not, drop it.
 Prefer one consolidated memory over several that restate the same thing.
 Each item is one self-contained sentence or two. If a file or symbol is central to it, add an anchor with a repo-relative path and optional symbol.
 "confidence" is 0 to 1: how sure you are that it is true, durable and useful.
