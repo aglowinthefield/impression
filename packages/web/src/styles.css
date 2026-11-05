@@ -81,6 +81,17 @@
   --noise: 0;
 }
 
+/* A faint hazy glow on focus instead of daisyUI's hard double ring. Unlayered so it beats daisyUI's component styles. */
+.input:focus,
+.input:focus-within,
+.textarea:focus,
+.select:focus {
+  outline: none;
+  border-color: color-mix(in oklab, var(--color-primary) 55%, transparent);
+  box-shadow: 0 0 18px -2px
+    color-mix(in oklab, var(--color-primary) 28%, transparent);
+}
+
 @layer base {
   /* The colour sits on html, not body: a body background would paint over the image layer behind it. */
   html {
@@ -110,16 +121,6 @@
 }
 
 @layer components {
-  /* A faint hazy glow on focus instead of daisyUI's hard double ring. */
-  .input:focus,
-  .input:focus-within,
-  .textarea:focus,
-  .select:focus {
-    outline: none;
-    border-color: color-mix(in oklab, var(--color-primary) 55%, transparent);
-    box-shadow: 0 0 18px -2px
-      color-mix(in oklab, var(--color-primary) 28%, transparent);
-  }
   .textarea {
     @apply mb-2 block;
   }
