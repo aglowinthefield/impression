@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, or, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AuthEnv } from "./auth.js";
@@ -18,6 +18,8 @@ function dto(p: Row, projectKey: string) {
     project: projectKey,
     sessionId: p.sessionId,
     content: p.content,
+    scope: p.scope,
+    tags: p.tags,
     confidence: p.confidence,
     anchors: p.anchors,
     status: p.status,
@@ -44,14 +46,17 @@ const acceptBody = z.object({
 export function proposalRoutes(db: Db, providers: Providers) {
   const app = new Hono<AuthEnv>();
 
-  async function find(id: string) {
+  /** A user-scoped proposal (a practice) belongs to whoever's session it came from. */
+  async function find(id: string, me: string) {
     if (!z.uuid().safeParse(id).success) return null;
     const [r] = await db
-      .select({ p: proposals, key: projects.key })
+      .select({ p: proposals, key: projects.key, owner: sessions.owner })
       .from(proposals)
       .innerJoin(projects, eq(proposals.projectId, projects.id))
+      .leftJoin(sessions, eq(proposals.sessionId, sessions.id))
       .where(eq(proposals.id, id));
-    return r ?? null;
+    if (!r || (r.p.scope === "user" && r.owner !== me)) return null;
+    return r;
   }
 
   app.get("/", async (c) => {
@@ -74,6 +79,10 @@ export function proposalRoutes(db: Db, providers: Providers) {
       .where(
         and(
           eq(proposals.status, q.status),
+          or(
+            eq(proposals.scope, "project"),
+            eq(sessions.owner, c.get("principal")),
+          ),
           q.project ? eq(projects.key, q.project) : undefined,
         ),
       )
@@ -90,14 +99,14 @@ export function proposalRoutes(db: Db, providers: Providers) {
   });
 
   app.get("/:id", async (c) => {
-    const r = await find(c.req.param("id"));
+    const r = await find(c.req.param("id"), c.get("principal"));
     if (!r) return c.json({ error: "not found" }, 404);
     return c.json(dto(r.p, r.key));
   });
 
   /** Accepts the proposal as a project memory. Body `{content}` edits the text first. */
   app.post("/:id/accept", async (c) => {
-    const r = await find(c.req.param("id"));
+    const r = await find(c.req.param("id"), c.get("principal"));
     if (!r) return c.json({ error: "not found" }, 404);
     const parsed = acceptBody.safeParse(await c.req.json().catch(() => ({})));
     if (!parsed.success)
@@ -123,7 +132,7 @@ export function proposalRoutes(db: Db, providers: Providers) {
   });
 
   app.post("/:id/reject", async (c) => {
-    const r = await find(c.req.param("id"));
+    const r = await find(c.req.param("id"), c.get("principal"));
     if (!r) return c.json({ error: "not found" }, 404);
     const [p] = await db
       .update(proposals)

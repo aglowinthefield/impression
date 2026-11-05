@@ -6,6 +6,8 @@ export interface ExtractionCase {
   name: string;
   transcript: string;
   want: string[][];
+  /** Wanted groups (as in `want`) that must come back as practices, not facts. */
+  practice?: string[][];
   avoid: RegExp[];
 }
 
@@ -125,5 +127,46 @@ user: continue
 assistant: Running the tests now. All 129 pass.`,
     want: [],
     avoid: [/./],
+  },
+  {
+    name: "standing rule from the user is a practice",
+    transcript: `user: /nitpick the settings page
+assistant: Starting the dev server against the local seed data.
+user: no, when i do a nitpick design session we should always run the app against forks of production data. fake data hides the real layouts
+assistant: Understood, switching to a fork of the production database.`,
+    want: [["nitpick", "fork"]],
+    practice: [["nitpick", "fork"]],
+    avoid: [],
+  },
+  {
+    name: "correction becomes a practice",
+    transcript: `assistant: I've committed the change and pushed it to main.
+user: dont push to main without asking me, ever. open a PR and tell me
+assistant: Sorry. I'll open a PR from now on.`,
+    want: [["push", "main"]],
+    practice: [["push", "main"]],
+    avoid: [/sorry/i],
+  },
+  {
+    name: "one-off demand is not a practice",
+    transcript: `user: run the tests again and make sure the output is quiet this time
+assistant: Ran them, all pass.
+user: now make that button blue and bigger`,
+    want: [],
+    avoid: [/quiet/i, /blue/i, /always/i],
+  },
+  {
+    name: "practice only the assistant proposed is not kept",
+    transcript: `assistant: From now on I'll always run the linter before every commit.
+user: ok whatever, continue`,
+    want: [],
+    avoid: [/linter/i],
+  },
+  {
+    name: "practice already in AGENTS.md is not kept",
+    transcript: `assistant: Per AGENTS.md I always need to work in a git worktree before editing tracked files.
+user: yes, always use a worktree`,
+    want: [],
+    avoid: [/worktree/i],
   },
 ];

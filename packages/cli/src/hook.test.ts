@@ -34,6 +34,23 @@ describe("sessionStartContext", () => {
       "Saved memories for ex (from Impression; use the impression search tool for more):\n- Use pnpm\n- No ORMs",
     );
   });
+  test("practices get their own section first", async () => {
+    const text = await sessionStartContext(
+      {
+        get: async () => ({
+          items: [
+            { content: "Run nitpick on prod forks", tags: ["practice"] },
+            { content: "Use pnpm", tags: [] },
+          ],
+        }),
+        post: async () => null,
+      },
+      repo(),
+    );
+    expect(text).toBe(
+      "How this user likes to work (from Impression; follow these when they apply):\n- Run nitpick on prod forks\nSaved memories for ex (from Impression; use the impression search tool for more):\n- Use pnpm",
+    );
+  });
   test("nothing to show gives null", async () => {
     const c = { get: async () => ({ items: [] }), post: async () => null };
     expect(await sessionStartContext(c, repo())).toBeNull();

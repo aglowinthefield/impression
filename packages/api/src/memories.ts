@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, ne, or, type SQL } from "drizzle-orm";
+import { and, desc, eq, inArray, ne, or, type SQL, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AuthEnv } from "./auth.js";
@@ -36,6 +36,12 @@ export const anchorInput = z.object({
     .regex(/^[0-9a-f]{7,40}$/i, "commitSha must be a hex git SHA"),
 });
 
+export const tagSchema = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .regex(/^[a-z0-9][a-z0-9-]{0,29}$/, "tags are lowercase words and dashes");
+
 const createBody = z.object({
   // Team scope arrives with roles and approval after v1.
   scope: z.enum(["user", "project"]),
@@ -43,6 +49,7 @@ const createBody = z.object({
   project: projectRef.optional(),
   pathPrefix: z.string().min(1).nullable().optional(),
   pinned: z.boolean().optional(),
+  tags: z.array(tagSchema).max(10).default([]),
   confidence: z.number().min(0).max(1).optional(),
   agent: z.string().min(1).optional(),
   sessionId: z.uuid().optional(),
@@ -56,6 +63,7 @@ const patchBody = z
     content: z.string().trim().min(1).max(10_000),
     pathPrefix: z.string().min(1).nullable(),
     pinned: z.boolean(),
+    tags: z.array(tagSchema).max(10),
   })
   .partial()
   .refine((b) => Object.keys(b).length > 0, "nothing to update");
@@ -67,6 +75,7 @@ const listQuery = z.object({
   project: z.string().min(1).optional(),
   status: z.enum(statuses).optional(),
   pinned: z.enum(["true", "false"]).optional(),
+  tag: tagSchema.optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),
   offset: z.coerce.number().int().min(0).default(0),
 });
@@ -119,6 +128,7 @@ export function toDto(m: MemoryRow, projectKey: string | null) {
     staleReason: m.staleReason,
     confidence: m.confidence,
     pinned: m.pinned,
+    tags: m.tags,
     author: m.author,
     agent: m.agent,
     sessionId: m.sessionId,
@@ -268,6 +278,7 @@ export async function createMemory(
       content: b.content,
       pathPrefix: b.pathPrefix ?? null,
       pinned: b.pinned ?? false,
+      tags: [...new Set(b.tags)],
       confidence: b.confidence,
       author: principal,
       agent: b.agent,
@@ -381,6 +392,7 @@ export function memoryRoutes(db: Db, providers: Providers) {
         ne(memories.status, "superseded"),
       );
     if (q.pinned) where.push(eq(memories.pinned, q.pinned === "true"));
+    if (q.tag) where.push(sql`${q.tag} = ANY(${memories.tags})`);
     if (q.project) {
       const [p] = await db
         .select({ id: projects.id })
@@ -450,6 +462,7 @@ export function memoryRoutes(db: Db, providers: Providers) {
       .update(memories)
       .set({
         ...b,
+        ...(b.tags ? { tags: [...new Set(b.tags)] } : {}),
         updatedAt: new Date(),
         // Rewriting a flagged memory is the "update" review outcome.
         ...(contentChanged && existing.status === "possibly_stale"

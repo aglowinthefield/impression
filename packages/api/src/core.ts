@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { AuthEnv } from "./auth.js";
 import type { Db } from "./db/client.js";
 import { memories, projects } from "./db/schema.js";
+import { PRACTICE_TAG } from "./extract.js";
 
 const query = z.object({
   project: z.string().min(1).optional(),
@@ -65,6 +66,8 @@ export function coreRoutes(db: Db) {
       .from(memories)
       .where(and(...where))
       .orderBy(
+        // Practices go first: they apply to whatever the session is about.
+        sql`(${PRACTICE_TAG} = ANY(${memories.tags})) desc`,
         desc(memories.pinned),
         sql`coalesce(${memories.confidence}, 0.5) desc`,
         desc(memories.createdAt),
@@ -72,13 +75,23 @@ export function coreRoutes(db: Db) {
       )
       .limit(200);
 
-    const items: { id: string; content: string; pinned: boolean }[] = [];
+    const items: {
+      id: string;
+      content: string;
+      pinned: boolean;
+      tags: string[];
+    }[] = [];
     let used = 0;
     for (const m of rows) {
       const cost = estimateTokens(m.content) + 2;
       if (used + cost > q.budget) continue;
       used += cost;
-      items.push({ id: m.id, content: m.content, pinned: m.pinned });
+      items.push({
+        id: m.id,
+        content: m.content,
+        pinned: m.pinned,
+        tags: m.tags,
+      });
     }
     return c.json({ items, tokens: used, budget: q.budget });
   });

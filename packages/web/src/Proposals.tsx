@@ -4,6 +4,8 @@ import { api } from "./api";
 interface Proposal {
   id: string;
   content: string;
+  scope?: "user" | "project";
+  tags?: string[];
   confidence: number | null;
   anchors: { path: string; symbol?: string | null }[] | null;
   sessionExcerpt: string | null;
@@ -28,6 +30,20 @@ function Card({
         onChange={(e) => setText(e.target.value)}
         rows={2}
       />
+      {p.tags?.length ? (
+        <p className="m-0">
+          {p.tags.map((t) => (
+            <span key={t} className="badge badge-info badge-sm mr-1">
+              {t}
+            </span>
+          ))}
+          <small>
+            {p.scope === "user"
+              ? "Follows you into every project. Accept only if you want that."
+              : ""}
+          </small>
+        </p>
+      ) : null}
       <small>
         {p.confidence !== null
           ? `confidence ${Math.round(p.confidence * 100)}%`

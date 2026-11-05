@@ -1,7 +1,7 @@
 import { type ApiClient, resolveProject } from "@impression/shared";
 
 interface Core {
-  items: { content: string; pinned: boolean }[];
+  items: { content: string; pinned: boolean; tags?: string[] }[];
 }
 
 /**
@@ -20,9 +20,21 @@ export async function sessionStartContext(
     if (p.pathPrefix) qs.set("path", p.pathPrefix);
     const core = (await client.get(`/core?${qs}`)) as Core;
     if (!core.items?.length) return null;
+    const practices = core.items.filter((i) => i.tags?.includes("practice"));
+    const facts = core.items.filter((i) => !i.tags?.includes("practice"));
     return [
-      `Saved memories for ${p.name} (from Impression; use the impression search tool for more):`,
-      ...core.items.map((i) => `- ${i.content}`),
+      ...(practices.length > 0
+        ? [
+            "How this user likes to work (from Impression; follow these when they apply):",
+            ...practices.map((i) => `- ${i.content}`),
+          ]
+        : []),
+      ...(facts.length > 0
+        ? [
+            `Saved memories for ${p.name} (from Impression; use the impression search tool for more):`,
+            ...facts.map((i) => `- ${i.content}`),
+          ]
+        : []),
     ].join("\n");
   } catch {
     return null;

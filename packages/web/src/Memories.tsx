@@ -5,6 +5,7 @@ export interface Memory {
   id: string;
   scope: "user" | "project";
   content: string;
+  tags?: string[];
   status: "active" | "possibly_stale" | "superseded" | "retired";
   staleReason: string | null;
   pinned: boolean;
@@ -43,6 +44,15 @@ function Row({ m, onChange }: { m: Memory; onChange: () => void }) {
       ) : (
         <p>{m.content}</p>
       )}
+      {m.tags?.length ? (
+        <p className="m-0">
+          {m.tags.map((t) => (
+            <span key={t} className="badge badge-info badge-sm mr-1">
+              {t}
+            </span>
+          ))}
+        </p>
+      ) : null}
       <small>
         {m.scope}
         {m.pathPrefix ? ` · ${m.pathPrefix}` : ""}

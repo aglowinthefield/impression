@@ -20,14 +20,28 @@ export async function runCase(
     prompt: `Transcript:\n${c.transcript}`,
     maxTokens: 2000,
   });
-  const memories = parseExtraction(reply).map((m) => m.content);
+  const items = parseExtraction(reply);
+  const memories = items.map((m) => m.content);
   const missing = c.want.filter(
     (terms) =>
       !memories.some((m) =>
         terms.every((t) => m.toLowerCase().includes(t.toLowerCase())),
       ),
   );
-  const forbidden = memories.filter((m) => c.avoid.some((re) => re.test(m)));
+  // Practices follow the user everywhere, so a practice labelled a fact (or the reverse) is a miss.
+  const has = (text: string, terms: string[]) =>
+    terms.every((t) => text.toLowerCase().includes(t.toLowerCase()));
+  const wrongKind = items
+    .filter(
+      (m) =>
+        (m.kind === "practice") !==
+        (c.practice ?? []).some((terms) => has(m.content, terms)),
+    )
+    .map((m) => `${m.kind}: ${m.content}`);
+  const forbidden = [
+    ...memories.filter((m) => c.avoid.some((re) => re.test(m))),
+    ...wrongKind,
+  ];
   return {
     name: c.name,
     memories,

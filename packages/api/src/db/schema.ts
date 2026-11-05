@@ -63,6 +63,8 @@ export const memories = pgTable(
     status: memoryStatusEnum().notNull().default("active"),
     staleReason: text(),
     confidence: real(),
+    /** Free-form labels. "practice" marks how the owner likes work done. */
+    tags: text().array().notNull().default([]),
     /** Pinned memories are candidates for the session-start core set. */
     pinned: boolean().notNull().default(false),
     // Provenance: who or what wrote it, and from which session.
@@ -129,6 +131,9 @@ export const proposals = pgTable(
       .references(() => projects.id, { onDelete: "cascade" }),
     sessionId: uuid().references(() => sessions.id, { onDelete: "set null" }),
     content: text().notNull(),
+    /** User for practices (they follow the person), project for everything else. */
+    scope: scopeEnum().notNull().default("project"),
+    tags: text().array().notNull().default([]),
     confidence: real().notNull(),
     /** Used to recognise a re-proposal of something already pending or rejected. */
     embedding: vector({ dimensions: EMBEDDING_DIM }),

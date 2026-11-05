@@ -10,9 +10,11 @@ import { isEmptyAfterScrub, scrub } from "./scrub.js";
 /** Characters of transcript sent to the model. The tail is kept: conclusions come last. */
 export const MAX_PROMPT_CHARS = 60_000;
 const MAX_CANDIDATES = 15;
+/** Tag on memories that record how the user likes work done. */
+export const PRACTICE_TAG = "practice";
 
 export const SYSTEM = `You extract durable project knowledge from a coding-session transcript, for a memory that future sessions will read.
-Be strict. Most sessions have nothing worth keeping, and an empty list is the usual right answer. Return at most 3 items even for a long session: pick the ones that matter most.
+Be strict. Most sessions have nothing worth keeping, and an empty list is the usual right answer. Return at most 3 facts even for a long session: pick the ones that matter most.
 Keep only what will still be true and useful next month, and that a developer could not get by reading the code: decisions with their reasons, conventions, gotchas, working commands, and the user's stated preferences.
 Only the user's decisions, preferences and corrections are decisions. Do not record the assistant's suggestions, options, plans or offers unless the user accepted them. A user who moves on, changes the subject or says "fine" has not accepted anything. If the user corrected the assistant, record the correction, not the claim that was corrected.
 Never record any of these:
@@ -29,11 +31,23 @@ Before keeping an item, ask: would a new teammate be glad to have been told this
 Prefer one consolidated memory over several that restate the same thing.
 Each item is one self-contained sentence or two. If a file or symbol is central to it, add an anchor with a repo-relative path and optional symbol.
 "confidence" is 0 to 1: how sure you are that it is true, durable and useful.
+Practices are the exception to "project knowledge": they are how this user wants work done, in any project, whatever the repo or stack. Mark them "kind":"practice".
+First check what the rule is about. If it is about this repo's code, commands, config or tools ("always run db:reembed after changing the embedding model", "use pnpm here"), it is a fact, even when the user says "always". Only a rule about the user's own way of working, which they would want in a different repo too, can be a practice ("always open a PR instead of pushing to main", "run design sessions against production data").
+Then keep a practice only when the user:
+- states it as a standing rule ("always", "never", "from now on", "every time", "make sure to"), or
+- corrects the assistant for doing it a different way, or
+- asks for the same thing again after having asked before (the transcript shows it was repeated).
+Write a practice as an instruction with its trigger and the reason if the user gave one: "When doing a /nitpick design session, run the app against a fork of production data, so the design is judged on real content." Name the trigger (a command, a kind of task, a tool) so a later session can tell when it applies. A request for one thing right now ("run the tests", "make that button blue") is not a practice, even if phrased as a demand. Practices don't count toward the limit of 3, but at most 2 per session.
+Everything above still applies to practices: never one the assistant invented, and never one the assistant quoted or paraphrased from AGENTS.md, CLAUDE.md or another instruction file. If the user only confirms a rule the assistant just read out ("yes, always"), that rule is already loaded in every session, so drop it.
 Reply with one JSON object and nothing else:
-{"memories":[{"content":"...","confidence":0.8,"anchors":[{"path":"src/x.ts","symbol":"fn"}]}]}
+{"memories":[{"kind":"fact","otherRepos":false,"content":"...","confidence":0.8,"anchors":[{"path":"src/x.ts","symbol":"fn"}]}]}
+Use "kind":"fact" for everything that is not a practice. "otherRepos" is true when the rule is about the user's own workflow (how they run a kind of session, review, git, shipping, testing, a slash command they use) and would hold in any of their projects, such as "run /nitpick design sessions against forks of production data". It is false when the rule is about this repo's own code, commands or config. A practice needs true.
 If nothing is worth keeping, reply {"memories":[]}.`;
 
 const itemSchema = z.object({
+  /** A practice is how the user likes work done. It follows them across projects. */
+  kind: z.enum(["fact", "practice"]).catch("fact").default("fact"),
+  otherRepos: z.boolean().catch(false).default(false),
   content: z.string().trim().min(1).max(2000),
   confidence: z.number().min(0).max(1),
   anchors: z
@@ -64,7 +78,13 @@ export function parseExtraction(reply: string): Extracted[] {
   const out: Extracted[] = [];
   for (const item of list.slice(0, MAX_CANDIDATES)) {
     const p = itemSchema.safeParse(item);
-    if (p.success) out.push(p.data);
+    // A "practice" that only makes sense in this repo is a fact, and must not leak to other projects.
+    if (p.success)
+      out.push({
+        ...p.data,
+        kind:
+          p.data.kind === "practice" && p.data.otherRepos ? "practice" : "fact",
+      });
   }
   return out;
 }
@@ -145,7 +165,11 @@ export async function extractProposals(
         }
         const candidates = await findCandidates(
           db,
-          { scope: "project", projectId: input.projectId, owner: input.owner },
+          {
+            scope: item.kind === "practice" ? "user" : "project",
+            projectId: input.projectId,
+            owner: input.owner,
+          },
           vec,
         );
         const verdict = await decide(providers.llm, clean.text, candidates);
@@ -178,6 +202,8 @@ export async function extractProposals(
         projectId: input.projectId,
         sessionId: input.sessionId,
         content: clean.text,
+        scope: item.kind === "practice" ? "user" : "project",
+        tags: item.kind === "practice" ? [PRACTICE_TAG] : [],
         confidence: item.confidence,
         embedding: vec,
         anchors,
@@ -186,6 +212,8 @@ export async function extractProposals(
     if (
       proposal &&
       input.autoAcceptConfidence !== null &&
+      // A practice changes every future session, so a person always reviews it.
+      item.kind === "fact" &&
       item.confidence >= input.autoAcceptConfidence
     ) {
       await acceptProposal(db, providers, proposal.id, input.owner, {
@@ -219,8 +247,10 @@ export async function acceptProposal(
   if (!claimed) return null;
   const anchors = z.array(anchorInput).catch([]).parse(claimed.anchors);
   const result = await createMemory(db, providers, principal, {
-    scope: "project",
-    project: { key: opts.projectKey },
+    scope: claimed.scope === "user" ? "user" : "project",
+    // A user-scoped memory follows the person, so it carries no project.
+    project: claimed.scope === "user" ? undefined : { key: opts.projectKey },
+    tags: claimed.tags,
     content: opts.content ?? claimed.content,
     confidence: claimed.confidence,
     agent: "extraction",

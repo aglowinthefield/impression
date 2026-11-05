@@ -222,6 +222,93 @@ describe("proposal review", () => {
   });
 });
 
+test("a practice is proposed user-scoped, never auto-accepted, and follows the user to other projects", async () => {
+  const llm = fakeProviders();
+  llm.llm = {
+    model: "fake",
+    complete: async ({ system }) =>
+      system?.includes("maintain a developer's project memory")
+        ? '{"action":"add"}'
+        : JSON.stringify({
+            memories: [
+              {
+                kind: "practice",
+                otherRepos: true,
+                content:
+                  "When doing a /nitpick design session, run the app against a fork of production data",
+                confidence: 0.99,
+              },
+              {
+                kind: "practice",
+                otherRepos: false,
+                content:
+                  "Always run db:reembed after changing the embedding model",
+                confidence: 0.99,
+              },
+            ],
+          }),
+  };
+  const a = createApp(t.db, llm, { autoAcceptConfidence: 0.8 });
+  const sid = await session("practice transcript");
+  const res = await a.request(`/api/sessions/${sid}/extract`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}` },
+  });
+  // The repo-specific "practice" is downgraded to a fact, so it auto-accepts. The real practice waits.
+  expect(await res.json()).toMatchObject({ proposed: 2, autoAccepted: 1 });
+  const pending = (await (await call("GET", "/proposals")).json()) as {
+    items: { id: string; content: string; scope: string; tags: string[] }[];
+  };
+  const p = pending.items.find((x) => x.content.includes("nitpick"));
+  expect(p).toMatchObject({ scope: "user", tags: ["practice"] });
+  expect(pending.items.some((x) => x.content.includes("reembed"))).toBe(false);
+
+  // Bob can't see or accept Alice's practice.
+  const bob = await createToken(t.db, "bob3");
+  const bobCall = (method: string, path: string) =>
+    app.request(`/api${path}`, {
+      method,
+      headers: { authorization: `Bearer ${bob}` },
+    });
+  const theirs = (await (await bobCall("GET", "/proposals")).json()) as {
+    items: { content: string }[];
+  };
+  expect(theirs.items.some((x) => x.content.includes("nitpick"))).toBe(false);
+  expect((await bobCall("POST", `/proposals/${p?.id}/accept`)).status).toBe(
+    404,
+  );
+
+  const accepted = await call("POST", `/proposals/${p?.id}/accept`, {});
+  expect(accepted.status).toBe(201);
+  const mem = (await accepted.json()) as {
+    scope: string;
+    project: string | null;
+    tags: string[];
+  };
+  expect(mem).toMatchObject({
+    scope: "user",
+    project: null,
+    tags: ["practice"],
+  });
+
+  // It shows up at session start in a project the session never touched, first in the list.
+  const core = (await (
+    await call("GET", "/core?project=github.com%2Facme%2Fother")
+  ).json()) as { items: { content: string; tags: string[] }[] };
+  expect(core.items[0]?.content).toContain("nitpick");
+  expect(core.items[0]?.tags).toEqual(["practice"]);
+
+  // Tags can be filtered and edited.
+  const byTag = (await (
+    await call("GET", "/memories?tag=practice")
+  ).json()) as {
+    items: { content: string }[];
+  };
+  expect(byTag.items.map((m) => m.content)).toEqual([
+    expect.stringContaining("nitpick"),
+  ]);
+});
+
 test("proposal list shows the session excerpt only to its owner", async () => {
   reply = JSON.stringify({
     memories: [{ content: "Excerpt check memory", confidence: 0.4 }],
