@@ -11,9 +11,18 @@ export function hashToken(token: string): string {
 }
 
 /** Creates a token for `name` and returns it. The plaintext is not recoverable afterwards. */
-export async function createToken(db: Db, name: string): Promise<string> {
+export async function createToken(
+  db: Db,
+  name: string,
+  opts: { userId?: string; source?: "manual" | "web" | "cli" } = {},
+): Promise<string> {
   const token = TOKEN_PREFIX + randomBytes(32).toString("base64url");
-  await db.insert(apiTokens).values({ name, tokenHash: hashToken(token) });
+  await db.insert(apiTokens).values({
+    name,
+    tokenHash: hashToken(token),
+    userId: opts.userId,
+    source: opts.source ?? "manual",
+  });
   return token;
 }
 

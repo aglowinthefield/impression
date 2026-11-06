@@ -4,6 +4,14 @@ export const getToken = () => localStorage.getItem(TOKEN_KEY);
 export const setToken = (t: string | null) =>
   t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY);
 
+/** Saves a token that the GitHub callback put in the URL fragment, then clears the fragment. */
+export function takeTokenFromHash(): void {
+  const m = location.hash.match(/^#token=([^&]+)/);
+  if (!m) return;
+  setToken(decodeURIComponent(m[1] as string));
+  history.replaceState(null, "", location.pathname + location.search);
+}
+
 export class ApiError extends Error {
   constructor(
     public status: number,

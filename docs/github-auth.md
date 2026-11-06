@@ -1,6 +1,6 @@
 # GitHub sign-in and per-repo access
 
-Status: plan, not started.
+Status: stage 1 built (`packages/api/src/github-auth.ts`), stage 2 not started.
 
 ## Goal
 
@@ -25,7 +25,7 @@ People sign in with GitHub and see only the projects for repos they can access. 
 
 ### Stage 1: sign-in
 
-- Add a `users` table with `githubId`, `login`, an encrypted refresh token and `createdAt`.
+- Add a `users` table with `githubId`, `login`, `createdAt` and `lastLoginAt`. Storing an encrypted refresh token moves to stage 2, since only the repo-access refresh needs it.
 - Add `userId` to `api_tokens`. Tokens from `token:create` stay valid. They map to a user, or to an admin principal, until stage 2 lands.
 - Add "Sign in with GitHub" to the login page and keep the token form.
 - Add `impression login --github` with GitHub's device flow, so CLI tokens belong to a GitHub user and no one pastes a token. Required for stage 1, because the hooks and MCP server run on CLI tokens.

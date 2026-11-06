@@ -2,9 +2,12 @@ import { relative } from "node:path";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
 import { type AuthEnv, requireAuth } from "./auth.js";
+import type { GithubConfig } from "./config.js";
 import { coreRoutes } from "./core.js";
 import type { Db } from "./db/client.js";
 import { evalRoutes } from "./evals.js";
+import { createGithubClient, type GithubClient } from "./github.js";
+import { githubAuthRoutes } from "./github-auth.js";
 import { memoryRoutes } from "./memories.js";
 import { projectRoutes } from "./projects.js";
 import { proposalRoutes } from "./proposals.js";
@@ -20,12 +23,29 @@ export function createApp(
     autoAcceptConfidence?: number | null;
     /** Directory of the built web UI. Served at / when set. */
     webDir?: string;
+    /** Turns on GitHub sign-in. */
+    github?: GithubConfig | null;
+    /** Replaces the real GitHub client, for tests. */
+    githubClient?: GithubClient;
   } = {},
 ) {
   const app = new Hono<AuthEnv>();
 
   // Unauthenticated: used by load balancers and `doctor`-style checks.
   app.get("/health", (c) => c.json({ ok: true }));
+
+  // Lets the login page decide whether to show the GitHub button.
+  app.get("/auth/config", (c) => c.json({ github: Boolean(opts.github) }));
+  if (opts.github) {
+    app.route(
+      "/auth",
+      githubAuthRoutes(
+        db,
+        opts.githubClient ?? createGithubClient(opts.github),
+        opts.github,
+      ),
+    );
+  }
 
   const log = new RequestLog();
   const api = new Hono<AuthEnv>();

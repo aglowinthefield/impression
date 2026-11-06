@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import {
   type AnyPgColumn,
+  bigint,
   boolean,
   customType,
   index,
@@ -149,12 +150,25 @@ export const proposals = pgTable(
   (t) => [index("proposals_project_status_idx").on(t.projectId, t.status)],
 );
 
+/** A person who signed in with GitHub. */
+export const users = pgTable("users", {
+  id: uuid().primaryKey().defaultRandom(),
+  githubId: bigint({ mode: "number" }).notNull().unique(),
+  login: text().notNull(),
+  createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  lastLoginAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+});
+
 /** API tokens. Only the SHA-256 hash is stored, so a token is shown once at creation. */
 export const apiTokens = pgTable("api_tokens", {
   id: uuid().primaryKey().defaultRandom(),
   /** The person this token acts as. Becomes the owner and author of what it writes. */
   name: text().notNull(),
   tokenHash: text().notNull().unique(),
+  /** The GitHub user this token belongs to. Null for tokens made by `token:create`. */
+  userId: uuid().references(() => users.id, { onDelete: "set null" }),
+  /** "manual" (token:create), "web" (browser sign-in) or "cli" (device flow). */
+  source: text().notNull().default("manual"),
   createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   revokedAt: timestamp({ withTimezone: true }),
 });

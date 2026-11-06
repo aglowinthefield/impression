@@ -14,6 +14,7 @@ import {
 } from "./commands.js";
 import { loadConfig, saveConfig } from "./config.js";
 import { pushEvalTurns } from "./eval-push.js";
+import { githubDeviceLogin } from "./github-login.js";
 import {
   claudeCodeOutput,
   promptContext,
@@ -88,14 +89,23 @@ if (cmd === "hook" && sub === "session-start") {
     const i = rest.indexOf(n);
     return i >= 0 ? rest[i + 1] : undefined;
   };
-  const newToken = flag("--token") ?? token;
+  const newUrl = flag("--url") ?? url;
+  let newToken = flag("--token");
+  if (rest.includes("--github")) {
+    try {
+      newToken = (await githubDeviceLogin(newUrl)).token;
+    } catch (e) {
+      console.error((e as Error).message);
+      process.exit(1);
+    }
+  }
+  newToken ??= token;
   if (!newToken) {
     console.error(
-      "usage: impression login --token imp_... [--url http://host:3000]",
+      "usage: impression login --github | --token imp_... [--url http://host:3000]",
     );
     process.exit(2);
   }
-  const newUrl = flag("--url") ?? url;
   try {
     const who = (await createClient(newUrl, newToken).get("/whoami")) as {
       name: string;
@@ -178,7 +188,7 @@ if (cmd === "hook" && sub === "session-start") {
   }
 } else {
   console.error(
-    "usage: impression login | search <q> | add <text> [--user] [--pin] | list | status\n       impression proposals | accept <id> [edited text] | reject <id> | retire <id> | edit <id> <text> | keep <id>\n       impression hook session-start [--plain] | prompt (text on stdin) | session-end [--extract]\n       impression eval push [path-substring]",
+    "usage: impression login [--github] | search <q> | add <text> [--user] [--pin] | list | status\n       impression proposals | accept <id> [edited text] | reject <id> | retire <id> | edit <id> <text> | keep <id>\n       impression hook session-start [--plain] | prompt (text on stdin) | session-end [--extract]\n       impression eval push [path-substring]",
   );
   process.exit(2);
 }

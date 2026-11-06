@@ -242,6 +242,19 @@ Then each teammate runs `impression login --url https://<app>.fly.dev --token im
 
 Pushes to `main` deploy automatically: the `deploy` job in `.github/workflows/ci.yml` runs after CI passes, using a `FLY_API_TOKEN` repo secret (`fly tokens create deploy -a <app>`).
 
+## GitHub sign-in
+
+Optional. Without it, sign-in is by API token only. Create a GitHub App (not an OAuth App) with read-only Metadata permission, "Request user authorization (OAuth) during installation" off, "Enable Device Flow" on, and the callback URL `https://<host>/auth/github/callback`. Then set:
+
+| Variable | Meaning |
+| --- | --- |
+| `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | From the app. Set both or neither. |
+| `GITHUB_ALLOWED_ACCOUNTS` | Comma-separated GitHub users and orgs. Someone may sign in if the app is installed on one of these accounts and they can use that installation. Required. |
+| `GITHUB_APP_SLUG` | Lets allowlisted people who haven't installed the app see an install link. |
+| `PUBLIC_URL` | Public origin, used for the callback. Defaults to the request's origin, which is wrong behind some proxies. |
+
+The web login page then shows "Sign in with GitHub", and `impression login --github --url https://<host>` signs in from the terminal. Both mint an `imp_` token named after the GitHub login. A browser sign-in replaces that person's previous browser token. CLI tokens stay, so a second machine doesn't sign out the first. Tokens from `token:create` keep working. This stage doesn't filter projects by repo access yet; see `docs/github-auth.md`.
+
 ## Local embeddings
 
 ```sh
