@@ -70,6 +70,7 @@ describe("loadConfig", () => {
       port: 8080,
       databaseUrl: "postgres://x",
       autoAcceptConfidence: 0.9,
+      github: null,
     });
   });
   test("rejects a bad port", () => {

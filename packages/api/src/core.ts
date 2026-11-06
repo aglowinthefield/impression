@@ -1,9 +1,10 @@
 import { and, desc, eq, isNull, or, type SQL, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
+import { findProject, memoryVisible } from "./access.js";
 import type { AuthEnv } from "./auth.js";
 import type { Db } from "./db/client.js";
-import { memories, projects } from "./db/schema.js";
+import { memories } from "./db/schema.js";
 import { PRACTICE_TAG } from "./extract.js";
 
 const query = z.object({
@@ -35,14 +36,10 @@ export function coreRoutes(db: Db) {
 
     const where: SQL[] = [
       eq(memories.status, "active"),
-      or(eq(memories.scope, "user"), eq(memories.scope, "project")) as SQL,
-      or(eq(memories.scope, "project"), eq(memories.owner, principal)) as SQL,
+      await memoryVisible(db, c.get("access"), principal),
     ];
     if (q.project) {
-      const [p] = await db
-        .select({ id: projects.id })
-        .from(projects)
-        .where(eq(projects.key, q.project));
+      const p = await findProject(db, c.get("access"), q.project);
       // User memories without a project still apply everywhere.
       where.push(
         p

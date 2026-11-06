@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import {
   type AnyPgColumn,
+  bigint,
   boolean,
   customType,
   index,
@@ -42,6 +43,10 @@ export const projects = pgTable("projects", {
   id: uuid().primaryKey().defaultRandom(),
   key: text().notNull().unique(),
   name: text().notNull(),
+  /** Set only for `path:` projects, which have no repo to check access against. */
+  createdBy: uuid().references((): AnyPgColumn => users.id, {
+    onDelete: "set null",
+  }),
   createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -149,12 +154,29 @@ export const proposals = pgTable(
   (t) => [index("proposals_project_status_idx").on(t.projectId, t.status)],
 );
 
+/** A person who signed in with GitHub. */
+export const users = pgTable("users", {
+  id: uuid().primaryKey().defaultRandom(),
+  githubId: bigint({ mode: "number" }).notNull().unique(),
+  login: text().notNull(),
+  /** GitHub user token and its refresh token, sealed with a key derived from the client secret. */
+  accessTokenEnc: text(),
+  refreshTokenEnc: text(),
+  accessExpiresAt: timestamp({ withTimezone: true }),
+  createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  lastLoginAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+});
+
 /** API tokens. Only the SHA-256 hash is stored, so a token is shown once at creation. */
 export const apiTokens = pgTable("api_tokens", {
   id: uuid().primaryKey().defaultRandom(),
   /** The person this token acts as. Becomes the owner and author of what it writes. */
   name: text().notNull(),
   tokenHash: text().notNull().unique(),
+  /** The GitHub user this token belongs to. Null for tokens made by `token:create`. */
+  userId: uuid().references(() => users.id, { onDelete: "set null" }),
+  /** "manual" (token:create), "web" (browser sign-in) or "cli" (device flow). */
+  source: text().notNull().default("manual"),
   createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   revokedAt: timestamp({ withTimezone: true }),
 });

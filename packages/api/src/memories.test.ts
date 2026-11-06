@@ -78,29 +78,54 @@ describe("create", () => {
 });
 
 describe("visibility", () => {
-  test("a user memory is hidden from other tokens, a project memory is shared", async () => {
+  test("memories are private to their author until shared with the team", async () => {
     const mine = await (
       await call(alice, "POST", "", { scope: "user", content: "I prefer pnpm" })
     ).json();
-    const shared = await (
+    const priv = await (
       await call(alice, "POST", "", {
         scope: "project",
         project,
-        content: "shared",
+        content: "private project note",
       })
     ).json();
 
-    expect((await call(bob, "GET", `/${mine.id}`)).status).toBe(404);
-    expect(
-      (await call(bob, "PATCH", `/${mine.id}`, { pinned: true })).status,
-    ).toBe(404);
-    expect((await call(bob, "DELETE", `/${mine.id}`)).status).toBe(404);
-    expect((await call(bob, "GET", `/${shared.id}`)).status).toBe(200);
+    for (const m of [mine, priv]) {
+      expect((await call(bob, "GET", `/${m.id}`)).status).toBe(404);
+      expect(
+        (await call(bob, "PATCH", `/${m.id}`, { pinned: true })).status,
+      ).toBe(404);
+      expect((await call(bob, "DELETE", `/${m.id}`)).status).toBe(404);
+    }
+    const bobsList = await (await call(bob, "GET", "")).json();
+    const ids = bobsList.items.map((m: { id: string }) => m.id);
+    expect(ids).not.toContain(mine.id);
+    expect(ids).not.toContain(priv.id);
 
-    const bobsList = await (await call(bob, "GET", "?scope=user")).json();
-    expect(bobsList.items.map((m: { id: string }) => m.id)).not.toContain(
-      mine.id,
-    );
+    // A user memory has no project to share with.
+    expect(
+      (await call(alice, "PATCH", `/${mine.id}`, { scope: "team" })).status,
+    ).toBe(400);
+
+    const shared = await (
+      await call(alice, "PATCH", `/${priv.id}`, { scope: "team" })
+    ).json();
+    expect(shared.scope).toBe("team");
+    expect((await call(bob, "GET", `/${priv.id}`)).status).toBe(200);
+    // Visible, but only the author can change or remove it.
+    expect(
+      (await call(bob, "PATCH", `/${priv.id}`, { pinned: true })).status,
+    ).toBe(403);
+    expect(
+      (await call(bob, "PATCH", `/${priv.id}`, { scope: "project" })).status,
+    ).toBe(403);
+    expect((await call(bob, "DELETE", `/${priv.id}`)).status).toBe(403);
+
+    const back = await (
+      await call(alice, "PATCH", `/${priv.id}`, { scope: "project" })
+    ).json();
+    expect(back.scope).toBe("project");
+    expect((await call(bob, "GET", `/${priv.id}`)).status).toBe(404);
   });
 });
 
@@ -487,7 +512,7 @@ describe("the practice tag", () => {
     ).json();
     expect(
       (await call(bob, "PATCH", `/${made.id}`, { tags: ["practice"] })).status,
-    ).toBe(403);
+    ).toBe(404);
     const up = await (
       await call(alice, "PATCH", `/${made.id}`, { tags: ["practice"] })
     ).json();

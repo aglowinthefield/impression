@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
-import { ApiError, api, getToken, type Project, setToken } from "./api";
+import {
+  ApiError,
+  api,
+  getToken,
+  type Project,
+  setToken,
+  takeTokenFromHash,
+} from "./api";
 import { Debug } from "./Debug";
 import { Evals } from "./Evals";
 import { Memories } from "./Memories";
@@ -11,6 +18,13 @@ const PROJECT_KEY = "impression.project";
 function Login({ onDone }: { onDone: () => void }) {
   const [token, setTok] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [github, setGithub] = useState(false);
+  useEffect(() => {
+    fetch("/auth/config")
+      .then((r) => r.json())
+      .then((c: { github?: boolean }) => setGithub(c.github === true))
+      .catch(() => {});
+  }, []);
   return (
     <div className="login-page">
       <form
@@ -31,6 +45,14 @@ function Login({ onDone }: { onDone: () => void }) {
         }}
       >
         <h1>Impression</h1>
+        {github && (
+          <>
+            <a className="btn btn-sm btn-primary" href="/auth/github">
+              Sign in with GitHub
+            </a>
+            <p>Or use an API token:</p>
+          </>
+        )}
         <label>
           API token
           <input
@@ -179,7 +201,10 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
 }
 
 export function App() {
-  const [signedIn, setSignedIn] = useState(() => getToken() !== null);
+  const [signedIn, setSignedIn] = useState(() => {
+    takeTokenFromHash();
+    return getToken() !== null;
+  });
   // A 401 anywhere clears the token; re-check whenever the tab regains focus.
   const check = useCallback(() => setSignedIn(getToken() !== null), []);
   useEffect(() => {

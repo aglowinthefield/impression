@@ -82,3 +82,30 @@ test("tab and project live in the URL", async () => {
   history.back();
   await waitFor(() => expect(location.pathname).not.toBe("/debug"));
 });
+
+test("shows the GitHub button only when the server has it on", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => new Response('{"github":true}')),
+  );
+  render(<App />);
+  const link = await screen.findByText("Sign in with GitHub");
+  expect(link.getAttribute("href")).toBe("/auth/github");
+  cleanup();
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => new Response('{"github":false}')),
+  );
+  render(<App />);
+  await waitFor(() => expect(screen.getByLabelText("API token")).toBeTruthy());
+  expect(screen.queryByText("Sign in with GitHub")).toBeNull();
+});
+
+test("saves the token from the GitHub redirect and clears the fragment", async () => {
+  history.replaceState(null, "", "/#token=imp_ok");
+  respond({ "/whoami": { name: "sam" }, "/projects": { items: [] } });
+  render(<App />);
+  expect(localStorage.getItem("impression.token")).toBe("imp_ok");
+  expect(location.hash).toBe("");
+  expect(await screen.findByText("sam")).toBeTruthy();
+});

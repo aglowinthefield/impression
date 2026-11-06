@@ -3,7 +3,7 @@ import { api } from "./api";
 
 export interface Memory {
   id: string;
-  scope: "user" | "project";
+  scope: "user" | "project" | "team";
   content: string;
   tags?: string[];
   status: "active" | "possibly_stale" | "superseded" | "retired";
@@ -219,6 +219,24 @@ function Row({
               >
                 {m.pinned ? "Unpin" : "Pin to core"}
               </button>
+              {m.scope !== "user" && (
+                <button
+                  className="btn btn-sm btn-outline"
+                  type="button"
+                  onClick={() =>
+                    act(() =>
+                      api(`/memories/${m.id}`, {
+                        method: "PATCH",
+                        body: {
+                          scope: m.scope === "team" ? "project" : "team",
+                        },
+                      }),
+                    )
+                  }
+                >
+                  {m.scope === "team" ? "Make private" : "Share with team"}
+                </button>
+              )}
               <button
                 className="btn btn-sm btn-error btn-outline"
                 type="button"
@@ -304,7 +322,8 @@ export function Memories({ project }: { project: string }) {
           onChange={(e) => setScope(e.target.value)}
         >
           <option value="">All scopes</option>
-          <option value="project">Project</option>
+          <option value="project">Project (private)</option>
+          <option value="team">Team</option>
           <option value="user">Mine</option>
         </select>
         <select

@@ -1,6 +1,7 @@
 import { eq, inArray, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
+import { findProject, memoryVisible } from "./access.js";
 import type { AuthEnv } from "./auth.js";
 import type { Db } from "./db/client.js";
 import { memories, projects } from "./db/schema.js";
@@ -57,7 +58,7 @@ export function searchRoutes(db: Db, providers: Providers) {
     const principal = c.get("principal");
 
     const conds = [
-      sql`(m.scope = 'project' OR (m.scope = 'user' AND m.owner = ${principal}))`,
+      await memoryVisible(db, c.get("access"), principal, "m"),
       q.status
         ? sql`m.status = ${q.status}`
         : sql`m.status IN ('active', 'possibly_stale')`,
@@ -65,9 +66,8 @@ export function searchRoutes(db: Db, providers: Providers) {
     if (q.scope) conds.push(sql`m.scope = ${q.scope}`);
     if (q.tag) conds.push(sql`${q.tag} = ANY(m.tags)`);
     if (q.project) {
-      conds.push(
-        sql`m.project_id = (SELECT id FROM projects WHERE key = ${q.project})`,
-      );
+      const p = await findProject(db, c.get("access"), q.project);
+      conds.push(p ? sql`m.project_id = ${p.id}` : sql`false`);
     }
     if (q.path) {
       const path = q.path.replace(/^\/+|\/+$/g, "");

@@ -15,6 +15,7 @@ const { db } = createDb(config.databaseUrl);
 serve({
   fetch: createApp(db, createProviders(), {
     autoAcceptConfidence: config.autoAcceptConfidence,
+    github: config.github,
     webDir: existsSync(webDir) ? webDir : undefined,
   }).fetch,
   port: config.port,

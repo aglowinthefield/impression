@@ -79,7 +79,7 @@ export async function findCandidates(
   const scopeMatch =
     target.scope === "user"
       ? sql`m.scope = 'user' AND m.owner = ${target.owner}`
-      : sql`m.scope = 'project' AND m.project_id = ${target.projectId}`;
+      : sql`m.scope = 'project' AND m.owner = ${target.owner} AND m.project_id = ${target.projectId}`;
   const rows = await db.execute<{ id: string; content: string }>(sql`
     SELECT m.id, m.content FROM memories m
     WHERE ${scopeMatch}
