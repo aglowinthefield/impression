@@ -3,6 +3,7 @@ import { createToken } from "../auth.js";
 import type { Providers } from "../providers/index.js";
 import { createTestDb } from "../test-db.js";
 import { memories, offTopic, pairs, queries } from "./fixture.js";
+import { noMemoryPrompts, prompts } from "./prompts-fixture.js";
 
 export interface SearchScores {
   /** Share of queries whose expected memory is in the top 3. */
@@ -100,4 +101,92 @@ export async function evalPairs(providers: Providers) {
     );
   }
   return result;
+}
+
+export interface PromptScores {
+  /** Mean share of the expected memories that land in the top 5. */
+  recallAt5: number;
+  /** Share of injected memories (top 5 above the floor) that were expected. */
+  precision: number;
+  /** Share of prompts with a memory expected where nothing was found at all. */
+  missed: number;
+  /** Share of no-memory prompts that still got something injected. */
+  noiseRate: number;
+  /** Mean memories injected per prompt, over all prompts. */
+  injectedPerPrompt: number;
+}
+
+/** Scores realistic prompts the way the per-prompt hook uses search: top 5 above the floor. */
+export async function evalPrompts(
+  providers: Providers,
+  minSimilarities: number[],
+): Promise<Map<number, PromptScores>> {
+  const t = await createTestDb();
+  try {
+    const app = createApp(t.db, providers);
+    const token = await createToken(t.db, "eval");
+    const call = (path: string, body: unknown) =>
+      app.request(`/api${path}`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(body),
+      });
+    const ids = new Map<string, string>();
+    for (const m of memories) {
+      const res = (await (
+        await call("/memories", {
+          scope: "project",
+          project: { key: "eval/fixture" },
+          content: m.content,
+          dedup: false,
+        })
+      ).json()) as { id: string };
+      ids.set(res.id, m.id);
+    }
+    const search = async (q: string, minSimilarity: number) =>
+      (
+        (await (
+          await call("/search", {
+            query: q,
+            project: "eval/fixture",
+            limit: 5,
+            minSimilarity,
+          })
+        ).json()) as { results: { id: string }[] }
+      ).results.map((r) => ids.get(r.id) as string);
+
+    const out = new Map<number, PromptScores>();
+    for (const min of minSimilarities) {
+      let recall = 0;
+      let injected = 0;
+      let correct = 0;
+      let missed = 0;
+      for (const { q, expect } of prompts) {
+        const got = await search(q, min);
+        injected += got.length;
+        correct += got.filter((g) => expect.includes(g)).length;
+        recall += expect.filter((e) => got.includes(e)).length / expect.length;
+        if (got.length === 0) missed++;
+      }
+      let noisy = 0;
+      for (const q of noMemoryPrompts) {
+        const got = await search(q, min);
+        injected += got.length;
+        if (got.length > 0) noisy++;
+      }
+      out.set(min, {
+        recallAt5: recall / prompts.length,
+        precision: injected === 0 ? 0 : correct / injected,
+        missed: missed / prompts.length,
+        noiseRate: noisy / noMemoryPrompts.length,
+        injectedPerPrompt: injected / (prompts.length + noMemoryPrompts.length),
+      });
+    }
+    return out;
+  } finally {
+    await t.drop();
+  }
 }

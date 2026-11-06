@@ -13,6 +13,7 @@
     "dev": "tsx watch src/index.ts",
     "eval": "tsx src/eval/cli.ts",
     "eval:extract": "tsx src/eval/extraction-cli.ts",
+    "eval:latency": "tsx src/eval/latency-cli.ts",
     "eval:sessions": "tsx src/eval/sessions-cli.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate-cli.ts",
