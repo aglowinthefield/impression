@@ -69,6 +69,7 @@ export async function promptContext(
       query,
       project: p.key,
       limit,
+      strict: true,
       ...(p.pathPrefix ? { path: p.pathPrefix } : {}),
     })) as { results?: { content: string }[] };
     if (!r.results?.length) return null;

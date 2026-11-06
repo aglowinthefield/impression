@@ -12,7 +12,9 @@ import type { Providers } from "./providers/index.js";
  * is related. This default is a first guess for text-embedding-3-small; the
  * retrieval eval (#26) is where to tune it.
  */
-export const DEFAULT_MIN_SIMILARITY = 0.25;
+export const DEFAULT_MIN_SIMILARITY = 0.3;
+/** Added to the floor for strict searches. On the realistic-prompt eval, 0.3 to 0.4 cut injected memories from 2.2 to 1.8 per prompt for the same recall; with the text floor, precision rose to 0.6. */
+export const STRICT_EXTRA = 0.1;
 
 const body = z.object({
   query: z.string().trim().min(1).max(2000),
@@ -27,12 +29,16 @@ const body = z.object({
   limit: z.number().int().min(1).max(50).default(10),
   /** Cosine similarity floor for the vector leg, 0 to 1. Weaker matches are dropped. */
   minSimilarity: z.number().min(0).max(1).optional(),
+  /** Raises the model's floor by STRICT_EXTRA. For injection into a prompt, where a wrong memory costs more than a missed one. */
+  strict: z.boolean().optional(),
 });
 
 /** How many candidates each ranking contributes before fusion. */
 const CANDIDATES = 50;
 /** Reciprocal rank fusion constant. Larger values flatten the gap between ranks. */
 const RRF_K = 60;
+/** Share of the vector floor a full-text hit must still reach. */
+const TEXT_FLOOR_SHARE = 0.8;
 
 /** Turns free text into an OR query, so a long question still matches on any of its words. */
 export function toTsQuery(text: string): string | null {
@@ -71,17 +77,19 @@ export function searchRoutes(db: Db, providers: Providers) {
     }
     const minSimilarity =
       q.minSimilarity ??
-      providers.embeddings.minSimilarity ??
-      DEFAULT_MIN_SIMILARITY;
+      (providers.embeddings.minSimilarity ?? DEFAULT_MIN_SIMILARITY) +
+        (q.strict ? STRICT_EXTRA : 0);
     const where = sql.join(conds, sql` AND `);
 
     // Vector ranking. If the embedding call fails, search degrades to full text only.
     let vectorRanks: { id: string; rank: number }[] = [];
+    let queryVector: string | null = null;
     let degraded = false;
     try {
       const [vec] = await providers.embeddings.embed([q.query]);
       if (vec) {
         const literal = JSON.stringify(vec);
+        queryVector = literal;
         const rows = await db.execute<{ id: string }>(sql`
           SELECT m.id FROM memories m
           WHERE ${where} AND m.embedding IS NOT NULL
@@ -98,12 +106,17 @@ export function searchRoutes(db: Db, providers: Providers) {
       );
     }
 
+    // A word match alone is weak evidence ("save" matches a memory about saving passwords).
+    // When the query has an embedding, a text hit must also be at least loosely similar in meaning.
+    const textFloor = queryVector
+      ? sql`(m.embedding IS NULL OR 1 - (m.embedding <=> ${queryVector}::vector) >= ${minSimilarity * TEXT_FLOOR_SHARE})`
+      : sql`true`;
     let textRanks: { id: string; rank: number }[] = [];
     const tsq = toTsQuery(q.query);
     if (tsq) {
       const rows = await db.execute<{ id: string }>(sql`
         SELECT m.id FROM memories m
-        WHERE ${where} AND m.search @@ websearch_to_tsquery('english', ${tsq})
+        WHERE ${where} AND ${textFloor} AND m.search @@ websearch_to_tsquery('english', ${tsq})
         ORDER BY ts_rank_cd(m.search, websearch_to_tsquery('english', ${tsq})) DESC, m.id
         LIMIT ${CANDIDATES}`);
       textRanks = rows.map((r, i) => ({ id: r.id, rank: i + 1 }));

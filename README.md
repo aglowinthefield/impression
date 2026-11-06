@@ -108,7 +108,7 @@ TypeScript monorepo (pnpm workspaces, Node 22+). Packages: `shared`, `api`, `cli
 | `EMBEDDING_MODEL`, `LLM_MODEL`       | `text-embedding-3-small`, `claude-haiku-4-5` | Required for ollama.                                                                  |
 | `AUTO_ACCEPT_CONFIDENCE`             | `0.9`                                        | Extracted memories at or above this become memories without review. `off` queues all. |
 | `EMBEDDING_DIMENSIONS`, `OLLAMA_URL` |                                              | Ollama only. The dimension must be 768 to match the column.                           |
-| `EMBEDDING_MIN_SIMILARITY`           | `0.25` openai, `0.45` ollama                 | Search floor. Cosine scores differ between models, so retune with the eval.           |
+| `EMBEDDING_MIN_SIMILARITY`           | `0.3` openai, `0.45` ollama                  | Search floor. Cosine scores differ between models, so retune with the eval.           |
 
 ## Develop
 
