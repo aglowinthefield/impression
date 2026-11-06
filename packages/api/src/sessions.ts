@@ -1,6 +1,7 @@
 import { and, desc, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
+import { projectIdCond, upsertProject } from "./access.js";
 import type { AuthEnv } from "./auth.js";
 import type { Db } from "./db/client.js";
 import { projects, sessions } from "./db/schema.js";
@@ -64,17 +65,12 @@ export function sessionRoutes(
 
     // Scrub before storing, so raw secrets never reach the database or the extractor.
     const clean = scrub(b.transcript);
-    const name =
-      b.project.name ?? b.project.key.split("/").pop() ?? b.project.key;
-    const [p] = await db
-      .insert(projects)
-      .values({ key: b.project.key, name })
-      .onConflictDoUpdate({ target: projects.key, set: { key: b.project.key } })
-      .returning();
+    const p = await upsertProject(db, c.get("access"), b.project);
+    if (!p) return c.json({ error: "project not found" }, 404);
     const [s] = await db
       .insert(sessions)
       .values({
-        projectId: (p as { id: string }).id,
+        projectId: p.id,
         owner: c.get("principal"),
         agent: b.agent,
         commitSha: b.commitSha,
@@ -96,6 +92,7 @@ export function sessionRoutes(
       .where(
         and(
           eq(sessions.owner, c.get("principal")),
+          await projectIdCond(db, c.get("access"), sessions.projectId),
           key ? eq(projects.key, key) : undefined,
         ),
       )
@@ -112,7 +109,13 @@ export function sessionRoutes(
       .select({ s: sessions, key: projects.key })
       .from(sessions)
       .innerJoin(projects, eq(sessions.projectId, projects.id))
-      .where(and(eq(sessions.id, id), eq(sessions.owner, c.get("principal"))));
+      .where(
+        and(
+          eq(sessions.id, id),
+          eq(sessions.owner, c.get("principal")),
+          await projectIdCond(db, c.get("access"), sessions.projectId),
+        ),
+      );
     if (!r) return c.json({ error: "not found" }, 404);
     return c.json(dto(r.s, r.key));
   });
@@ -125,7 +128,13 @@ export function sessionRoutes(
     const [s] = await db
       .select()
       .from(sessions)
-      .where(and(eq(sessions.id, id), eq(sessions.owner, c.get("principal"))));
+      .where(
+        and(
+          eq(sessions.id, id),
+          eq(sessions.owner, c.get("principal")),
+          await projectIdCond(db, c.get("access"), sessions.projectId),
+        ),
+      );
     if (!s) return c.json({ error: "not found" }, 404);
     const parsed = extractBody.safeParse(await c.req.json().catch(() => ({})));
     if (!parsed.success) return c.json({ error: "bad request" }, 400);

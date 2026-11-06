@@ -18,7 +18,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate-cli.ts",
     "db:reembed": "tsx src/reembed-cli.ts",
-    "token:create": "tsx src/token-cli.ts"
+    "token:create": "tsx src/token-cli.ts",
+    "owner:rename": "tsx src/owner-rename-cli.ts"
   },
   "dependencies": {
     "@hono/node-server": "^1",

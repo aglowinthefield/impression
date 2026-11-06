@@ -14,22 +14,53 @@ export interface DeviceStart {
   expiresIn: number;
 }
 
+/** A GitHub App user token. `refreshToken` and `expiresAt` are null if the app's tokens don't expire. */
+export interface GithubTokens {
+  accessToken: string;
+  refreshToken: string | null;
+  expiresAt: Date | null;
+}
+
+/** GitHub rejected a token. The person has to sign in again. */
+export class GithubAuthError extends Error {}
+
 export type DevicePoll =
-  | { status: "ok"; accessToken: string }
+  | { status: "ok"; tokens: GithubTokens }
   | { status: "pending" | "slow_down" | "denied" | "expired" };
 
 /** The GitHub calls sign-in needs. Tests replace it with a fake. */
 export interface GithubClient {
   authorizeUrl(state: string, redirectUri: string): string;
-  exchangeCode(code: string, redirectUri: string): Promise<string>;
+  exchangeCode(code: string, redirectUri: string): Promise<GithubTokens>;
+  /** Throws GithubAuthError if the refresh token is no longer valid. */
+  refresh(refreshToken: string): Promise<GithubTokens>;
   startDevice(): Promise<DeviceStart>;
   pollDevice(deviceCode: string): Promise<DevicePoll>;
   getUser(accessToken: string): Promise<GithubUser>;
-  /** Logins of the accounts that installed the app where this user can use it. */
-  listInstallationAccounts(accessToken: string): Promise<string[]>;
+  /** Installations of the app that this user can use, with the account each is on. */
+  listInstallations(
+    accessToken: string,
+  ): Promise<{ id: number; account: string }[]>;
+  /** `owner/repo` names the user can reach through one installation. */
+  listInstallationRepos(
+    accessToken: string,
+    installationId: number,
+  ): Promise<string[]>;
 }
 
 const json = { accept: "application/json" };
+
+function parseTokens(r: Record<string, unknown>, now = Date.now()) {
+  if (typeof r.access_token !== "string") return null;
+  return {
+    accessToken: r.access_token,
+    refreshToken: typeof r.refresh_token === "string" ? r.refresh_token : null,
+    expiresAt:
+      typeof r.expires_in === "number"
+        ? new Date(now + r.expires_in * 1000)
+        : null,
+  } satisfies GithubTokens;
+}
 
 export function createGithubClient(
   cfg: Pick<GithubConfig, "clientId" | "clientSecret">,
@@ -53,6 +84,8 @@ export function createGithubClient(
         "user-agent": "impression",
       },
     });
+    if (res.status === 401)
+      throw new GithubAuthError(`GitHub ${path} returned 401`);
     if (!res.ok) throw new Error(`GitHub ${path} returned ${res.status}`);
     return (await res.json()) as Record<string, unknown>;
   };
@@ -70,10 +103,25 @@ export function createGithubClient(
         code,
         redirect_uri: redirectUri,
       });
-      if (typeof r.access_token !== "string") {
+      const tokens = parseTokens(r);
+      if (!tokens) {
         throw new Error(`GitHub refused the code: ${String(r.error)}`);
       }
-      return r.access_token;
+      return tokens;
+    },
+    async refresh(refreshToken) {
+      const r = await post("https://github.com/login/oauth/access_token", {
+        client_secret: cfg.clientSecret,
+        grant_type: "refresh_token",
+        refresh_token: refreshToken,
+      });
+      const tokens = parseTokens(r);
+      if (!tokens) {
+        throw new GithubAuthError(
+          `GitHub refused the refresh: ${String(r.error)}`,
+        );
+      }
+      return tokens;
     },
     async startDevice() {
       const r = await post("https://github.com/login/device/code", {});
@@ -90,9 +138,8 @@ export function createGithubClient(
         device_code: deviceCode,
         grant_type: "urn:ietf:params:oauth:grant-type:device_code",
       });
-      if (typeof r.access_token === "string") {
-        return { status: "ok", accessToken: r.access_token };
-      }
+      const tokens = parseTokens(r);
+      if (tokens) return { status: "ok", tokens };
       switch (r.error) {
         case "authorization_pending":
           return { status: "pending" };
@@ -108,12 +155,30 @@ export function createGithubClient(
       const r = await get("/user", accessToken);
       return { id: Number(r.id), login: String(r.login) };
     },
-    async listInstallationAccounts(accessToken) {
+    async listInstallations(accessToken) {
       const r = await get("/user/installations?per_page=100", accessToken);
       const items = Array.isArray(r.installations) ? r.installations : [];
-      return items.flatMap((i: { account?: { login?: string } }) =>
-        i.account?.login ? [i.account.login] : [],
+      return items.flatMap(
+        (i: { id?: number; account?: { login?: string } }) =>
+          typeof i.id === "number" && i.account?.login
+            ? [{ id: i.id, account: i.account.login }]
+            : [],
       );
+    },
+    async listInstallationRepos(accessToken, installationId) {
+      const names: string[] = [];
+      for (let page = 1; page <= 50; page++) {
+        const r = await get(
+          `/user/installations/${installationId}/repositories?per_page=100&page=${page}`,
+          accessToken,
+        );
+        const repos = Array.isArray(r.repositories) ? r.repositories : [];
+        for (const repo of repos as { full_name?: string }[]) {
+          if (repo.full_name) names.push(repo.full_name);
+        }
+        if (repos.length < 100) break;
+      }
+      return names;
     },
   };
 }

@@ -155,6 +155,7 @@ export async function extractProposals(
         const repeats = await db.execute(sql`
           SELECT 1 FROM proposals
           WHERE project_id = ${input.projectId}
+            AND session_id IN (SELECT id FROM sessions WHERE owner = ${input.owner})
             AND status IN ('pending', 'rejected')
             AND embedding IS NOT NULL
             AND 1 - (embedding <=> ${literal}::vector) >= ${REPROPOSAL_MIN_SIMILARITY}

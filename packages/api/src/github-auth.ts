@@ -1,16 +1,21 @@
 import { randomBytes } from "node:crypto";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { createToken } from "./auth.js";
 import type { GithubConfig } from "./config.js";
 import type { Db } from "./db/client.js";
 import { apiTokens, users } from "./db/schema.js";
-import type { GithubClient } from "./github.js";
+import type { GithubClient, GithubTokens } from "./github.js";
+import { tokenCipher } from "./token-cipher.js";
 
 export type SignInResult =
   | { ok: true; token: string; name: string }
-  | { ok: false; reason: "not_allowed" | "needs_install"; login: string };
+  | {
+      ok: false;
+      reason: "not_allowed" | "needs_install" | "name_taken";
+      login: string;
+    };
 
 /**
  * Turns a GitHub user token into an Impression token, if the person may use this server.
@@ -21,27 +26,49 @@ export type SignInResult =
 export async function signInWithGithub(
   db: Db,
   github: GithubClient,
-  cfg: Pick<GithubConfig, "allowedAccounts">,
-  accessToken: string,
+  cfg: Pick<GithubConfig, "allowedAccounts" | "clientSecret">,
+  tokens: GithubTokens,
   source: "web" | "cli",
 ): Promise<SignInResult> {
-  const user = await github.getUser(accessToken);
-  const accounts = await github.listInstallationAccounts(accessToken);
+  const user = await github.getUser(tokens.accessToken);
+  const installs = await github.listInstallations(tokens.accessToken);
   const allowed = new Set(cfg.allowedAccounts);
-  if (!accounts.some((a) => allowed.has(a.toLowerCase()))) {
+  if (!installs.some((i) => allowed.has(i.account.toLowerCase()))) {
     // Allowlisted people who haven't installed the app yet get a way forward.
     const reason =
-      accounts.length === 0 && allowed.has(user.login.toLowerCase())
+      installs.length === 0 && allowed.has(user.login.toLowerCase())
         ? "needs_install"
         : "not_allowed";
     return { ok: false, reason, login: user.login };
   }
+  // A token's name is the owner of what it writes. A GitHub login must not land on
+  // an owner that a token from `token:create` already uses, or it would see that data.
+  const [clash] = await db
+    .select({ id: apiTokens.id })
+    .from(apiTokens)
+    .where(
+      and(
+        eq(apiTokens.source, "manual"),
+        isNull(apiTokens.revokedAt),
+        sql`lower(${apiTokens.name}) = ${user.login.toLowerCase()}`,
+      ),
+    )
+    .limit(1);
+  if (clash) return { ok: false, reason: "name_taken", login: user.login };
+  const cipher = tokenCipher(cfg.clientSecret);
+  const sealed = {
+    accessTokenEnc: cipher.seal(tokens.accessToken),
+    refreshTokenEnc: tokens.refreshToken
+      ? cipher.seal(tokens.refreshToken)
+      : null,
+    accessExpiresAt: tokens.expiresAt,
+  };
   const [row] = await db
     .insert(users)
-    .values({ githubId: user.id, login: user.login })
+    .values({ githubId: user.id, login: user.login, ...sealed })
     .onConflictDoUpdate({
       target: users.githubId,
-      set: { login: user.login, lastLoginAt: new Date() },
+      set: { login: user.login, lastLoginAt: new Date(), ...sealed },
     })
     .returning({ id: users.id });
   const userId = (row as { id: string }).id;
@@ -86,6 +113,11 @@ function refusal(
       },
     };
   }
+  if (r.reason === "name_taken") {
+    return {
+      message: `The name ${r.login} is already used by an API token on this server. Ask the owner to rename or revoke that token, then sign in again.`,
+    };
+  }
   return {
     message: `${r.login} isn't on this server's allowlist. Ask the owner to add your GitHub account or org.`,
   };
@@ -126,11 +158,8 @@ export function githubAuthRoutes(
     }
     let result: SignInResult;
     try {
-      const accessToken = await github.exchangeCode(
-        code,
-        redirectUri(c.req.url),
-      );
-      result = await signInWithGithub(db, github, cfg, accessToken, "web");
+      const tokens = await github.exchangeCode(code, redirectUri(c.req.url));
+      result = await signInWithGithub(db, github, cfg, tokens, "web");
     } catch {
       return c.html(page("GitHub sign-in failed. Try again."), 502);
     }
@@ -170,7 +199,7 @@ export function githubAuthRoutes(
         db,
         github,
         cfg,
-        poll.accessToken,
+        poll.tokens,
         "cli",
       );
       if (!result.ok)

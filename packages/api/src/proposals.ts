@@ -1,6 +1,7 @@
-import { and, desc, eq, or, sql } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
+import { type Access, projectIdCond } from "./access.js";
 import type { AuthEnv } from "./auth.js";
 import type { Db } from "./db/client.js";
 import { projects, proposals, sessions } from "./db/schema.js";
@@ -39,24 +40,28 @@ const acceptBody = z.object({
 });
 
 /**
- * Proposals belong to a project, and project memories are shared, so any token
- * can review them. Rejections stay in the table: extraction compares new
+ * A proposal comes from one person's session, so only that person reviews it.
+ * Rejections stay in the table: extraction compares new
  * candidates against them and doesn't propose the same thing again.
  */
 export function proposalRoutes(db: Db, providers: Providers) {
   const app = new Hono<AuthEnv>();
 
-  /** A user-scoped proposal (a practice) belongs to whoever's session it came from. */
-  async function find(id: string, me: string) {
+  async function find(id: string, me: string, a: Access) {
     if (!z.uuid().safeParse(id).success) return null;
     const [r] = await db
       .select({ p: proposals, key: projects.key, owner: sessions.owner })
       .from(proposals)
       .innerJoin(projects, eq(proposals.projectId, projects.id))
       .leftJoin(sessions, eq(proposals.sessionId, sessions.id))
-      .where(eq(proposals.id, id));
-    if (!r || (r.p.scope === "user" && r.owner !== me)) return null;
-    return r;
+      .where(
+        and(
+          eq(proposals.id, id),
+          eq(sessions.owner, me),
+          await projectIdCond(db, a, proposals.projectId),
+        ),
+      );
+    return r ?? null;
   }
 
   app.get("/", async (c) => {
@@ -79,10 +84,8 @@ export function proposalRoutes(db: Db, providers: Providers) {
       .where(
         and(
           eq(proposals.status, q.status),
-          or(
-            eq(proposals.scope, "project"),
-            eq(sessions.owner, c.get("principal")),
-          ),
+          eq(sessions.owner, c.get("principal")),
+          await projectIdCond(db, c.get("access"), proposals.projectId),
           q.project ? eq(projects.key, q.project) : undefined,
         ),
       )
@@ -99,14 +102,22 @@ export function proposalRoutes(db: Db, providers: Providers) {
   });
 
   app.get("/:id", async (c) => {
-    const r = await find(c.req.param("id"), c.get("principal"));
+    const r = await find(
+      c.req.param("id"),
+      c.get("principal"),
+      c.get("access"),
+    );
     if (!r) return c.json({ error: "not found" }, 404);
     return c.json(dto(r.p, r.key));
   });
 
   /** Accepts the proposal as a project memory. Body `{content}` edits the text first. */
   app.post("/:id/accept", async (c) => {
-    const r = await find(c.req.param("id"), c.get("principal"));
+    const r = await find(
+      c.req.param("id"),
+      c.get("principal"),
+      c.get("access"),
+    );
     if (!r) return c.json({ error: "not found" }, 404);
     const parsed = acceptBody.safeParse(await c.req.json().catch(() => ({})));
     if (!parsed.success)
@@ -132,7 +143,11 @@ export function proposalRoutes(db: Db, providers: Providers) {
   });
 
   app.post("/:id/reject", async (c) => {
-    const r = await find(c.req.param("id"), c.get("principal"));
+    const r = await find(
+      c.req.param("id"),
+      c.get("principal"),
+      c.get("access"),
+    );
     if (!r) return c.json({ error: "not found" }, 404);
     const [p] = await db
       .update(proposals)

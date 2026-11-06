@@ -43,6 +43,10 @@ export const projects = pgTable("projects", {
   id: uuid().primaryKey().defaultRandom(),
   key: text().notNull().unique(),
   name: text().notNull(),
+  /** Set only for `path:` projects, which have no repo to check access against. */
+  createdBy: uuid().references((): AnyPgColumn => users.id, {
+    onDelete: "set null",
+  }),
   createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -155,6 +159,10 @@ export const users = pgTable("users", {
   id: uuid().primaryKey().defaultRandom(),
   githubId: bigint({ mode: "number" }).notNull().unique(),
   login: text().notNull(),
+  /** GitHub user token and its refresh token, sealed with a key derived from the client secret. */
+  accessTokenEnc: text(),
+  refreshTokenEnc: text(),
+  accessExpiresAt: timestamp({ withTimezone: true }),
   createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   lastLoginAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 });

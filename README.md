@@ -253,7 +253,14 @@ Optional. Without it, sign-in is by API token only. Create a GitHub App (not an 
 | `GITHUB_APP_SLUG` | Lets allowlisted people who haven't installed the app see an install link. |
 | `PUBLIC_URL` | Public origin, used for the callback. Defaults to the request's origin, which is wrong behind some proxies. |
 
-The web login page then shows "Sign in with GitHub", and `impression login --github --url https://<host>` signs in from the terminal. Both mint an `imp_` token named after the GitHub login. A browser sign-in replaces that person's previous browser token. CLI tokens stay, so a second machine doesn't sign out the first. Tokens from `token:create` keep working. This stage doesn't filter projects by repo access yet; see `docs/github-auth.md`.
+The web login page then shows "Sign in with GitHub", and `impression login --github --url https://<host>` signs in from the terminal. Both mint an `imp_` token named after the GitHub login. A browser sign-in replaces that person's previous browser token. CLI tokens stay, so a second machine doesn't sign out the first. ### Who sees what
+
+- **Projects.** A signed-in person sees only projects for repos they can reach through their installations of the app (any installation, not just the allowlisted one). A `path:` project belongs to whoever first used it. Asking for a project you can't reach gives 404. GitHub is asked at most every 10 minutes per person, so losing repo access takes up to 10 minutes to show. If GitHub is down, the last answer is used. If their GitHub session is gone, requests get 401 and they sign in again.
+- **Memories.** Every memory is private to its author. The author can share a `project` memory with the team (web: "Share with team", or `PATCH /api/memories/:id {"scope":"team"}`), and then everyone who can see that project reads it. Only the author can edit, delete, share or unshare it. Proposals and sessions stay private to whoever's session they came from.
+- **Tokens from `token:create`.** They are admin tokens: they see every project, but memory privacy still applies to them. Keep them for the operator.
+- **Existing data.** Memories written before this change were `project` scope, so they are now private to whichever token name wrote them. To hand them to a GitHub login: `pnpm --filter @impression/api owner:rename <token name> <github login>`. Sign-in is refused if the GitHub login matches an active `token:create` name, so rename or revoke that token first. A GitHub rename needs the same command.
+
+GitHub tokens are stored encrypted with a key derived from `GITHUB_CLIENT_SECRET`. Rotating the secret signs everyone out.
 
 ## Local embeddings
 

@@ -26,13 +26,22 @@ const people: Record<
   "tok-out": { id: 4, login: "mallory", installs: ["mallory"] },
 };
 
+const tokens = (accessToken: string) => ({
+  accessToken,
+  refreshToken: null,
+  expiresAt: null,
+});
+
 let devicePoll: DevicePoll = { status: "pending" };
 const github: GithubClient = {
   authorizeUrl: (state, redirect) =>
     `https://github.test/authorize?state=${state}&redirect=${encodeURIComponent(redirect)}`,
   exchangeCode: async (code) => {
     if (!(code in people)) throw new Error("bad code");
-    return code;
+    return { accessToken: code, refreshToken: null, expiresAt: null };
+  },
+  refresh: async () => {
+    throw new Error("not used");
   },
   startDevice: async () => ({
     deviceCode: "dev1",
@@ -43,7 +52,9 @@ const github: GithubClient = {
   }),
   pollDevice: async () => devicePoll,
   getUser: async (t) => people[t] as { id: number; login: string },
-  listInstallationAccounts: async (t) => people[t]?.installs ?? [],
+  listInstallations: async (t) =>
+    (people[t]?.installs ?? []).map((account, id) => ({ id, account })),
+  listInstallationRepos: async () => [],
 };
 
 let t: Awaited<ReturnType<typeof createTestDb>>;
@@ -170,7 +181,7 @@ describe("device flow", () => {
   });
 
   test("mints a CLI token on approval and keeps earlier CLI tokens", async () => {
-    devicePoll = { status: "ok", accessToken: "tok-sam" };
+    devicePoll = { status: "ok", tokens: tokens("tok-sam") };
     const a = (await (await poll()).json()) as { token: string; name: string };
     const b = (await (await poll()).json()) as { token: string };
     expect(a.name).toBe("sam");
@@ -183,7 +194,7 @@ describe("device flow", () => {
   });
 
   test("refuses a user who isn't allowed", async () => {
-    devicePoll = { status: "ok", accessToken: "tok-out" };
+    devicePoll = { status: "ok", tokens: tokens("tok-out") };
     expect((await poll()).status).toBe(403);
   });
 

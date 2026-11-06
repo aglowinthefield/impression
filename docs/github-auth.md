@@ -1,6 +1,6 @@
 # GitHub sign-in and per-repo access
 
-Status: stage 1 built (`packages/api/src/github-auth.ts`), stage 2 not started.
+Status: built (stages 1 and 2 in one PR).
 
 ## Goal
 

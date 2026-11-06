@@ -309,14 +309,14 @@ test("a practice is proposed user-scoped, never auto-accepted, and follows the u
   ]);
 });
 
-test("proposal list shows the session excerpt only to its owner", async () => {
+test("proposals are private to the person whose session produced them", async () => {
   reply = JSON.stringify({
     memories: [{ content: "Excerpt check memory", confidence: 0.4 }],
   });
   const id = await session(`secret-ish ${"y".repeat(1000)}`);
   await call("POST", `/sessions/${id}/extract`);
   const mine = (await (await call("GET", "/proposals")).json()) as {
-    items: { content: string; sessionExcerpt: string | null }[];
+    items: { id: string; content: string; sessionExcerpt: string | null }[];
   };
   const p = mine.items.find((x) => x.content === "Excerpt check memory");
   expect(p?.sessionExcerpt).toHaveLength(600);
@@ -328,9 +328,12 @@ test("proposal list shows the session excerpt only to its owner", async () => {
     })
   ).json()) as { items: { content: string; sessionExcerpt: string | null }[] };
   expect(
-    theirs.items.find((x) => x.content === "Excerpt check memory")
-      ?.sessionExcerpt,
-  ).toBeNull();
+    theirs.items.find((x) => x.content === "Excerpt check memory"),
+  ).toBeUndefined();
+  const id404 = await app.request(`/api/proposals/${p?.id}`, {
+    headers: { authorization: `Bearer ${bob}` },
+  });
+  expect(id404.status).toBe(404);
 });
 
 test("extract passes scrubbed instructions to the model, only when sent", async () => {

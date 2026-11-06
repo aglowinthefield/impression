@@ -11,6 +11,12 @@ import {
 } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
+import {
+  type Access,
+  findProject,
+  memoryVisible,
+  upsertProject,
+} from "./access.js";
 import type { AuthEnv } from "./auth.js";
 import type { Db } from "./db/client.js";
 import { anchors, memories, projects } from "./db/schema.js";
@@ -56,7 +62,7 @@ export const tagSchema = z
   .regex(/^[a-z0-9][a-z0-9-]{0,29}$/, "tags are lowercase words and dashes");
 
 const createBody = z.object({
-  // Team scope arrives with roles and approval after v1.
+  // Memories start private. An author shares one by patching it to team scope.
   scope: z.enum(["user", "project"]),
   content: z.string().trim().min(1).max(10_000),
   project: projectRef.optional(),
@@ -77,6 +83,8 @@ const patchBody = z
     pathPrefix: z.string().min(1).nullable(),
     pinned: z.boolean(),
     tags: z.array(tagSchema).max(10),
+    /** "team" shares the memory with everyone who can see the project. Only the author can change it. */
+    scope: z.enum(["project", "team"]),
     /** Needed when removing "practice": where the memory goes back to. */
     project: projectRef,
   })
@@ -86,7 +94,7 @@ const patchBody = z
 const statuses = ["active", "possibly_stale", "superseded", "retired"] as const;
 
 const listQuery = z.object({
-  scope: z.enum(["user", "project"]).optional(),
+  scope: z.enum(["user", "project", "team"]).optional(),
   project: z.string().min(1).optional(),
   status: z.enum(statuses).optional(),
   pinned: z.enum(["true", "false"]).optional(),
@@ -190,27 +198,36 @@ export type CreateInput = z.infer<typeof createBody>;
 
 /**
  * Stores a memory: scrub, embed, dedup, insert, anchors. Shared by the create
- * route and proposal acceptance. The caller validates scope and project.
+ * route and proposal acceptance. The caller validates scope and project. Pass
+ * `access` to refuse projects the caller can't see; internal callers that act on a
+ * project they already checked omit it.
  */
 export async function createMemory(
   db: Db,
   providers: Providers,
   principal: string,
   b: CreateInput,
+  access?: Access,
 ) {
   let projectId: string | null = null;
   if (b.project) {
-    const name =
-      b.project.name ?? b.project.key.split("/").pop() ?? b.project.key;
-    const [p] = await db
-      .insert(projects)
-      .values({ key: b.project.key, name })
-      .onConflictDoUpdate({
-        target: projects.key,
-        set: { key: b.project.key },
-      })
-      .returning();
-    projectId = p?.id ?? null;
+    if (access) {
+      const p = await upsertProject(db, access, b.project);
+      if (!p) return { status: 404 as const, body: bad("project not found") };
+      projectId = p.id;
+    } else {
+      const name =
+        b.project.name ?? b.project.key.split("/").pop() ?? b.project.key;
+      const [p] = await db
+        .insert(projects)
+        .values({ key: b.project.key, name })
+        .onConflictDoUpdate({
+          target: projects.key,
+          set: { key: b.project.key },
+        })
+        .returning();
+      projectId = p?.id ?? null;
+    }
   }
 
   const clean = scrub(b.content);
@@ -340,11 +357,13 @@ export function memoryRoutes(db: Db, providers: Providers) {
     return p?.key ?? null;
   }
 
-  /** A user memory is visible only to its owner. Project memories are visible to every token. */
-  async function findVisible(id: string, principal: string) {
-    const [m] = await db.select().from(memories).where(eq(memories.id, id));
-    if (!m || (m.scope === "user" && m.owner !== principal)) return null;
-    return m;
+  /** Your own memories, plus team memories in projects you can see. */
+  async function findVisible(id: string, a: Access, principal: string) {
+    const [m] = await db
+      .select()
+      .from(memories)
+      .where(and(eq(memories.id, id), await memoryVisible(db, a, principal)));
+    return m ?? null;
   }
 
   app.post("/", async (c) => {
@@ -358,7 +377,13 @@ export function memoryRoutes(db: Db, providers: Providers) {
     if (b.scope === "user" && b.project) {
       return c.json(bad("project must be omitted for user scope"), 400);
     }
-    const r = await createMemory(db, providers, c.get("principal"), b);
+    const r = await createMemory(
+      db,
+      providers,
+      c.get("principal"),
+      b,
+      c.get("access"),
+    );
     return c.json(r.body, r.status);
   });
 
@@ -371,10 +396,7 @@ export function memoryRoutes(db: Db, providers: Providers) {
       .where(
         and(
           eq(memories.status, "possibly_stale"),
-          or(
-            eq(memories.scope, "project"),
-            and(eq(memories.scope, "user"), eq(memories.owner, principal)),
-          ),
+          await memoryVisible(db, c.get("access"), principal),
         ),
       )
       .orderBy(memories.updatedAt, memories.id)
@@ -393,12 +415,7 @@ export function memoryRoutes(db: Db, providers: Providers) {
     const q = parsed.data;
     const principal = c.get("principal");
 
-    const where: SQL[] = [
-      or(
-        eq(memories.scope, "project"),
-        and(eq(memories.scope, "user"), eq(memories.owner, principal)),
-      ) as SQL,
-    ];
+    const where: SQL[] = [await memoryVisible(db, c.get("access"), principal)];
     if (q.scope) where.push(eq(memories.scope, q.scope));
     if (q.status) where.push(eq(memories.status, q.status));
     else
@@ -409,10 +426,7 @@ export function memoryRoutes(db: Db, providers: Providers) {
     if (q.pinned) where.push(eq(memories.pinned, q.pinned === "true"));
     if (q.tag) where.push(sql`${q.tag} = ANY(${memories.tags})`);
     if (q.project) {
-      const [p] = await db
-        .select({ id: projects.id })
-        .from(projects)
-        .where(eq(projects.key, q.project));
+      const p = await findProject(db, c.get("access"), q.project);
       // Your user-scoped memories (practices) belong to no project and apply in all of them.
       where.push(
         p
@@ -448,7 +462,7 @@ export function memoryRoutes(db: Db, providers: Providers) {
   app.get("/:id", async (c) => {
     const id = c.req.param("id");
     if (!z.uuid().safeParse(id).success) return c.json(bad("not found"), 404);
-    const m = await findVisible(id, c.get("principal"));
+    const m = await findVisible(id, c.get("access"), c.get("principal"));
     if (!m) return c.json(bad("not found"), 404);
     const [dto] = await withAnchors(db, [
       toDto(m, await projectKeyOf(m.projectId)),
@@ -461,8 +475,11 @@ export function memoryRoutes(db: Db, providers: Providers) {
     if (!z.uuid().safeParse(id).success) return c.json(bad("not found"), 404);
     const parsed = patchBody.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json(bad(z.prettifyError(parsed.error)), 400);
-    const existing = await findVisible(id, c.get("principal"));
+    const existing = await findVisible(id, c.get("access"), c.get("principal"));
     if (!existing) return c.json(bad("not found"), 404);
+    if (existing.owner !== c.get("principal")) {
+      return c.json(bad("only the author can edit a memory"), 403);
+    }
     if (existing.status === "superseded") {
       return c.json(
         bad("superseded memories are history and can't be edited"),
@@ -471,6 +488,12 @@ export function memoryRoutes(db: Db, providers: Providers) {
     }
 
     const b = parsed.data;
+    if (b.scope && (existing.scope === "user" || !existing.projectId)) {
+      return c.json(
+        bad("only a project memory can be shared with the team"),
+        400,
+      );
+    }
     if (b.content !== undefined) {
       const clean = scrub(b.content);
       if (clean.redactions.length > 0 && isEmptyAfterScrub(clean.text)) {
@@ -488,8 +511,10 @@ export function memoryRoutes(db: Db, providers: Providers) {
     const principal = c.get("principal");
     const wasPractice = existing.tags.includes(PRACTICE_TAG);
     const isPractice = b.tags?.includes(PRACTICE_TAG);
-    let move: { scope: "user" | "project"; projectId: string | null } | null =
-      null;
+    let move: {
+      scope: "user" | "project" | "team";
+      projectId: string | null;
+    } | null = null;
     if (b.tags && isPractice && existing.scope === "project") {
       if (existing.owner !== principal) {
         return c.json(bad("only the author can make a memory a practice"), 403);
@@ -507,17 +532,9 @@ export function memoryRoutes(db: Db, providers: Providers) {
           400,
         );
       }
-      const name =
-        b.project.name ?? b.project.key.split("/").pop() ?? b.project.key;
-      const [p] = await db
-        .insert(projects)
-        .values({ key: b.project.key, name })
-        .onConflictDoUpdate({
-          target: projects.key,
-          set: { key: b.project.key },
-        })
-        .returning();
-      move = { scope: "project", projectId: p?.id ?? null };
+      const p = await upsertProject(db, c.get("access"), b.project);
+      if (!p) return c.json(bad("project not found"), 404);
+      move = { scope: "project", projectId: p.id };
     }
     const { project: _p, ...fields } = b;
     const [m] = await db
@@ -573,7 +590,7 @@ export function memoryRoutes(db: Db, providers: Providers) {
       ])
       .safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json(bad(z.prettifyError(parsed.error)), 400);
-    const existing = await findVisible(id, c.get("principal"));
+    const existing = await findVisible(id, c.get("access"), c.get("principal"));
     if (!existing) return c.json(bad("not found"), 404);
     if (existing.status !== "active" && existing.status !== "possibly_stale") {
       return c.json(
@@ -606,8 +623,11 @@ export function memoryRoutes(db: Db, providers: Providers) {
   app.delete("/:id", async (c) => {
     const id = c.req.param("id");
     if (!z.uuid().safeParse(id).success) return c.json(bad("not found"), 404);
-    const existing = await findVisible(id, c.get("principal"));
+    const existing = await findVisible(id, c.get("access"), c.get("principal"));
     if (!existing) return c.json(bad("not found"), 404);
+    if (existing.owner !== c.get("principal")) {
+      return c.json(bad("only the author can delete a memory"), 403);
+    }
 
     if (c.req.query("hard") === "true") {
       await db.delete(memories).where(eq(memories.id, id));

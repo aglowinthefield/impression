@@ -10,13 +10,18 @@ import {
 } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
+import {
+  findProject,
+  memoryVisible,
+  projectIdCond,
+  upsertProject,
+} from "./access.js";
 import type { AuthEnv } from "./auth.js";
 import type { Db } from "./db/client.js";
 import {
   evalTurns,
   memories,
   memoryRatings,
-  projects,
   proposals,
   sessions,
 } from "./db/schema.js";
@@ -67,12 +72,9 @@ export function evalRoutes(db: Db) {
     for (const t of parsed.data.turns) {
       const key = t.project.key;
       if (projectIds.has(key)) continue;
-      const [p] = await db
-        .insert(projects)
-        .values({ key, name: t.project.name ?? key.split("/").pop() ?? key })
-        .onConflictDoUpdate({ target: projects.key, set: { key } })
-        .returning();
-      projectIds.set(key, (p as { id: string }).id);
+      const p = await upsertProject(db, c.get("access"), t.project);
+      if (!p) return c.json({ error: "project not found" }, 404);
+      projectIds.set(key, p.id);
     }
     let stored = 0;
     for (const t of parsed.data.turns) {
@@ -111,10 +113,16 @@ export function evalRoutes(db: Db) {
       return c.json({ error: z.prettifyError(parsed.error) }, 400);
     const q = parsed.data;
     const where = [eq(evalTurns.owner, c.get("principal"))];
-    if (q.project)
-      where.push(
-        sql`${evalTurns.projectId} = (SELECT id FROM projects WHERE key = ${q.project})`,
-      );
+    const visible = await projectIdCond(
+      db,
+      c.get("access"),
+      evalTurns.projectId,
+    );
+    if (visible) where.push(visible);
+    if (q.project) {
+      const p = await findProject(db, c.get("access"), q.project);
+      where.push(p ? eq(evalTurns.projectId, p.id) : sql`false`);
+    }
     if (q.injectedOnly === "true")
       where.push(sql`jsonb_array_length(${evalTurns.injected}) > 0`);
     if (q.unrated === "true")
@@ -136,7 +144,12 @@ export function evalRoutes(db: Db) {
             status: memories.status,
           })
           .from(memories)
-          .where(inArray(memories.content, texts))
+          .where(
+            and(
+              inArray(memories.content, texts),
+              await memoryVisible(db, c.get("access"), c.get("principal")),
+            ),
+          )
       : [];
     const byText = new Map(known.map((m) => [m.content, m]));
     return c.json({
@@ -171,7 +184,7 @@ export function evalRoutes(db: Db) {
       eq(evalTurns.owner, c.get("principal")),
     );
     const [turn] = await db.select().from(evalTurns).where(where);
-    if (!turn || !turn.injected.includes(memory))
+    if (!turn?.injected.includes(memory))
       return c.json({ error: "not found" }, 404);
     const ratings = { ...turn.ratings };
     if (rating) ratings[memory] = rating;
@@ -184,16 +197,12 @@ export function evalRoutes(db: Db) {
   app.get("/memories", async (c) => {
     const owner = c.get("principal");
     const key = c.req.query("project");
-    const [project] = key
-      ? await db.select().from(projects).where(eq(projects.key, key))
-      : [];
+    const project = key ? await findProject(db, c.get("access"), key) : null;
     if (key && !project) return c.json({ items: [] });
-    const scope = or(
-      project
-        ? and(eq(memories.scope, "project"), eq(memories.projectId, project.id))
-        : eq(memories.scope, "project"),
-      and(eq(memories.scope, "user"), eq(memories.owner, owner)),
-    );
+    const visible = await memoryVisible(db, c.get("access"), owner);
+    const scope = project
+      ? or(eq(memories.projectId, project.id), eq(memories.scope, "user"))
+      : undefined;
     const mems = await db
       .select({
         id: memories.id,
@@ -201,7 +210,7 @@ export function evalRoutes(db: Db) {
         pinned: memories.pinned,
       })
       .from(memories)
-      .where(and(eq(memories.status, "active"), scope));
+      .where(and(eq(memories.status, "active"), visible, scope));
     const turns = await db
       .select({ injected: evalTurns.injected, ratings: evalTurns.ratings })
       .from(evalTurns)
@@ -249,11 +258,14 @@ export function evalRoutes(db: Db) {
   app.get("/extraction", async (c) => {
     const owner = c.get("principal");
     const key = c.req.query("project");
-    const [project] = key
-      ? await db.select().from(projects).where(eq(projects.key, key))
-      : [];
+    const project = key ? await findProject(db, c.get("access"), key) : null;
     if (key && !project) return c.json({ items: [], precision: null });
-    const mine = or(eq(memories.scope, "project"), eq(memories.owner, owner));
+    const mine = await memoryVisible(db, c.get("access"), owner);
+    const visibleProjects = await projectIdCond(
+      db,
+      c.get("access"),
+      proposals.projectId,
+    );
     const memRows = await db
       .select({
         id: memories.id,
@@ -297,6 +309,7 @@ export function evalRoutes(db: Db) {
           isNotNull(proposals.reviewedAt),
           // A proposal from someone else's session is theirs to judge.
           or(isNull(proposals.sessionId), eq(sessions.owner, owner)),
+          visibleProjects,
           project ? eq(proposals.projectId, project.id) : undefined,
         ),
       )
@@ -345,7 +358,7 @@ export function evalRoutes(db: Db) {
       .where(
         and(
           eq(memories.id, memoryId),
-          or(eq(memories.scope, "project"), eq(memories.owner, owner)),
+          await memoryVisible(db, c.get("access"), owner),
         ),
       );
     if (!m) return c.json({ error: "not found" }, 404);
