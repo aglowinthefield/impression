@@ -2,38 +2,44 @@
 // transcript to Impression when it ends. Shells out to the `impression` CLI, so it
 // shares config (`impression login`) and fail-quietly behaviour with the Claude Code hooks.
 //
-// Install: add this file's path to "extensions" in ~/.pi/agent/settings.json.
-// Override the CLI location with IMPRESSION_CLI.
+// Install: `impression setup`, or add this file's path to "extensions" in
+// ~/.pi/agent/settings.json. Works from the npm package (`pi/impression.ts` beside
+// `dist/`) and from a checkout (`packages/pi` beside `packages/cli/dist`). Falls back to
+// `impression` on PATH. Override the CLI location with IMPRESSION_CLI.
 import { execFile } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-const CLI_DIR = fileURLToPath(new URL("../cli/dist/", import.meta.url));
+/** First of these paths (relative to this file) that exists, or undefined. */
+function local(...paths: string[]) {
+  return paths
+    .map((p) => fileURLToPath(new URL(p, import.meta.url)))
+    .find((p) => existsSync(p));
+}
 
 /**
  * Loads the CLI library into this process, so the per-prompt search skips a node
- * start-up and reuses one HTTP connection. Null if the CLI isn't built.
+ * start-up and reuses one HTTP connection. Null if it can't be found or isn't signed in.
  */
 async function loadLib() {
   try {
-    const cli = await import(`${CLI_DIR}index.js`);
-    const shared = await import(
-      new URL("../../shared/dist/index.js", `file://${CLI_DIR}`).href
-    );
+    const path = local("../dist/lib.js", "../cli/dist/lib.js");
+    if (!path) return null;
+    const cli = await import(pathToFileURL(path).href);
     const { url, token } = cli.loadConfig();
     if (!token) return null;
-    return { cli, client: shared.createClient(url, token) };
+    return { cli, client: cli.createClient(url, token) };
   } catch {
     return null;
   }
 }
 
-const CLI =
+const SCRIPT =
   process.env.IMPRESSION_CLI ??
-  fileURLToPath(new URL("../cli/dist/bin.js", import.meta.url));
+  local("../dist/impression.js", "../cli/dist/bin.js");
 
 function run(
   args: string[],
@@ -41,12 +47,17 @@ function run(
   opts: { input?: string; timeout: number },
 ): Promise<string> {
   return new Promise((resolve) => {
+    const [cmd, argv] = SCRIPT
+      ? [process.execPath, [SCRIPT, ...args]]
+      : ["impression", args];
     const child = execFile(
-      process.execPath,
-      [CLI, ...args],
+      cmd,
+      argv,
       { cwd, timeout: opts.timeout, encoding: "utf8" },
       (_err, stdout) => resolve(stdout ?? ""),
     );
+    child.on("error", () => resolve(""));
+    child.stdin?.on("error", () => {});
     child.stdin?.end(opts.input ?? "");
   });
 }

@@ -1,18 +1,16 @@
 #!/usr/bin/env node
-import { createClient } from "@impression/shared";
+import { createClient, loadConfig } from "@impression/shared";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { createServer } from "./server.js";
 
-const token = process.env.IMPRESSION_TOKEN;
+// IMPRESSION_URL and IMPRESSION_TOKEN win; otherwise use what `impression login` saved.
+const { url, token } = loadConfig();
 if (!token) {
-  console.error("IMPRESSION_TOKEN is required");
+  console.error("Not signed in. Run: impression login --github");
   process.exit(1);
 }
 const server = createServer({
-  client: createClient(
-    process.env.IMPRESSION_URL ?? "http://localhost:3000",
-    token,
-  ),
+  client: createClient(url, token),
   cwd: process.cwd(),
 });
 await server.connect(new StdioServerTransport());

@@ -7,20 +7,22 @@ or a small team, not for consumer-facing agents.
 ## Quick start
 
 1. Start the server and create a token: see [Run with Docker](#run-with-docker). Without Docker, see [Develop](#develop).
-2. Build the clients once with `pnpm install && pnpm build`. Below, `$IMP` stands for the checkout path.
-3. Sign in from the CLI: `node $IMP/packages/cli/dist/bin.js login --token imp_... --url http://localhost:3000`.
-4. Wire up your agent (below), then open http://localhost:3000 to review memories.
+2. Install the CLI: `npm i -g @aglowinthefield/impression`. That puts `impression` and `impression-mcp` on your PATH. Update later with `impression update`.
+3. Sign in: `impression login --github --url http://localhost:3000` (or `--token imp_...`).
+4. Run `impression setup` to wire up every agent it finds (below), then open http://localhost:3000 to review memories.
 
 ## Wire it into your agent
 
-Every client reads `IMPRESSION_URL` (default `http://localhost:3000`) and `IMPRESSION_TOKEN`. The CLI and both hooks also fall back to the file `impression login` writes.
+`impression setup` finds Claude Code, pi and Codex and adds the hooks, MCP server and pi extension to each one's config (Codex gets the session-start hook and MCP only). It backs up each file it changes (`<file>.impression-backup-<timestamp>`), leaves other settings alone, and is safe to rerun. `--dry-run` prints the changes without writing them; `--only claude|pi|codex` limits it to one. The sections below show what it writes, if you'd rather do it by hand.
+
+Every client reads `IMPRESSION_URL` (default `http://localhost:3000`) and `IMPRESSION_TOKEN`. The CLI, the hooks and the MCP server also fall back to the file `impression login` writes, so no token goes in agent config.
 
 ### Claude Code
 
 MCP tools (`search`, `add`):
 
 ```sh
-claude mcp add impression -e IMPRESSION_URL=http://localhost:3000 -e IMPRESSION_TOKEN=imp_... -- node $IMP/packages/mcp/dist/bin.js
+claude mcp add -s user impression -- impression-mcp
 ```
 
 Hooks, in `~/.claude/settings.json` (after `impression login`, no token is needed in the command):
@@ -33,7 +35,7 @@ Hooks, in `~/.claude/settings.json` (after `impression login`, no token is neede
         "hooks": [
           {
             "type": "command",
-            "command": "node $IMP/packages/cli/dist/bin.js hook session-start"
+            "command": "impression hook session-start"
           }
         ]
       }
@@ -43,7 +45,7 @@ Hooks, in `~/.claude/settings.json` (after `impression login`, no token is neede
         "hooks": [
           {
             "type": "command",
-            "command": "node $IMP/packages/cli/dist/bin.js hook session-end --extract"
+            "command": "impression hook session-end --extract"
           }
         ]
       }
@@ -52,17 +54,17 @@ Hooks, in `~/.claude/settings.json` (after `impression login`, no token is neede
 }
 ```
 
-Use the absolute path for `$IMP`. Session-start injects your core memories. Session-end sends the transcript and queues proposals, which you review in the web UI.
+Session-start injects your core memories. Session-end sends the transcript and queues proposals, which you review in the web UI.
 
 ### pi
 
 MCP tools:
 
 ```sh
-pi mcp add impression --env IMPRESSION_URL=http://localhost:3000 --env IMPRESSION_TOKEN=imp_... -- node $IMP/packages/mcp/dist/bin.js
+pi mcp add impression -- impression-mcp
 ```
 
-Run `/reload` or restart pi. That gives pi search and add. For automatic injection and capture, load the extension at `packages/pi/impression.ts` by adding its absolute path to `"extensions"` in `~/.pi/agent/settings.json`. It runs `impression hook session-start --plain` on session start, `hook prompt` (a search on the prompt text) before each prompt, and `hook session-end --extract` on each chunk of new conversation (after a run, once about 3000 characters have built up, and again on exit), so build the CLI first and run `impression login`.
+Run `/reload` or restart pi. That gives pi search and add. For automatic injection and capture, load the extension that ships in the package (`$(npm root -g)/@aglowinthefield/impression/pi/impression.ts`) by adding its absolute path to `"extensions"` in `~/.pi/agent/settings.json`. It runs `impression hook session-start --plain` on session start, `hook prompt` (a search on the prompt text) before each prompt, and `hook session-end --extract` on each chunk of new conversation (after a run, once about 3000 characters have built up, and again on exit), so run `impression login` first.
 
 ## Troubleshooting
 
@@ -178,7 +180,7 @@ Terminal checks, none of which run in CI because they need a real model or your 
 
 ## CLI
 
-`packages/cli` builds the `impression` binary (`node packages/cli/dist/bin.js`). Create a token on the server with `pnpm --filter @impression/api token:create <name>`, then:
+`npm i -g @aglowinthefield/impression` installs the `impression` binary. From a checkout, `pnpm build` produces `packages/cli/dist/bin.js` and the bundled package in `packages/impression/dist`. Create a token on the server with `pnpm --filter @impression/api token:create <name>`, then:
 
 ```sh
 impression login --token imp_... --url http://localhost:3000   # saved to ~/.config/impression/config.json (0600)
@@ -246,12 +248,12 @@ Pushes to `main` deploy automatically: the `deploy` job in `.github/workflows/ci
 
 Optional. Without it, sign-in is by API token only. Create a GitHub App (not an OAuth App) with read-only Metadata permission, "Request user authorization (OAuth) during installation" off, "Enable Device Flow" on, and the callback URL `https://<host>/auth/github/callback`. Then set:
 
-| Variable | Meaning |
-| --- | --- |
-| `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | From the app. Set both or neither. |
-| `GITHUB_ALLOWED_ACCOUNTS` | Comma-separated GitHub users and orgs. Someone may sign in if the app is installed on one of these accounts and they can use that installation. Required. |
-| `GITHUB_APP_SLUG` | Lets allowlisted people who haven't installed the app see an install link. |
-| `PUBLIC_URL` | Public origin, used for the callback. Defaults to the request's origin, which is wrong behind some proxies. |
+| Variable                                   | Meaning                                                                                                                                                   |
+| ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | From the app. Set both or neither.                                                                                                                        |
+| `GITHUB_ALLOWED_ACCOUNTS`                  | Comma-separated GitHub users and orgs. Someone may sign in if the app is installed on one of these accounts and they can use that installation. Required. |
+| `GITHUB_APP_SLUG`                          | Lets allowlisted people who haven't installed the app see an install link.                                                                                |
+| `PUBLIC_URL`                               | Public origin, used for the callback. Defaults to the request's origin, which is wrong behind some proxies.                                               |
 
 The web login page then shows "Sign in with GitHub", and `impression login --github --url https://<host>` signs in from the terminal. Both mint an `imp_` token named after the GitHub login. A browser sign-in replaces that person's previous browser token. CLI tokens stay, so a second machine doesn't sign out the first. ### Who sees what
 

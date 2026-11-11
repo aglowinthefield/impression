@@ -216,6 +216,21 @@ importers:
         specifier: workspace:*
         version: link:../shared
 
+  packages/impression:
+    devDependencies:
+      '@impression/cli':
+        specifier: workspace:*
+        version: link:../cli
+      '@impression/mcp':
+        specifier: workspace:*
+        version: link:../mcp
+      '@impression/shared':
+        specifier: workspace:*
+        version: link:../shared
+      esbuild:
+        specifier: ^0.28.2
+        version: 0.28.2
+
   packages/mcp:
     dependencies:
       '@impression/shared':

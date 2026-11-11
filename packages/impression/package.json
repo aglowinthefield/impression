@@ -1,0 +1,40 @@
+{
+  "name": "@aglowinthefield/impression",
+  "version": "0.1.0",
+  "description": "Memory for coding agents: CLI, hooks, MCP server and pi extension for an Impression server",
+  "license": "MIT",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aglowinthefield/impression.git",
+    "directory": "packages/impression"
+  },
+  "homepage": "https://github.com/aglowinthefield/impression#readme",
+  "bin": {
+    "impression": "dist/impression.js",
+    "impression-mcp": "dist/impression-mcp.js"
+  },
+  "files": [
+    "dist",
+    "pi",
+    "LICENSE",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "prepublishOnly": "node build.mjs",
+    "lint": "biome check ."
+  },
+  "devDependencies": {
+    "@impression/cli": "workspace:*",
+    "@impression/mcp": "workspace:*",
+    "@impression/shared": "workspace:*",
+    "esbuild": "^0.28.2"
+  }
+}
