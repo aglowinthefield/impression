@@ -3,6 +3,7 @@ import {
   type LlmProvider,
   ProviderError,
   postJson,
+  type UsageSink,
 } from "./types.js";
 
 export interface AnthropicOptions {
@@ -11,6 +12,7 @@ export interface AnthropicOptions {
   model?: string;
   baseUrl?: string;
   fetch?: Fetch;
+  onUsage?: UsageSink;
 }
 
 export function anthropicLlm(opts: AnthropicOptions): LlmProvider {
@@ -31,13 +33,23 @@ export function anthropicLlm(opts: AnthropicOptions): LlmProvider {
           ...(system ? { system } : {}),
           messages: [{ role: "user", content: prompt }],
         },
-      )) as { content?: { type: string; text?: string }[] };
+      )) as {
+        content?: { type: string; text?: string }[];
+        usage?: { input_tokens?: number; output_tokens?: number };
+      };
       const text = json.content
         ?.filter((b) => b.type === "text")
         .map((b) => b.text ?? "")
         .join("");
       if (text === undefined)
         throw new ProviderError("anthropic", "unexpected messages response");
+      opts.onUsage?.({
+        kind: "completion",
+        provider: "anthropic",
+        model,
+        inputTokens: json.usage?.input_tokens ?? 0,
+        outputTokens: json.usage?.output_tokens ?? 0,
+      });
       return text;
     },
   };

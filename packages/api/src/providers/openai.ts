@@ -3,6 +3,7 @@ import {
   type Fetch,
   ProviderError,
   postJson,
+  type UsageSink,
 } from "./types.js";
 
 export interface OpenAIEmbeddingOptions {
@@ -11,6 +12,7 @@ export interface OpenAIEmbeddingOptions {
   dimensions?: number;
   baseUrl?: string;
   fetch?: Fetch;
+  onUsage?: UsageSink;
 }
 
 export function openaiEmbeddings(
@@ -31,11 +33,21 @@ export function openaiEmbeddings(
         `${baseUrl}/embeddings`,
         { authorization: `Bearer ${opts.apiKey}` },
         { model, input: texts, dimensions, encoding_format: "float" },
-      )) as { data?: { index: number; embedding: number[] }[] };
+      )) as {
+        data?: { index: number; embedding: number[] }[];
+        usage?: { prompt_tokens?: number };
+      };
       const data = json.data;
       if (!data || data.length !== texts.length) {
         throw new ProviderError("openai", "unexpected embeddings response");
       }
+      opts.onUsage?.({
+        kind: "embedding",
+        provider: "openai",
+        model,
+        inputTokens: json.usage?.prompt_tokens ?? 0,
+        outputTokens: 0,
+      });
       return [...data]
         .sort((a, b) => a.index - b.index)
         .map((d) => d.embedding);

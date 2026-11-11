@@ -16,6 +16,7 @@ import { RepoAccess } from "./repo-access.js";
 import { RequestLog } from "./request-log.js";
 import { searchRoutes } from "./search.js";
 import { sessionRoutes } from "./sessions.js";
+import { usageContext } from "./usage.js";
 
 export function createApp(
   db: Db,
@@ -56,6 +57,7 @@ export function createApp(
   // Before auth, so rejected tokens show up in the log too.
   api.use(log.middleware());
   api.use(requireAuth(db, repoAccess));
+  api.use(usageContext());
   api.route("/debug", log.routes());
   api.route("/memories", memoryRoutes(db, providers));
   api.route("/core", coreRoutes(db));

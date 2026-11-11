@@ -105,6 +105,73 @@ describe("ollama", () => {
   });
 });
 
+describe("usage reporting", () => {
+  test("each provider reports the tokens from its response", async () => {
+    const seen: unknown[] = [];
+    const onUsage = (u: unknown) => seen.push(u);
+    await openaiEmbeddings({
+      apiKey: "k",
+      onUsage,
+      fetch: fakeFetch({
+        data: [{ index: 0, embedding: [1] }],
+        usage: { prompt_tokens: 7 },
+      }).fn,
+    }).embed(["a"]);
+    await anthropicLlm({
+      apiKey: "k",
+      onUsage,
+      fetch: fakeFetch({
+        content: [{ type: "text", text: "x" }],
+        usage: { input_tokens: 11, output_tokens: 3 },
+      }).fn,
+    }).complete({ prompt: "p" });
+    await ollamaLlm({
+      model: "m",
+      onUsage,
+      fetch: fakeFetch({
+        message: { content: "x" },
+        prompt_eval_count: 4,
+        eval_count: 2,
+      }).fn,
+    }).complete({ prompt: "p" });
+    expect(seen).toEqual([
+      {
+        kind: "embedding",
+        provider: "openai",
+        model: "text-embedding-3-small",
+        inputTokens: 7,
+        outputTokens: 0,
+      },
+      {
+        kind: "completion",
+        provider: "anthropic",
+        model: "claude-haiku-4-5",
+        inputTokens: 11,
+        outputTokens: 3,
+      },
+      {
+        kind: "completion",
+        provider: "ollama",
+        model: "m",
+        inputTokens: 4,
+        outputTokens: 2,
+      },
+    ]);
+  });
+
+  test("reports nothing for a failed call", async () => {
+    const seen: unknown[] = [];
+    await expect(
+      openaiEmbeddings({
+        apiKey: "k",
+        onUsage: (u) => seen.push(u),
+        fetch: fakeFetch("down", 500).fn,
+      }).embed(["a"]),
+    ).rejects.toThrow();
+    expect(seen).toEqual([]);
+  });
+});
+
 describe("createProviders", () => {
   const keys = { OPENAI_API_KEY: "o", ANTHROPIC_API_KEY: "a" };
 

@@ -4,11 +4,13 @@ import {
   type LlmProvider,
   ProviderError,
   postJson,
+  type UsageSink,
 } from "./types.js";
 
 export interface OllamaOptions {
   baseUrl?: string;
   fetch?: Fetch;
+  onUsage?: UsageSink;
 }
 
 export function ollamaEmbeddings(
@@ -35,10 +37,17 @@ export function ollamaEmbeddings(
           model: opts.model,
           input: texts,
         },
-      )) as { embeddings?: number[][] };
+      )) as { embeddings?: number[][]; prompt_eval_count?: number };
       if (!json.embeddings || json.embeddings.length !== texts.length) {
         throw new ProviderError("ollama", "unexpected embed response");
       }
+      opts.onUsage?.({
+        kind: "embedding",
+        provider: "ollama",
+        model: opts.model,
+        inputTokens: json.prompt_eval_count ?? 0,
+        outputTokens: 0,
+      });
       return json.embeddings;
     },
   };
@@ -66,10 +75,21 @@ export function ollamaLlm(
             { role: "user", content: prompt },
           ],
         },
-      )) as { message?: { content?: string } };
+      )) as {
+        message?: { content?: string };
+        prompt_eval_count?: number;
+        eval_count?: number;
+      };
       const text = json.message?.content;
       if (text === undefined)
         throw new ProviderError("ollama", "unexpected chat response");
+      opts.onUsage?.({
+        kind: "completion",
+        provider: "ollama",
+        model: opts.model,
+        inputTokens: json.prompt_eval_count ?? 0,
+        outputTokens: json.eval_count ?? 0,
+      });
       return text;
     },
   };

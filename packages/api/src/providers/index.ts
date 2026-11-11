@@ -2,7 +2,12 @@ import { EMBEDDING_DIM } from "../db/schema.js";
 import { anthropicLlm } from "./anthropic.js";
 import { ollamaEmbeddings, ollamaLlm } from "./ollama.js";
 import { openaiEmbeddings } from "./openai.js";
-import type { EmbeddingProvider, Fetch, LlmProvider } from "./types.js";
+import type {
+  EmbeddingProvider,
+  Fetch,
+  LlmProvider,
+  UsageSink,
+} from "./types.js";
 
 export * from "./types.js";
 export { anthropicLlm, ollamaEmbeddings, ollamaLlm, openaiEmbeddings };
@@ -30,10 +35,12 @@ function need(env: Env, key: string, why: string): string {
  *
  * The embedding column is `EMBEDDING_DIM` wide, so a provider with another
  * dimension is rejected here rather than failing on the first insert.
+ * `onUsage` receives the token usage of every successful call.
  */
 export function createProviders(
   env: Env = process.env,
   fetchFn?: Fetch,
+  onUsage?: UsageSink,
 ): Providers {
   const embeddingKind = env.EMBEDDING_PROVIDER ?? "openai";
   const llmKind = env.LLM_PROVIDER ?? "anthropic";
@@ -46,6 +53,7 @@ export function createProviders(
       model: env.EMBEDDING_MODEL || undefined,
       dimensions: EMBEDDING_DIM,
       fetch: fetchFn,
+      onUsage,
     });
   } else if (embeddingKind === "ollama") {
     embeddings = ollamaEmbeddings({
@@ -57,6 +65,7 @@ export function createProviders(
       minSimilarity: Number(env.EMBEDDING_MIN_SIMILARITY ?? 0.45),
       baseUrl: ollamaUrl,
       fetch: fetchFn,
+      onUsage,
     });
   } else {
     throw new Error(
@@ -75,12 +84,14 @@ export function createProviders(
       apiKey: need(env, "ANTHROPIC_API_KEY", "when LLM_PROVIDER=anthropic"),
       model: env.LLM_MODEL,
       fetch: fetchFn,
+      onUsage,
     });
   } else if (llmKind === "ollama") {
     llm = ollamaLlm({
       model: need(env, "LLM_MODEL", "when LLM_PROVIDER=ollama"),
       baseUrl: ollamaUrl,
       fetch: fetchFn,
+      onUsage,
     });
   } else {
     throw new Error(`unknown LLM_PROVIDER "${llmKind}" (anthropic or ollama)`);
