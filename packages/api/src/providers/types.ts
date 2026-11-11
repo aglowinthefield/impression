@@ -20,6 +20,18 @@ export interface LlmProvider {
 
 export type Fetch = typeof fetch;
 
+/** Tokens one model call used, as the provider reported them. */
+export interface ModelUsage {
+  kind: "embedding" | "completion";
+  provider: "openai" | "anthropic" | "ollama";
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+}
+
+/** Receives the usage of every successful model call. */
+export type UsageSink = (usage: ModelUsage) => void;
+
 export class ProviderError extends Error {
   constructor(provider: string, message: string) {
     super(`${provider}: ${message}`);

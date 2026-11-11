@@ -26,6 +26,11 @@ primary_region = "iad"
     timeout = "5s"
     grace_period = "30s"
 
+# Scraped into Fly's managed Grafana (fly-metrics.net). Not exposed publicly.
+[metrics]
+  port = 9091
+  path = "/metrics"
+
 [[vm]]
   size = "shared-cpu-1x"
   memory = "1gb"

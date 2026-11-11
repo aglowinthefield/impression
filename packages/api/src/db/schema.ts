@@ -226,3 +226,32 @@ export const memoryRatings = pgTable(
   },
   (t) => [primaryKey({ columns: [t.memoryId, t.owner] })],
 );
+
+/**
+ * One model call: who caused it, which model ran and how many tokens it used.
+ * Written for analytics now and billing later, so it is never edited after insert.
+ */
+export const usageEvents = pgTable(
+  "usage_events",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    /** The signed-in GitHub user. Null for admin tokens and CLI jobs such as re-embeds. */
+    userId: uuid().references(() => users.id, { onDelete: "set null" }),
+    /** Token name, kept so admin-token usage is still attributable. */
+    principal: text(),
+    /** API area that made the call, e.g. "search" or "sessions". "job" outside a request. */
+    operation: text().notNull(),
+    kind: text().notNull(),
+    provider: text().notNull(),
+    model: text().notNull(),
+    inputTokens: integer().notNull(),
+    outputTokens: integer().notNull(),
+    /** Estimated cost in millionths of a US dollar. Null when the model has no known price. */
+    costMicros: integer(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("usage_events_user_created_idx").on(t.userId, t.createdAt),
+    index("usage_events_created_idx").on(t.createdAt),
+  ],
+);
