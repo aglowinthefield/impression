@@ -1,0 +1,17 @@
+{
+  "name": "impression",
+  "owner": {
+    "name": "aglowinthefield"
+  },
+  "description": "Impression, memory for coding agents.",
+  "plugins": [
+    {
+      "name": "impression",
+      "description": "Memories from your Impression server at session start and on each prompt, and the session sent back for review when it ends.",
+      "source": {
+        "source": "npm",
+        "package": "@aglowinthefield/impression"
+      }
+    }
+  ]
+}

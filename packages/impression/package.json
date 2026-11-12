@@ -20,6 +20,10 @@
   "files": [
     "dist",
     "pi",
+    "hooks",
+    ".claude-plugin",
+    ".codex-plugin",
+    ".mcp.json",
     "LICENSE",
     "README.md"
   ],

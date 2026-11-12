@@ -10,7 +10,14 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { formatSetup, oldHookFiles, PI_PACKAGE, setup } from "./setup.js";
+import {
+  CLAUDE_INSTALL,
+  CODEX_INSTALL,
+  formatSetup,
+  oldHookFiles,
+  PI_PACKAGE,
+  setup,
+} from "./setup.js";
 
 let home: string;
 beforeEach(() => {
@@ -34,43 +41,51 @@ describe("setup", () => {
     expect(formatSetup(r)).toContain("No supported harness found.");
   });
 
-  it("writes Claude Code hooks and MCP, keeping other settings", () => {
-    const other = { hooks: [{ type: "command", command: "echo hi" }] };
+  it("removes Claude Code hooks and MCP an earlier setup wrote, keeping the rest", () => {
+    const other = { type: "command", command: "echo hi" };
+    const hook = (command: string) => ({
+      hooks: [{ type: "command", command }],
+    });
     put(
       ".claude/settings.json",
       JSON.stringify({
         theme: "dark",
-        hooks: { SessionStart: [{ hooks: [other.hooks[0]] }], Stop: [] },
+        hooks: {
+          SessionStart: [
+            { hooks: [other] },
+            hook("impression hook session-start"),
+            hook(
+              "node /x/impression/packages/cli/dist/bin.js hook session-start",
+            ),
+          ],
+          SessionEnd: [
+            hook("impression hook session-end --extract --agent claude"),
+          ],
+          Stop: [],
+        },
       }),
     );
     put(
       ".claude.json",
       JSON.stringify({
         projects: { a: 1 },
-        mcpServers: { x: { command: "x" } },
+        mcpServers: {
+          x: { command: "x" },
+          impression: { type: "stdio", command: "impression-mcp", args: [] },
+        },
       }),
     );
-    setup({ home, stamp: "t" });
+    const r = setup({ home, stamp: "t" });
     const s = json(".claude", "settings.json");
     expect(s.theme).toBe("dark");
-    expect(s.hooks.Stop).toEqual([]);
-    expect(s.hooks.SessionStart).toHaveLength(2);
-    expect(s.hooks.SessionStart[1].hooks[0].command).toBe(
-      "impression hook session-start --agent claude",
-    );
-    expect(s.hooks.SessionEnd[0].hooks[0].command).toBe(
-      "impression hook session-end --extract --agent claude",
-    );
+    expect(s.hooks).toEqual({ SessionStart: [{ hooks: [other] }], Stop: [] });
     const c = json(".claude.json");
     expect(c.projects).toEqual({ a: 1 });
-    expect(c.mcpServers.x).toEqual({ command: "x" });
-    expect(c.mcpServers.impression.command).toBe("impression-mcp");
+    expect(c.mcpServers).toEqual({ x: { command: "x" } });
     expect(
       existsSync(join(home, ".claude", "settings.json.impression-backup-t")),
     ).toBe(true);
-    expect(existsSync(join(home, ".claude.json.impression-backup-t"))).toBe(
-      true,
-    );
+    expect(r.notes.join()).toContain(CLAUDE_INSTALL[1]);
   });
 
   it("is idempotent: a second run changes and backs up nothing", () => {
@@ -86,49 +101,12 @@ describe("setup", () => {
     expect(files()).toBe(before);
   });
 
-  it("rewrites an old checkout hook and MCP entry instead of adding a second", () => {
-    put(
-      ".claude/settings.json",
-      JSON.stringify({
-        hooks: {
-          SessionStart: [
-            {
-              hooks: [
-                {
-                  type: "command",
-                  command:
-                    "node /x/impression/packages/cli/dist/bin.js hook session-start",
-                },
-              ],
-            },
-          ],
-        },
-      }),
-    );
-    put(
-      ".claude.json",
-      JSON.stringify({
-        mcpServers: {
-          impression: {
-            type: "stdio",
-            command: "node",
-            args: ["/x/bin.js"],
-            env: { A: "1", IMPRESSION_TOKEN: "imp_old", IMPRESSION_URL: "x" },
-          },
-        },
-      }),
-    );
+  it("keeps an impression MCP entry someone pointed elsewhere", () => {
+    const mine = { command: "node", args: ["/x/bin.js"] };
+    put(".claude/settings.json", "{}");
+    put(".claude.json", JSON.stringify({ mcpServers: { impression: mine } }));
     setup({ home });
-    expect(json(".claude", "settings.json").hooks.SessionStart).toHaveLength(1);
-    expect(
-      json(".claude", "settings.json").hooks.SessionStart[0].hooks[0].command,
-    ).toBe("impression hook session-start --agent claude");
-    expect(json(".claude.json").mcpServers.impression).toEqual({
-      type: "stdio",
-      command: "impression-mcp",
-      args: [],
-      env: { A: "1" },
-    });
+    expect(json(".claude.json").mcpServers.impression).toEqual(mine);
   });
 
   it("adds the pi package and removes the extension path and MCP entry an earlier setup wrote", () => {
@@ -185,21 +163,32 @@ describe("setup", () => {
     });
   });
 
-  it("writes Codex hooks.json and appends an MCP table to config.toml", () => {
+  it("removes Codex hooks and the MCP table an earlier setup wrote", () => {
     put(
       ".codex/config.toml",
-      '[features]\nhooks = true\n\n[mcp_servers.a]\ncommand = "a"',
+      '[features]\nhooks = true\n\n[mcp_servers.impression]\ncommand = "impression-mcp"\n\n[mcp_servers.a]\ncommand = "a"\n',
     );
-    put(".codex/hooks.json", JSON.stringify({ hooks: { Stop: [] } }));
+    put(
+      ".codex/hooks.json",
+      JSON.stringify({
+        hooks: {
+          SessionStart: [
+            {
+              hooks: [
+                { type: "command", command: "impression hook session-start" },
+              ],
+            },
+          ],
+          Stop: [],
+        },
+      }),
+    );
     const r = setup({ home });
-    expect(
-      json(".codex", "hooks.json").hooks.SessionStart[0].hooks[0].command,
-    ).toBe("impression hook session-start --agent codex");
-    const toml = readFileSync(join(home, ".codex", "config.toml"), "utf8");
-    expect(toml).toContain(
-      '[mcp_servers.a]\ncommand = "a"\n\n[mcp_servers.impression]\ncommand = "impression-mcp"\n',
+    expect(json(".codex", "hooks.json")).toEqual({ hooks: { Stop: [] } });
+    expect(readFileSync(join(home, ".codex", "config.toml"), "utf8")).toBe(
+      '[features]\nhooks = true\n\n[mcp_servers.a]\ncommand = "a"\n',
     );
-    expect(r.notes).toEqual([]);
+    expect(r.notes.join()).toContain(CODEX_INSTALL[1]);
   });
 
   it("--dry-run writes nothing; --only limits the harness", () => {
@@ -212,6 +201,10 @@ describe("setup", () => {
     );
     expect(existsSync(join(home, ".claude.json"))).toBe(false);
     expect(formatSetup(dry, true)).toContain("would be added");
+    expect(existsSync(join(home, ".pi", "agent", "settings.json"))).toBe(true);
+    expect(
+      readFileSync(join(home, ".pi", "agent", "settings.json"), "utf8"),
+    ).toBe("{}");
 
     const only = setup({ home, only: "pi" });
     expect(only.changes.every((c) => c.harness === "pi")).toBe(true);
@@ -230,19 +223,19 @@ describe("setup", () => {
 });
 
 describe("oldHookFiles", () => {
-  it("finds hooks without --agent only", () => {
+  it("finds files still holding Impression hooks", () => {
     const home = mkdtempSync(join(tmpdir(), "imp-old-"));
     mkdirSync(join(home, ".claude"));
     mkdirSync(join(home, ".codex"));
     writeFileSync(
       join(home, ".claude", "settings.json"),
-      JSON.stringify({ command: "impression hook session-start" }),
+      JSON.stringify({
+        command: "impression hook session-start --agent claude",
+      }),
     );
     writeFileSync(
       join(home, ".codex", "hooks.json"),
-      JSON.stringify({
-        command: "impression hook session-start --agent codex",
-      }),
+      JSON.stringify({ command: "petdex hook session-start" }),
     );
     expect(oldHookFiles(home)).toEqual([
       join(home, ".claude", "settings.json"),
