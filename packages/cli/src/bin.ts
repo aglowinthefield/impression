@@ -30,6 +30,10 @@ import { formatSetup, HARNESSES, type Harness, setup } from "./setup.js";
 import { checkForUpdate, PACKAGE, VERSION } from "./update-check.js";
 
 const [cmd, sub] = process.argv.slice(2);
+if (cmd === "--version" || cmd === "-v" || cmd === "version") {
+  console.log(VERSION ?? "dev");
+  process.exit(0);
+}
 const config = loadConfig();
 const token = config.token;
 const url = config.url;
@@ -239,7 +243,7 @@ if (cmd === "hook" && sub === "session-start") {
   }
 } else {
   console.error(
-    "usage: impression setup [--dry-run] [--only claude|pi|codex] | update\n       impression login [--github] | search <q> | add <text> [--user] [--pin] | list | status\n       impression proposals | accept <id> [edited text] | reject <id> | retire <id> | edit <id> <text> | keep <id>\n       impression hook session-start [--plain] | prompt (text on stdin) | session-end [--extract]\n       impression eval push [path-substring]",
+    "usage: impression --version | setup [--dry-run] [--only claude|pi|codex] | update\n       impression login [--github] | search <q> | add <text> [--user] [--pin] | list | status\n       impression proposals | accept <id> [edited text] | reject <id> | retire <id> | edit <id> <text> | keep <id>\n       impression hook session-start [--plain] | prompt (text on stdin) | session-end [--extract]\n       impression eval push [path-substring]",
   );
   process.exit(2);
 }
