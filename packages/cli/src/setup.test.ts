@@ -10,7 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { formatSetup, setup } from "./setup.js";
+import { formatSetup, PI_PACKAGE, setup } from "./setup.js";
 
 let home: string;
 beforeEach(() => {
@@ -25,7 +25,6 @@ const put = (rel: string, text: string) => {
   mkdirSync(join(f, ".."), { recursive: true });
   writeFileSync(f, text);
 };
-const EXT = "/pkg/pi/impression.ts";
 
 describe("setup", () => {
   it("reports when no harness is installed", () => {
@@ -78,10 +77,10 @@ describe("setup", () => {
     put(".claude/settings.json", "{}");
     put(".pi/agent/settings.json", "{}");
     put(".codex/config.toml", "[features]\nhooks = true\n");
-    setup({ home, piExtension: EXT, stamp: "1" });
+    setup({ home, stamp: "1" });
     const files = () => readdirSync(home, { recursive: true }).sort().join();
     const before = files();
-    const second = setup({ home, piExtension: EXT, stamp: "2" });
+    const second = setup({ home, stamp: "2" });
     expect(second.changes.every((c) => c.status === "unchanged")).toBe(true);
     expect(second.backups).toEqual([]);
     expect(files()).toBe(before);
@@ -132,7 +131,7 @@ describe("setup", () => {
     });
   });
 
-  it("registers the pi extension once, replacing an older path, and the pi MCP server", () => {
+  it("adds the pi package and removes the extension path and MCP entry an earlier setup wrote", () => {
     put(
       ".pi/agent/settings.json",
       JSON.stringify({
@@ -140,21 +139,49 @@ describe("setup", () => {
           "/other/ext.ts",
           "/old/impression/packages/pi/impression.ts",
         ],
+        packages: ["npm:other"],
         theme: "x",
       }),
     );
     put(
       ".pi/agent/mcp.json",
-      JSON.stringify({ mcpServers: { Neon: { url: "u" } } }),
+      JSON.stringify({
+        mcpServers: {
+          Neon: { url: "u" },
+          impression: { command: "impression-mcp" },
+        },
+      }),
     );
-    setup({ home, piExtension: EXT });
+    const r = setup({ home });
     expect(json(".pi", "agent", "settings.json")).toEqual({
-      extensions: ["/other/ext.ts", EXT],
+      extensions: ["/other/ext.ts"],
+      packages: ["npm:other", PI_PACKAGE],
       theme: "x",
     });
     expect(json(".pi", "agent", "mcp.json").mcpServers).toEqual({
       Neon: { url: "u" },
-      impression: { command: "impression-mcp" },
+    });
+    expect(r.changes.map((c) => `${c.what} ${c.status}`)).toEqual([
+      "package added",
+      "old extension path removed",
+      "old MCP server removed",
+    ]);
+  });
+
+  it("keeps a pinned or object pi package entry and a custom MCP entry", () => {
+    put(
+      ".pi/agent/settings.json",
+      JSON.stringify({ packages: [{ source: `${PI_PACKAGE}@0.1.3` }] }),
+    );
+    put(
+      ".pi/agent/mcp.json",
+      JSON.stringify({ mcpServers: { impression: { url: "https://x/mcp" } } }),
+    );
+    const r = setup({ home });
+    expect(r.changes).toHaveLength(1);
+    expect(r.changes[0]?.status).toBe("unchanged");
+    expect(json(".pi", "agent", "mcp.json").mcpServers.impression).toEqual({
+      url: "https://x/mcp",
     });
   });
 
@@ -183,7 +210,7 @@ describe("setup", () => {
   it("--dry-run writes nothing; --only limits the harness", () => {
     put(".claude/settings.json", "{}");
     put(".pi/agent/settings.json", "{}");
-    const dry = setup({ home, dryRun: true, piExtension: EXT });
+    const dry = setup({ home, dryRun: true });
     expect(dry.changes.length).toBeGreaterThan(0);
     expect(readFileSync(join(home, ".claude", "settings.json"), "utf8")).toBe(
       "{}",
@@ -191,7 +218,7 @@ describe("setup", () => {
     expect(existsSync(join(home, ".claude.json"))).toBe(false);
     expect(formatSetup(dry, true)).toContain("would be added");
 
-    const only = setup({ home, only: "pi", piExtension: EXT });
+    const only = setup({ home, only: "pi" });
     expect(only.changes.every((c) => c.harness === "pi")).toBe(true);
     expect(readFileSync(join(home, ".claude", "settings.json"), "utf8")).toBe(
       "{}",

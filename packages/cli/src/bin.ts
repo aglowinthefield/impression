@@ -117,19 +117,12 @@ if (cmd === "hook" && sub === "session-start") {
     );
     process.exit(2);
   }
-  // The pi extension ships beside dist/ in the npm package (pi/impression.ts).
-  const ext = join(
-    dirname(dirname(fileURLToPath(import.meta.url))),
-    "pi",
-    "impression.ts",
-  );
   const dryRun = rest.includes("--dry-run");
   try {
     const result = setup({
       home: homedir(),
       only: only as Harness | undefined,
       dryRun,
-      piExtension: existsSync(ext) ? ext : undefined,
     });
     console.log(formatSetup(result, dryRun));
     if (!token)

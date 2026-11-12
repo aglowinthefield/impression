@@ -2,10 +2,13 @@
 // transcript to Impression when it ends. Shells out to the `impression` CLI, so it
 // shares config (`impression login`) and fail-quietly behaviour with the Claude Code hooks.
 //
-// Install: `impression setup`, or add this file's path to "extensions" in
-// ~/.pi/agent/settings.json. Works from the npm package (`pi/impression.ts` beside
-// `dist/`) and from a checkout (`packages/pi` beside `packages/cli/dist`). Falls back to
-// `impression` on PATH. Override the CLI location with IMPRESSION_CLI.
+// Also registers the Impression MCP server, so pi gets the search and add tools.
+//
+// Install: `pi install npm:@aglowinthefield/impression`, or add this file's path to
+// "extensions" in ~/.pi/agent/settings.json. Works from the npm package
+// (`pi/impression.ts` beside `dist/`) and from a checkout (`packages/pi` beside
+// `packages/cli/dist`). Falls back to `impression` on PATH. Override the CLI location
+// with IMPRESSION_CLI.
 import { execFile } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -68,7 +71,17 @@ const CHUNK_CHARS = 3000;
 /** Prompts shorter than this ("yes", "continue") carry nothing to search on. */
 const MIN_PROMPT_CHARS = 15;
 
+const MCP_SCRIPT = local("../dist/impression-mcp.js", "../mcp/dist/bin.js");
+
 export default function (pi: ExtensionAPI) {
+  // Runs the bundled server with this node, so it doesn't depend on what's on PATH.
+  // An "impression" entry in mcp.json takes precedence over this one.
+  if (MCP_SCRIPT && typeof pi.registerMcpServer === "function")
+    pi.registerMcpServer("impression", {
+      command: process.execPath,
+      args: [MCP_SCRIPT],
+    });
+
   let context = "";
   let injected = false;
   const seen = new Set<string>();

@@ -21,8 +21,6 @@ export type Harness = (typeof HARNESSES)[number];
 
 export interface SetupOptions {
   home: string;
-  /** Absolute path of the pi extension to register, if one ships with this install. */
-  piExtension?: string;
   dryRun?: boolean;
   only?: Harness;
   /** Suffix for backup files. Defaults to a timestamp. */
@@ -33,7 +31,7 @@ export interface Change {
   harness: Harness;
   file: string;
   what: string;
-  status: "added" | "updated" | "unchanged";
+  status: "added" | "updated" | "unchanged" | "removed";
 }
 
 export interface SetupResult {
@@ -47,6 +45,8 @@ export interface SetupResult {
 const HOOK_START = "impression hook session-start";
 const HOOK_END = "impression hook session-end --extract";
 const MCP = "impression-mcp";
+/** pi installs this package itself, extension and MCP server included. */
+export const PI_PACKAGE = "npm:@aglowinthefield/impression";
 
 type Json = Record<string, unknown>;
 interface HookGroup {
@@ -198,41 +198,63 @@ export function setup(opts: SetupOptions): SetupResult {
   }
 
   if (want("pi") && found.pi) {
+    // The npm package is a pi package, so pi installs, updates and loads it. Earlier
+    // setups pointed "extensions" at the file and added an MCP entry run from PATH;
+    // take those out so nothing loads twice.
     const file = join(home, ".pi", "agent", "settings.json");
-    if (opts.piExtension) {
-      w.edit(file, (settings) => {
-        const list = (
-          Array.isArray(settings.extensions) ? settings.extensions : []
-        ) as string[];
-        const ext: string = opts.piExtension as string;
-        // Replace an earlier copy (a checkout or an older install) rather than load two.
-        const old = list.findIndex(
-          (p) => typeof p === "string" && /(^|\/)pi\/impression\.ts$/.test(p),
+    w.edit(file, (settings) => {
+      const pkgs = (
+        Array.isArray(settings.packages) ? settings.packages : []
+      ) as unknown[];
+      const has = pkgs.some((p) => {
+        const src = typeof p === "string" ? p : (p as Json)?.source;
+        return (
+          typeof src === "string" && src.split(/@(?=[^/]*$)/)[0] === PI_PACKAGE
         );
-        let status: Change["status"] = "unchanged";
-        if (old < 0) {
-          list.push(ext);
-          status = "added";
-        } else if (list[old] !== ext) {
-          list[old] = ext;
-          status = "updated";
-        }
-        settings.extensions = list;
-        changes.push({ harness: "pi", file, what: "extension", status });
       });
-    } else
-      notes.push("pi: extension file not found in this install, skipped it");
-
-    const mcpFile = join(home, ".pi", "agent", "mcp.json");
-    w.edit(mcpFile, (cfg) => {
-      const status = ensureMcp(obj(cfg, "mcpServers"), { command: MCP });
+      if (!has) pkgs.push(PI_PACKAGE);
+      settings.packages = pkgs;
       changes.push({
         harness: "pi",
-        file: mcpFile,
-        what: "MCP server",
-        status,
+        file,
+        what: "package",
+        status: has ? "unchanged" : "added",
       });
+
+      if (Array.isArray(settings.extensions)) {
+        const list = settings.extensions as unknown[];
+        const kept = list.filter(
+          (p) =>
+            !(typeof p === "string" && /(^|\/)pi\/impression\.ts$/.test(p)),
+        );
+        if (kept.length < list.length) {
+          settings.extensions = kept;
+          changes.push({
+            harness: "pi",
+            file,
+            what: "old extension path",
+            status: "removed",
+          });
+        }
+      }
     });
+
+    const mcpFile = join(home, ".pi", "agent", "mcp.json");
+    if (existsSync(mcpFile))
+      w.edit(mcpFile, (cfg) => {
+        const servers = cfg.mcpServers as Json | undefined;
+        const cur = servers?.impression as Json | undefined;
+        // Only the entry setup wrote; one someone pointed elsewhere stays.
+        if (servers && cur?.command === MCP) {
+          delete servers.impression;
+          changes.push({
+            harness: "pi",
+            file: mcpFile,
+            what: "old MCP server",
+            status: "removed",
+          });
+        }
+      });
   }
 
   if (want("codex") && found.codex) {
