@@ -13,7 +13,7 @@ or a small team, not for consumer-facing agents.
 
 ## Wire it into your agent
 
-`impression setup` finds Claude Code, pi and Codex and adds the hooks, MCP server and pi extension to each one's config (Codex gets the session-start hook and MCP only). It backs up each file it changes (`<file>.impression-backup-<timestamp>`), leaves other settings alone, and is safe to rerun. `--dry-run` prints the changes without writing them; `--only claude|pi|codex` limits it to one. The sections below show what it writes, if you'd rather do it by hand.
+`impression setup` finds Claude Code, pi and Codex and adds the hooks and MCP server to Claude Code and Codex config (Codex gets the session-start hook and MCP only) and the Impression package to pi. It backs up each file it changes (`<file>.impression-backup-<timestamp>`), leaves other settings alone, and is safe to rerun. `--dry-run` prints the changes without writing them; `--only claude|pi|codex` limits it to one. The sections below show what it writes, if you'd rather do it by hand.
 
 Every client reads `IMPRESSION_URL` (default `https://impression.quest`) and `IMPRESSION_TOKEN`. The CLI, the hooks and the MCP server also fall back to the file `impression login` writes, so no token goes in agent config.
 
@@ -58,13 +58,11 @@ Session-start injects your core memories. Session-end sends the transcript and q
 
 ### pi
 
-MCP tools:
-
 ```sh
-pi mcp add impression -- impression-mcp
+pi install npm:@aglowinthefield/impression
 ```
 
-Run `/reload` or restart pi. That gives pi search and add. For automatic injection and capture, load the extension that ships in the package (`$(npm root -g)/@aglowinthefield/impression/pi/impression.ts`) by adding its absolute path to `"extensions"` in `~/.pi/agent/settings.json`. It runs `impression hook session-start --plain` on session start, `hook prompt` (a search on the prompt text) before each prompt, and `hook session-end --extract` on each chunk of new conversation (after a run, once about 3000 characters have built up, and again on exit), so run `impression login` first.
+pi installs and updates the package itself (`pi update --extensions`), so it doesn't need the global install. The package's extension adds the MCP tools (search and add) and runs `impression hook session-start --plain` on session start, `hook prompt` (a search on the prompt text) before each prompt, and `hook session-end --extract` on each chunk of new conversation (after a run, once about 3000 characters have built up, and again on exit). Run `impression login` first. `impression setup` adds the same package entry to `~/.pi/agent/settings.json`, and removes the extension path and `impression` MCP entry that earlier versions of setup wrote.
 
 ## Troubleshooting
 

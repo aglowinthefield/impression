@@ -9,6 +9,9 @@
     "url": "git+https://github.com/aglowinthefield/impression.git",
     "directory": "packages/impression"
   },
+  "keywords": [
+    "pi-package"
+  ],
   "homepage": "https://github.com/aglowinthefield/impression#readme",
   "bin": {
     "impression": "dist/impression.js",
@@ -20,6 +23,11 @@
     "LICENSE",
     "README.md"
   ],
+  "pi": {
+    "extensions": [
+      "./pi/impression.ts"
+    ]
+  },
   "engines": {
     "node": ">=22"
   },
