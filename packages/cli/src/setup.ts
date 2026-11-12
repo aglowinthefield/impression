@@ -106,6 +106,15 @@ function ensureMcp(servers: Json, entry: Json): Change["status"] {
   const had = !!cur && typeof cur === "object";
   // Keep extra keys someone added (env, description), but point it at the bin.
   const next = had ? { ...(cur as Json), ...entry } : entry;
+  // A token or URL in the MCP env overrides `impression login`, so an old hand-set
+  // token would silently keep the server signed in as someone else. Drop both.
+  if (next.env && typeof next.env === "object") {
+    const env = { ...(next.env as Json) };
+    delete env.IMPRESSION_TOKEN;
+    delete env.IMPRESSION_URL;
+    if (Object.keys(env).length) next.env = env;
+    else delete next.env;
+  }
   if (had && JSON.stringify(next) === JSON.stringify(cur)) return "unchanged";
   servers.impression = next;
   return had ? "updated" : "added";
