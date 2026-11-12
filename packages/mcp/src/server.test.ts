@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, test } from "vitest";
-import { createServer } from "./server.js";
+import { createServer, workDir } from "./server.js";
 
 function repo() {
   const dir = mkdtempSync(join(tmpdir(), "imp-mcp-"));
@@ -92,5 +92,19 @@ describe("mcp tools", () => {
     const r = await call("search", { query: "x" });
     expect(r.isError).toBe(true);
     expect(r.content[0]?.text).toContain("401");
+  });
+});
+
+describe("workDir", () => {
+  test("uses the workspace Codex sends with a tool call, else cwd", () => {
+    const dir = repo();
+    const meta = {
+      "x-codex-turn-metadata": {
+        workspaces: { "/no/such/dir": {}, [dir]: { has_changes: false } },
+      },
+    };
+    expect(workDir(meta, "/plugin")).toBe(dir);
+    expect(workDir(undefined, "/plugin")).toBe("/plugin");
+    expect(workDir({ callId: "x" }, "/plugin")).toBe("/plugin");
   });
 });
