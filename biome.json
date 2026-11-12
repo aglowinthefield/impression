@@ -7,7 +7,12 @@
       "!**/dist",
       "!**/node_modules",
       "!.worktrees",
-      "!**/drizzle"
+      "!**/drizzle",
+      "!packages/impression/.claude-plugin",
+      "!packages/impression/.codex-plugin",
+      "!packages/impression/hooks",
+      "!packages/impression/.mcp.json",
+      "!packages/impression/pi"
     ]
   },
   "overrides": [

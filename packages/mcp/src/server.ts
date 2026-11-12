@@ -1,3 +1,4 @@
+import { statSync } from "node:fs";
 import { type ApiClient, resolveProject } from "@impression/shared";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
@@ -27,9 +28,26 @@ const text = (t: string, isError = false) => ({
   ...(isError ? { isError: true } : {}),
 });
 
+/**
+ * The directory the agent is working in. Codex starts plugin MCP servers in the plugin's
+ * own directory, but sends the session's workspaces with each tool call.
+ */
+export function workDir(meta: unknown, cwd: string): string {
+  const turn = (meta as Record<string, unknown> | undefined)?.[
+    "x-codex-turn-metadata"
+  ] as { workspaces?: Record<string, unknown> } | undefined;
+  for (const dir of Object.keys(turn?.workspaces ?? {})) {
+    try {
+      if (statSync(dir).isDirectory()) return dir;
+    } catch {}
+  }
+  return cwd;
+}
+
 export function createServer({ client, cwd }: Options): McpServer {
   const server = new McpServer({ name: "impression", version: VERSION });
-  const project = () => resolveProject(cwd);
+  const project = (extra: { _meta?: unknown }) =>
+    resolveProject(workDir(extra._meta, cwd));
 
   server.registerTool(
     "search",
@@ -41,9 +59,9 @@ export function createServer({ client, cwd }: Options): McpServer {
         limit: z.number().int().min(1).max(20).optional(),
       },
     },
-    async ({ query, limit }) => {
+    async ({ query, limit }, extra) => {
       try {
-        const p = project();
+        const p = project(extra);
         const body = (await client.post("/search", {
           query,
           project: p.key,
@@ -80,9 +98,9 @@ export function createServer({ client, cwd }: Options): McpServer {
           ),
       },
     },
-    async ({ content, scope }) => {
+    async ({ content, scope }, extra) => {
       try {
-        const p = project();
+        const p = project(extra);
         const r = (await client.post("/memories", {
           scope: scope ?? "project",
           content,

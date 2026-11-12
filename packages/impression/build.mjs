@@ -104,8 +104,9 @@ write(".mcp.json", {
   },
 });
 
-// Codex sets PLUGIN_ROOT for hooks but doesn't expand variables in MCP config, where
-// paths are relative to the plugin root.
+// Codex sets PLUGIN_ROOT for hooks but doesn't expand variables in MCP config. It starts
+// plugin MCP servers in the plugin root, so paths are relative to it, and the server
+// finds the session's workspace in each tool call's metadata instead (see workDir).
 write(".codex-plugin/plugin.json", {
   ...meta,
   hooks: "./hooks/codex.json",
