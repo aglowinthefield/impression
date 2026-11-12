@@ -23,7 +23,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     saved = JSON.parse(readFileSync(configPath(env), "utf8"));
   } catch {}
   return {
-    url: env.IMPRESSION_URL ?? saved.url ?? "http://localhost:3000",
+    url: env.IMPRESSION_URL ?? saved.url ?? "https://impression.quest",
     token: env.IMPRESSION_TOKEN ?? saved.token,
     sendInstructions: env.IMPRESSION_SEND_INSTRUCTIONS
       ? /^(1|true|yes|on)$/i.test(env.IMPRESSION_SEND_INSTRUCTIONS)
