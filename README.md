@@ -138,6 +138,8 @@ pnpm lint && pnpm typecheck && pnpm test
 pnpm dev   # api on :3000, GET /health
 ```
 
+`pnpm test` needs Docker running: the API tests start the compose `postgres` service themselves if nothing answers on port 54329. Set `DATABASE_URL` to use another Postgres.
+
 ## Retrieval eval
 
 `pnpm --filter @impression/api eval` runs a small fixture (14 memories, 18 queries, 5 off-topic queries, 15 memory pairs) against the configured embedding model and prints hit@3, MRR and off-topic results per `minSimilarity`, plus pair similarities for dedup. It calls the real embeddings API, so it costs a little. CI runs the same fixture with a fake embedder to catch ranking regressions.
