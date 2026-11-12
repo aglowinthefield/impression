@@ -35,7 +35,7 @@ Hooks, in `~/.claude/settings.json` (after `impression login`, no token is neede
         "hooks": [
           {
             "type": "command",
-            "command": "impression hook session-start"
+            "command": "impression hook session-start --agent claude"
           }
         ]
       }
@@ -45,7 +45,7 @@ Hooks, in `~/.claude/settings.json` (after `impression login`, no token is neede
         "hooks": [
           {
             "type": "command",
-            "command": "impression hook session-end --extract"
+            "command": "impression hook session-end --extract --agent claude"
           }
         ]
       }
@@ -62,7 +62,7 @@ Session-start injects your core memories. Session-end sends the transcript and q
 pi install npm:@aglowinthefield/impression
 ```
 
-pi installs and updates the package itself (`pi update --extensions`), so it doesn't need the global install. The package's extension adds the MCP tools (search and add) and runs `impression hook session-start --plain` on session start, `hook prompt` (a search on the prompt text) before each prompt, and `hook session-end --extract` on each chunk of new conversation (after a run, once about 3000 characters have built up, and again on exit). Run `impression login` first. `impression setup` adds the same package entry to `~/.pi/agent/settings.json`, and removes the extension path and `impression` MCP entry that earlier versions of setup wrote.
+pi installs and updates the package itself (`pi update --extensions`), so it doesn't need the global install. The package's extension adds the MCP tools (search and add) and runs `impression hook session-start` on session start, `hook prompt` (a search on the prompt text) before each prompt, and `hook session-end --extract` on each chunk of new conversation (after a run, once about 3000 characters have built up, and again on exit). Run `impression login` first. `impression setup` adds the same package entry to `~/.pi/agent/settings.json`, and removes the extension path and `impression` MCP entry that earlier versions of setup wrote.
 
 ## Troubleshooting
 
@@ -172,11 +172,11 @@ Terminal checks, none of which run in CI because they need a real model or your 
 
 ## Session-start hook
 
-`GET /api/core` returns a small set per project: pinned first, then by confidence and recency, within a token budget (`budget`, default 800). Flagged-stale and superseded memories are left out. `impression hook session-start` (from `packages/cli`) prints it as Claude Code `SessionStart` output, or as plain text with `--plain`. It exits 0 and prints nothing if the API is down. Setup is under [Wire it into your agent](#wire-it-into-your-agent).
+`GET /api/core` returns a small set per project: pinned first, then by confidence and recency, within a token budget (`budget`, default 800). Flagged-stale and superseded memories are left out. `impression hook session-start` (from `packages/cli`) prints it in the shape the agent named by `--agent` reads (`claude`, `codex`, `gemini`, `cursor`, `copilot`, or `pi` for plain text). A hook without `--agent` or running inside a different agent prints nothing, so a hook never runs twice. It exits 0 and prints nothing if the API is down. Setup is under [Wire it into your agent](#wire-it-into-your-agent).
 
 ## Session-end hook
 
-`impression hook session-end` reads Claude Code's `SessionEnd` JSON from stdin, flattens the transcript to user and assistant text, and posts it to `/api/sessions` with the project key and HEAD SHA. Add `--extract` to also queue proposals. It always exits 0, prints nothing on failure and gives up after 30 seconds. Setup is under [Wire it into your agent](#wire-it-into-your-agent).
+`impression hook session-end --agent <agent>` reads the agent's session-end JSON from stdin, copies the transcript and returns at once, leaving a detached process to flatten it to user and assistant text and post it to `/api/sessions` with the project key and HEAD SHA. Add `--extract` to also queue proposals. It reads Claude Code, Codex, pi, Cursor, Gemini CLI and Copilot CLI transcripts. The server keeps one copy of a chunk sent twice. It always exits 0, prints nothing on failure, and the upload gives up after two minutes. Setup is under [Wire it into your agent](#wire-it-into-your-agent).
 
 ## CLI
 

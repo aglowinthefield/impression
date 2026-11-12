@@ -41,16 +41,6 @@ export async function sessionStartContext(
   }
 }
 
-/** Claude Code SessionStart hook output. */
-export function claudeCodeOutput(context: string): string {
-  return JSON.stringify({
-    hookSpecificOutput: {
-      hookEventName: "SessionStart",
-      additionalContext: context,
-    },
-  });
-}
-
 /**
  * Memories relevant to one prompt, or null when none match or the API is
  * unreachable. Run on every prompt, so it keeps the result short.

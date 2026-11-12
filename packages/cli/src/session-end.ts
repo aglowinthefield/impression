@@ -7,37 +7,131 @@ import { type ApiClient, resolveProject } from "@impression/shared";
 /** Keep well under the API's 2M character limit. */
 const MAX_CHARS = 1_500_000;
 
+type Role = "user" | "assistant";
+type Entry = Record<string, unknown> & {
+  type?: string;
+  role?: string;
+  message?: { role?: string; content?: unknown };
+  payload?: { type?: string; role?: string; content?: unknown };
+  data?: { content?: unknown };
+  content?: unknown;
+  id?: string;
+};
+
+/** Text from string content or an array of `{type?, text}` blocks, skipping tool blocks. */
+function blockText(content: unknown, types: string[] = ["text"]): string {
+  if (typeof content === "string") return content.trim();
+  if (!Array.isArray(content)) return "";
+  return content
+    .flatMap((b: { type?: string; text?: unknown }) =>
+      typeof b?.text === "string" &&
+      (b.type === undefined || types.includes(b.type))
+        ? [b.text]
+        : [],
+    )
+    .join("\n")
+    .trim();
+}
+
+/** Codex puts instruction files and environment notes into user messages. */
+const CODEX_INJECTED =
+  /^(# AGENTS\.md instructions|<environment_context>|<user_instructions>)/;
+
+/** One line of any supported transcript, as a role and its text, or null for noise. */
+function turn(entry: Entry): [Role, string] | null {
+  // Codex rollout: `{type: "response_item", payload: {type: "message", role, content}}`.
+  if (entry.type === "response_item") {
+    const p = entry.payload;
+    if (p?.type !== "message" || (p.role !== "user" && p.role !== "assistant"))
+      return null;
+    const blocks = Array.isArray(p.content)
+      ? p.content.filter(
+          (b: { text?: unknown }) =>
+            !(typeof b?.text === "string" && CODEX_INJECTED.test(b.text)),
+        )
+      : p.content;
+    return [p.role, blockText(blocks, ["input_text", "output_text"])];
+  }
+  // Copilot CLI events: `{type: "user.message"|"assistant.message", data: {content}}`.
+  if (entry.type === "user.message" || entry.type === "assistant.message") {
+    return [
+      entry.type === "user.message" ? "user" : "assistant",
+      blockText(entry.data?.content),
+    ];
+  }
+  // Gemini CLI: `{type: "user"|"gemini", content}` with no `message`.
+  if (
+    entry.type === "gemini" ||
+    (entry.type === "user" && !entry.message && "content" in entry)
+  ) {
+    return [
+      entry.type === "gemini" ? "assistant" : "user",
+      blockText(entry.content),
+    ];
+  }
+  // pi `{type: "message", message: {role}}`, Claude Code `{type: "user"|"assistant"}`,
+  // Cursor `{role, message}` with no type.
+  const role =
+    entry.type === "message" ? entry.message?.role : (entry.type ?? entry.role);
+  if (role !== "user" && role !== "assistant") return null;
+  return [role, blockText(entry.message?.content)];
+}
+
 /**
- * Flattens a Claude Code or pi JSONL transcript to "role: text" lines, skipping tool noise.
- * Claude Code lines are `{type: "user"|"assistant", message}`; pi's are
- * `{type: "message", message: {role, content}}`.
+ * Lines of a JSONL transcript, or the messages of Gemini's older single-JSON file.
+ * Gemini's JSONL rewrites earlier lines with `{$patch: {id, ...}}` and drops later
+ * ones, that id included, with `{$rewindTo: id}`; both are applied here.
  */
-export function transcriptText(jsonl: string): string {
-  const out: string[] = [];
-  for (const line of jsonl.split("\n")) {
-    if (!line.trim()) continue;
-    let entry: {
-      type?: string;
-      message?: { role?: string; content?: unknown };
-    };
+function entries(raw: string): Entry[] {
+  const trimmed = raw.trimStart();
+  if (trimmed.startsWith("{") && !trimmed.includes("\n{")) {
     try {
-      entry = JSON.parse(line);
+      const doc = JSON.parse(trimmed);
+      if (Array.isArray(doc?.messages)) return doc.messages;
+    } catch {}
+  }
+  const out: Entry[] = [];
+  for (const line of raw.split("\n")) {
+    if (!line.trim()) continue;
+    let e: Entry;
+    try {
+      e = JSON.parse(line);
     } catch {
       continue;
     }
-    const role = entry.type === "message" ? entry.message?.role : entry.type;
-    if (role !== "user" && role !== "assistant") continue;
-    const content = entry.message?.content;
-    const parts =
-      typeof content === "string"
-        ? [content]
-        : Array.isArray(content)
-          ? content.flatMap((b: { type?: string; text?: string }) =>
-              b.type === "text" && b.text ? [b.text] : [],
-            )
-          : [];
-    const text = parts.join("\n").trim();
-    if (text) out.push(`${role}: ${text}`);
+    if (!e || typeof e !== "object") continue;
+    const patch = e.$patch as Entry | undefined;
+    if (patch?.id) {
+      const i = out.findLastIndex((x) => x.id === patch.id);
+      if (i >= 0) out[i] = { ...out[i], ...patch };
+      continue;
+    }
+    if (typeof e.$rewindTo === "string") {
+      const i = out.findLastIndex((x) => x.id === e.$rewindTo);
+      out.length = Math.max(i, 0);
+      continue;
+    }
+    if (e.id && e.type) {
+      const i = out.findLastIndex((x) => x.id === e.id);
+      if (i >= 0) {
+        out[i] = e;
+        continue;
+      }
+    }
+    out.push(e);
+  }
+  return out;
+}
+
+/**
+ * Flattens an agent's transcript to "role: text" lines, skipping tool noise. Reads
+ * Claude Code, pi, Codex, Cursor, Gemini CLI and Copilot CLI transcripts.
+ */
+export function transcriptText(raw: string): string {
+  const out: string[] = [];
+  for (const e of entries(raw)) {
+    const t = turn(e);
+    if (t?.[1]) out.push(`${t[0]}: ${t[1]}`);
   }
   const all = out.join("\n\n");
   return all.length > MAX_CHARS ? all.slice(-MAX_CHARS) : all;
@@ -106,13 +200,14 @@ export async function sendSession(
     if (!transcript) return null;
     const cwd = input.cwd ?? process.cwd();
     const p = resolveProject(cwd);
-    const { id } = (await client.post("/sessions", {
+    const { id, duplicate } = (await client.post("/sessions", {
       project: { key: p.key, name: p.name },
       transcript,
       commitSha: headSha(cwd),
       agent: opts.agent ?? "claude-code",
-    })) as { id: string };
-    if (opts.extract) {
+    })) as { id: string; duplicate?: boolean };
+    // The server already had this chunk, and extracted it then if asked.
+    if (opts.extract && !duplicate) {
       const instructions = opts.sendInstructions
         ? readInstructions(cwd)
         : undefined;

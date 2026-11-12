@@ -5,6 +5,7 @@ import {
   readFileSync,
   writeFileSync,
 } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 /**
@@ -42,8 +43,9 @@ export interface SetupResult {
   backups: string[];
 }
 
-const HOOK_START = "impression hook session-start";
-const HOOK_END = "impression hook session-end --extract";
+const HOOK_START = (agent: string) =>
+  `impression hook session-start --agent ${agent}`;
+const HOOK_END = "impression hook session-end --extract --agent claude";
 const MCP = "impression-mcp";
 /** pi installs this package itself, extension and MCP server included. */
 export const PI_PACKAGE = "npm:@aglowinthefield/impression";
@@ -149,6 +151,23 @@ class Writer {
   }
 }
 
+/**
+ * Config files holding Impression hooks an older setup wrote. Those hooks have no
+ * `--agent` and do nothing since this version.
+ */
+export function oldHookFiles(home: string = homedir()): string[] {
+  return [
+    join(home, ".claude", "settings.json"),
+    join(home, ".codex", "hooks.json"),
+  ].filter((f) => {
+    try {
+      return /impression hook (?![^"]*--agent)/.test(readFileSync(f, "utf8"));
+    } catch {
+      return false;
+    }
+  });
+}
+
 export function setup(opts: SetupOptions): SetupResult {
   const { home } = opts;
   const w = new Writer(opts);
@@ -169,7 +188,7 @@ export function setup(opts: SetupOptions): SetupResult {
     w.edit(file, (settings) => {
       const hooks = obj(settings, "hooks");
       for (const [event, cmd] of [
-        ["SessionStart", HOOK_START],
+        ["SessionStart", HOOK_START("claude")],
         ["SessionEnd", HOOK_END],
       ] as const)
         changes.push({
@@ -266,7 +285,11 @@ export function setup(opts: SetupOptions): SetupResult {
         harness: "codex",
         file,
         what: "SessionStart hook",
-        status: ensureHook(obj(cfg, "hooks"), "SessionStart", HOOK_START),
+        status: ensureHook(
+          obj(cfg, "hooks"),
+          "SessionStart",
+          HOOK_START("codex"),
+        ),
       });
     });
 
@@ -286,10 +309,6 @@ export function setup(opts: SetupOptions): SetupResult {
       what: "MCP server",
       status: has ? "unchanged" : "added",
     });
-    if (!/^\s*hooks\s*=\s*true/m.test(text))
-      notes.push(
-        "codex: hooks run only with `hooks = true` under [features] in ~/.codex/config.toml",
-      );
   }
 
   return { changes, notes, missing, backups: w.backups };

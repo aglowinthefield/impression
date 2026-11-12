@@ -10,7 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { formatSetup, PI_PACKAGE, setup } from "./setup.js";
+import { formatSetup, oldHookFiles, PI_PACKAGE, setup } from "./setup.js";
 
 let home: string;
 beforeEach(() => {
@@ -56,10 +56,10 @@ describe("setup", () => {
     expect(s.hooks.Stop).toEqual([]);
     expect(s.hooks.SessionStart).toHaveLength(2);
     expect(s.hooks.SessionStart[1].hooks[0].command).toBe(
-      "impression hook session-start",
+      "impression hook session-start --agent claude",
     );
     expect(s.hooks.SessionEnd[0].hooks[0].command).toBe(
-      "impression hook session-end --extract",
+      "impression hook session-end --extract --agent claude",
     );
     const c = json(".claude.json");
     expect(c.projects).toEqual({ a: 1 });
@@ -122,7 +122,7 @@ describe("setup", () => {
     expect(json(".claude", "settings.json").hooks.SessionStart).toHaveLength(1);
     expect(
       json(".claude", "settings.json").hooks.SessionStart[0].hooks[0].command,
-    ).toBe("impression hook session-start");
+    ).toBe("impression hook session-start --agent claude");
     expect(json(".claude.json").mcpServers.impression).toEqual({
       type: "stdio",
       command: "impression-mcp",
@@ -194,17 +194,12 @@ describe("setup", () => {
     const r = setup({ home });
     expect(
       json(".codex", "hooks.json").hooks.SessionStart[0].hooks[0].command,
-    ).toBe("impression hook session-start");
+    ).toBe("impression hook session-start --agent codex");
     const toml = readFileSync(join(home, ".codex", "config.toml"), "utf8");
     expect(toml).toContain(
       '[mcp_servers.a]\ncommand = "a"\n\n[mcp_servers.impression]\ncommand = "impression-mcp"\n',
     );
     expect(r.notes).toEqual([]);
-  });
-
-  it("notes when Codex hooks are not enabled", () => {
-    put(".codex/config.toml", "");
-    expect(setup({ home }).notes.join()).toContain("hooks = true");
   });
 
   it("--dry-run writes nothing; --only limits the harness", () => {
@@ -231,5 +226,26 @@ describe("setup", () => {
     expect(readFileSync(join(home, ".claude", "settings.json"), "utf8")).toBe(
       "{ nope",
     );
+  });
+});
+
+describe("oldHookFiles", () => {
+  it("finds hooks without --agent only", () => {
+    const home = mkdtempSync(join(tmpdir(), "imp-old-"));
+    mkdirSync(join(home, ".claude"));
+    mkdirSync(join(home, ".codex"));
+    writeFileSync(
+      join(home, ".claude", "settings.json"),
+      JSON.stringify({ command: "impression hook session-start" }),
+    );
+    writeFileSync(
+      join(home, ".codex", "hooks.json"),
+      JSON.stringify({
+        command: "impression hook session-start --agent codex",
+      }),
+    );
+    expect(oldHookFiles(home)).toEqual([
+      join(home, ".claude", "settings.json"),
+    ]);
   });
 });

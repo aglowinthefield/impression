@@ -69,6 +69,92 @@ describe("transcriptText", () => {
   });
 });
 
+const lines = (...es: unknown[]) => es.map((e) => JSON.stringify(e)).join("\n");
+
+describe("transcriptText, other agents", () => {
+  test("Codex rollout: drops developer messages and injected instructions", () => {
+    const msg = (role: string, ...text: string[]) => ({
+      type: "response_item",
+      payload: {
+        type: "message",
+        role,
+        content: text.map((t) => ({
+          type: role === "assistant" ? "output_text" : "input_text",
+          text: t,
+        })),
+      },
+    });
+    const raw = lines(
+      { type: "session_meta", payload: {} },
+      msg("developer", "You are Codex"),
+      msg(
+        "user",
+        "# AGENTS.md instructions for /x",
+        "<environment_context>\n</environment_context>",
+      ),
+      msg("user", "fix the build"),
+      { type: "response_item", payload: { type: "reasoning" } },
+      {
+        type: "response_item",
+        payload: { type: "function_call", name: "shell" },
+      },
+      msg("assistant", "Done."),
+      { type: "event_msg", payload: { type: "token_count" } },
+    );
+    expect(transcriptText(raw)).toBe("user: fix the build\n\nassistant: Done.");
+  });
+
+  test("Cursor: role at the top level", () => {
+    const raw = lines(
+      { role: "user", message: { content: [{ type: "text", text: "hi" }] } },
+      {
+        role: "assistant",
+        message: { content: [{ type: "text", text: "hello" }] },
+      },
+    );
+    expect(transcriptText(raw)).toBe("user: hi\n\nassistant: hello");
+  });
+
+  test("Gemini JSONL: patches, rewinds and string or part content", () => {
+    const raw = lines(
+      { sessionId: "s", projectHash: "p", startTime: "t" },
+      { id: "1", type: "user", content: [{ text: "first try" }] },
+      { id: "2", type: "gemini", content: "draft" },
+      { $rewindTo: "1" },
+      { id: "3", type: "user", content: [{ text: "fix the build" }] },
+      { id: "4", type: "gemini", content: "work" },
+      { $patch: { id: "4", content: "Done." } },
+      { id: "5", type: "info", content: "noise" },
+    );
+    expect(transcriptText(raw)).toBe("user: fix the build\n\nassistant: Done.");
+  });
+
+  test("Gemini legacy single JSON file", () => {
+    const raw = JSON.stringify(
+      {
+        sessionId: "s",
+        messages: [
+          { id: "1", type: "user", content: "hi" },
+          { id: "2", type: "gemini", content: "hello" },
+        ],
+      },
+      null,
+      2,
+    );
+    expect(transcriptText(raw)).toBe("user: hi\n\nassistant: hello");
+  });
+
+  test("Copilot CLI events", () => {
+    const raw = lines(
+      { type: "session.start", data: {} },
+      { type: "user.message", data: { content: "hi" } },
+      { type: "tool.execution_start", data: {} },
+      { type: "assistant.message", data: { content: "hello" } },
+    );
+    expect(transcriptText(raw)).toBe("user: hi\n\nassistant: hello");
+  });
+});
+
 describe("sendSession", () => {
   test("posts the transcript with project and HEAD, then extracts", async () => {
     const { dir, file } = setup();
@@ -93,6 +179,22 @@ describe("sendSession", () => {
       agent: "claude-code",
     });
     expect(calls[1]?.[0]).toBe("/sessions/s1/extract");
+  });
+  test("a chunk the server already has is not extracted again", async () => {
+    const { dir, file } = setup();
+    const paths: string[] = [];
+    await sendSession(
+      {
+        get: async () => null,
+        post: async (p) => {
+          paths.push(p);
+          return { id: "s1", duplicate: true };
+        },
+      },
+      { transcript_path: file, cwd: dir },
+      { extract: true },
+    );
+    expect(paths).toEqual(["/sessions"]);
   });
   test("API failure or missing file gives null", async () => {
     const { dir, file } = setup();
