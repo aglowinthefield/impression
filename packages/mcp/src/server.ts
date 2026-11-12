@@ -17,13 +17,18 @@ interface Options {
   cwd: string;
 }
 
+declare const __IMPRESSION_VERSION__: string | undefined;
+/** Set by the bundler; "dev" when run from a plain tsc build. */
+const VERSION =
+  typeof __IMPRESSION_VERSION__ === "string" ? __IMPRESSION_VERSION__ : "dev";
+
 const text = (t: string, isError = false) => ({
   content: [{ type: "text" as const, text: t }],
   ...(isError ? { isError: true } : {}),
 });
 
 export function createServer({ client, cwd }: Options): McpServer {
-  const server = new McpServer({ name: "impression", version: "0.0.0" });
+  const server = new McpServer({ name: "impression", version: VERSION });
   const project = () => resolveProject(cwd);
 
   server.registerTool(
