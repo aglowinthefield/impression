@@ -114,7 +114,7 @@ describe("setup", () => {
             type: "stdio",
             command: "node",
             args: ["/x/bin.js"],
-            env: { A: "1" },
+            env: { A: "1", IMPRESSION_TOKEN: "imp_old", IMPRESSION_URL: "x" },
           },
         },
       }),
