@@ -213,7 +213,7 @@ describe("config", () => {
       "imp_2",
     );
     expect(loadConfig({ XDG_CONFIG_HOME: "/nonexistent" }).url).toBe(
-      "http://localhost:3000",
+      "https://impression.quest",
     );
   });
 });

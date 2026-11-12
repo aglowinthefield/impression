@@ -157,7 +157,7 @@ if (cmd === "hook" && sub === "session-start") {
   newToken ??= token;
   if (!newToken) {
     console.error(
-      "usage: impression login --github | --token imp_... [--url http://host:3000]",
+      "usage: impression login --github | --token imp_... [--url https://impression.quest]",
     );
     process.exit(2);
   }
@@ -173,7 +173,7 @@ if (cmd === "hook" && sub === "session-start") {
   }
 } else if (cmd === "eval" && sub === "push") {
   if (!token) {
-    console.error("Not signed in. Run: impression login --token imp_...");
+    console.error("Not signed in. Run: impression login --github");
     process.exit(1);
   }
   const match =
@@ -202,7 +202,7 @@ if (cmd === "hook" && sub === "session-start") {
   ].includes(cmd)
 ) {
   if (!token) {
-    console.error("Not signed in. Run: impression login --token imp_...");
+    console.error("Not signed in. Run: impression login --github");
     process.exit(1);
   }
   const client = createClient(url, token);

@@ -1,6 +1,6 @@
 # Impression
 
-pnpm monorepo: `packages/api` (Hono, Drizzle, Postgres), `packages/web` (React), `packages/cli`, `packages/mcp`, `packages/pi`, `packages/shared`. Run `pnpm install` before `pnpm build`; API tests need Postgres (`docker compose up -d`).
+pnpm monorepo: `packages/api` (Hono, Drizzle, Postgres), `packages/web` (React), `packages/cli`, `packages/mcp`, `packages/pi`, `packages/shared`. Run `pnpm install` before `pnpm build`; Before reporting work done, run `pnpm lint && pnpm typecheck && pnpm test` and get all of it passing, API tests included. They start the compose Postgres themselves, so Docker must be running. Don't skip or dismiss API failures as environment noise.
 
 ## Specs and decisions
 
