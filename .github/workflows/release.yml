@@ -23,15 +23,15 @@ jobs:
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
-          registry-url: https://registry.npmjs.org
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: pnpm test
       - name: Tag matches package version
         run: test "v$(node -p "require('./packages/impression/package.json').version")" = "$GITHUB_REF_NAME"
-      - run: npm publish --provenance --access public
+      # Trusted publishing (OIDC) needs npm 11.5.1 or later. No token: npm
+      # exchanges the workflow's id-token, and adds provenance on its own.
+      - run: npm install -g npm@latest
+      - run: npm publish --access public
         working-directory: packages/impression
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
