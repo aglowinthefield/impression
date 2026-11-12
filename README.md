@@ -7,7 +7,7 @@ or a small team, not for consumer-facing agents.
 ## Quick start
 
 1. Start the server and create a token: see [Run with Docker](#run-with-docker). Without Docker, see [Develop](#develop).
-2. Install the CLI: `npm i -g @aglowinthefield/impression`. That puts `impression` and `impression-mcp` on your PATH. Update later with `impression update`.
+2. Install the CLI: `npm i -g @aglowinthefield/impression`. That puts `impression` and `impression-mcp` on your PATH. Update later with `impression update`. With a Node version manager (fnm, nvm), global installs belong to one Node version, so install it under the version your agents run (usually your default).
 3. Sign in: `impression login --github --url http://localhost:3000` (or `--token imp_...`).
 4. Run `impression setup` to wire up every agent it finds (below), then open http://localhost:3000 to review memories.
 
