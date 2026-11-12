@@ -9,9 +9,10 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 /**
- * `impression setup`: finds installed agent harnesses and adds Impression's hooks, MCP
- * server and pi extension to each one's config. Idempotent, keeps unrelated settings, and
- * backs up each file before changing it.
+ * `impression setup`: finds installed agent harnesses and wires Impression into each.
+ * pi gets the package entry; Claude Code and Codex get their plugin install commands,
+ * and lose the hooks and MCP entries earlier setups wrote. Idempotent, keeps unrelated
+ * settings, and backs up each file before changing it.
  *
  * Opencode is left out: its config is JSONC and its hooks are plugins, neither of which
  * this writes safely.
@@ -43,9 +44,14 @@ export interface SetupResult {
   backups: string[];
 }
 
-const HOOK_START = (agent: string) =>
-  `impression hook session-start --agent ${agent}`;
-const HOOK_END = "impression hook session-end --extract --agent claude";
+export const CLAUDE_INSTALL = [
+  "claude plugin marketplace add aglowinthefield/impression",
+  "claude plugin install impression@impression",
+];
+export const CODEX_INSTALL = [
+  "codex plugin marketplace add aglowinthefield/impression",
+  "codex plugin add impression@impression",
+];
 const MCP = "impression-mcp";
 /** pi installs this package itself, extension and MCP server included. */
 export const PI_PACKAGE = "npm:@aglowinthefield/impression";
@@ -74,52 +80,37 @@ function obj(parent: Json, key: string): Json {
   return fresh;
 }
 
-/** Adds or refreshes a command hook for an event. Matches an earlier Impression hook by its subcommand. */
-function ensureHook(
-  hooks: Json,
-  event: string,
-  command: string,
-): Change["status"] {
-  const sub = command.split(" ").slice(1, 3).join(" "); // "hook session-start"
-  const groups = (
-    Array.isArray(hooks[event]) ? hooks[event] : []
-  ) as HookGroup[];
-  hooks[event] = groups;
-  for (const g of groups) {
-    for (const h of g.hooks ?? []) {
-      const c = h.command ?? "";
-      if (
-        c.includes(sub) &&
-        c.includes("impression") &&
-        !c.includes("petdex")
-      ) {
-        if (c === command) return "unchanged";
-        h.command = command;
-        return "updated";
-      }
-    }
+/** An Impression hook, from PATH or from a checkout (`node .../impression/.../bin.js hook ...`). */
+const IMPRESSION_HOOK =
+  /impression\S*(\s\S+)*\shook (session-start|session-end|prompt)\b/;
+
+/** Removes the Impression hooks an earlier setup wrote. Returns how many. */
+function removeHooks(hooks: unknown): number {
+  if (!hooks || typeof hooks !== "object") return 0;
+  let n = 0;
+  const all = hooks as Record<string, unknown>;
+  for (const [event, value] of Object.entries(all)) {
+    if (!Array.isArray(value)) continue;
+    const groups = (value as HookGroup[]).flatMap((g) => {
+      const kept = (g.hooks ?? []).filter(
+        (h) => !IMPRESSION_HOOK.test(h.command ?? ""),
+      );
+      n += (g.hooks?.length ?? 0) - kept.length;
+      return kept.length ? [{ ...g, hooks: kept }] : g.hooks?.length ? [] : [g];
+    });
+    if (groups.length || !value.length) all[event] = groups;
+    else delete all[event];
   }
-  groups.push({ hooks: [{ type: "command", command }] });
-  return "added";
+  return n;
 }
 
-function ensureMcp(servers: Json, entry: Json): Change["status"] {
-  const cur = servers.impression;
-  const had = !!cur && typeof cur === "object";
-  // Keep extra keys someone added (env, description), but point it at the bin.
-  const next = had ? { ...(cur as Json), ...entry } : entry;
-  // A token or URL in the MCP env overrides `impression login`, so an old hand-set
-  // token would silently keep the server signed in as someone else. Drop both.
-  if (next.env && typeof next.env === "object") {
-    const env = { ...(next.env as Json) };
-    delete env.IMPRESSION_TOKEN;
-    delete env.IMPRESSION_URL;
-    if (Object.keys(env).length) next.env = env;
-    else delete next.env;
-  }
-  if (had && JSON.stringify(next) === JSON.stringify(cur)) return "unchanged";
-  servers.impression = next;
-  return had ? "updated" : "added";
+/** Removes the `impression` MCP server setup wrote (run from PATH); one pointed elsewhere stays. */
+function removeMcp(servers: unknown): boolean {
+  const s = servers as Json | undefined;
+  const cur = s?.impression as Json | undefined;
+  if (!s || cur?.command !== MCP) return false;
+  delete s.impression;
+  return true;
 }
 
 class Writer {
@@ -151,17 +142,14 @@ class Writer {
   }
 }
 
-/**
- * Config files holding Impression hooks an older setup wrote. Those hooks have no
- * `--agent` and do nothing since this version.
- */
+/** Config files still holding Impression hooks an earlier setup wrote. The plugins replace them. */
 export function oldHookFiles(home: string = homedir()): string[] {
   return [
     join(home, ".claude", "settings.json"),
     join(home, ".codex", "hooks.json"),
   ].filter((f) => {
     try {
-      return /impression hook (?![^"]*--agent)/.test(readFileSync(f, "utf8"));
+      return IMPRESSION_HOOK.test(readFileSync(f, "utf8"));
     } catch {
       return false;
     }
@@ -184,36 +172,34 @@ export function setup(opts: SetupOptions): SetupResult {
   for (const h of HARNESSES) if (want(h) && !found[h]) missing.push(h);
 
   if (want("claude") && found.claude) {
+    // Claude Code installs the plugin, which brings the hooks and MCP server.
+    // Take out what earlier setups wrote, so nothing runs twice.
     const file = join(home, ".claude", "settings.json");
-    w.edit(file, (settings) => {
-      const hooks = obj(settings, "hooks");
-      for (const [event, cmd] of [
-        ["SessionStart", HOOK_START("claude")],
-        ["SessionEnd", HOOK_END],
-      ] as const)
-        changes.push({
-          harness: "claude",
-          file,
-          what: `${event} hook`,
-          status: ensureHook(hooks, event, cmd),
-        });
-    });
-
-    // User-scoped MCP servers live in ~/.claude.json, as `claude mcp add -s user` writes them.
+    if (existsSync(file))
+      w.edit(file, (settings) => {
+        const n = removeHooks(settings.hooks);
+        if (n)
+          changes.push({
+            harness: "claude",
+            file,
+            what: "old hooks",
+            status: "removed",
+          });
+      });
     const mcpFile = join(home, ".claude.json");
-    w.edit(mcpFile, (cfg) => {
-      const status = ensureMcp(obj(cfg, "mcpServers"), {
-        type: "stdio",
-        command: MCP,
-        args: [],
+    if (existsSync(mcpFile))
+      w.edit(mcpFile, (cfg) => {
+        if (removeMcp(cfg.mcpServers))
+          changes.push({
+            harness: "claude",
+            file: mcpFile,
+            what: "old MCP server",
+            status: "removed",
+          });
       });
-      changes.push({
-        harness: "claude",
-        file: mcpFile,
-        what: "MCP server",
-        status,
-      });
-    });
+    notes.push(
+      `claude: install the plugin with\n  ${CLAUDE_INSTALL.join("\n  ")}`,
+    );
   }
 
   if (want("pi") && found.pi) {
@@ -277,38 +263,38 @@ export function setup(opts: SetupOptions): SetupResult {
   }
 
   if (want("codex") && found.codex) {
-    // Codex reads Claude-style hooks from ~/.codex/hooks.json. Its SessionEnd transcript
-    // is in Codex's own format, which session-end doesn't parse, so only SessionStart.
     const file = join(home, ".codex", "hooks.json");
-    w.edit(file, (cfg) => {
-      changes.push({
-        harness: "codex",
-        file,
-        what: "SessionStart hook",
-        status: ensureHook(
-          obj(cfg, "hooks"),
-          "SessionStart",
-          HOOK_START("codex"),
-        ),
+    if (existsSync(file))
+      w.edit(file, (cfg) => {
+        if (removeHooks(cfg.hooks))
+          changes.push({
+            harness: "codex",
+            file,
+            what: "old hooks",
+            status: "removed",
+          });
       });
-    });
-
     const toml = join(home, ".codex", "config.toml");
-    const text = existsSync(toml) ? readFileSync(toml, "utf8") : "";
-    const has = /^\[mcp_servers\.impression\]/m.test(text);
-    if (!has) {
-      const sep = !text ? "" : text.endsWith("\n") ? "\n" : "\n\n";
-      w.write(
-        toml,
-        `${text}${sep}[mcp_servers.impression]\ncommand = "${MCP}"\n`,
+    if (existsSync(toml)) {
+      const text = readFileSync(toml, "utf8");
+      // Only the table setup wrote: `[mcp_servers.impression]` run from PATH.
+      const next = text.replace(
+        /^\[mcp_servers\.impression\]\ncommand = "impression-mcp"\n(\n(?=\[))?/m,
+        "",
       );
+      if (next !== text) {
+        w.write(toml, next);
+        changes.push({
+          harness: "codex",
+          file: toml,
+          what: "old MCP server",
+          status: "removed",
+        });
+      }
     }
-    changes.push({
-      harness: "codex",
-      file: toml,
-      what: "MCP server",
-      status: has ? "unchanged" : "added",
-    });
+    notes.push(
+      `codex: install the plugin with\n  ${CODEX_INSTALL.join("\n  ")}`,
+    );
   }
 
   return { changes, notes, missing, backups: w.backups };
@@ -322,6 +308,7 @@ export function formatSetup(r: SetupResult, dryRun = false): string {
   if (r.missing.length) lines.push(`not found: ${r.missing.join(", ")}`);
   lines.push(...r.notes);
   for (const b of r.backups) lines.push(`backup: ${b}`);
-  if (!r.changes.length) lines.push("No supported harness found.");
+  if (!r.changes.length && !r.notes.length)
+    lines.push("No supported harness found.");
   return lines.join("\n");
 }

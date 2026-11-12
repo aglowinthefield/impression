@@ -7,54 +7,35 @@ or a small team, not for consumer-facing agents.
 ## Quick start
 
 1. Start the server and create a token: see [Run with Docker](#run-with-docker). Without Docker, see [Develop](#develop).
-2. Install the CLI: `npm i -g @aglowinthefield/impression`. That puts `impression` and `impression-mcp` on your PATH. Update later with `impression update`. With a Node version manager (fnm, nvm), global installs belong to one Node version, so install it under the version your agents run (usually your default).
+2. Install the CLI: `npm i -g @aglowinthefield/impression`, for `impression login`, `status` and the review commands. Update later with `impression update`.
 3. Sign in: `impression login --github --url http://localhost:3000` (or `--token imp_...`).
-4. Run `impression setup` to wire up every agent it finds (below), then open http://localhost:3000 to review memories.
+4. Install the plugin for each agent (below), then open http://localhost:3000 to review memories.
 
 ## Wire it into your agent
 
-`impression setup` finds Claude Code, pi and Codex and adds the hooks and MCP server to Claude Code and Codex config (Codex gets the session-start hook and MCP only) and the Impression package to pi. It backs up each file it changes (`<file>.impression-backup-<timestamp>`), leaves other settings alone, and is safe to rerun. `--dry-run` prints the changes without writing them; `--only claude|pi|codex` limits it to one. The sections below show what it writes, if you'd rather do it by hand.
+Each agent installs Impression with its own plugin command, and updates and removes it the same way. The plugins run the CLI and MCP server bundled in the npm package with `node` from your PATH, so they don't need the global install. Run `impression login` first: the plugins read the saved sign-in, so no token goes in agent config.
 
-Every client reads `IMPRESSION_URL` (default `https://impression.quest`) and `IMPRESSION_TOKEN`. The CLI, the hooks and the MCP server also fall back to the file `impression login` writes, so no token goes in agent config.
+`impression setup` finds Claude Code, pi and Codex, prints the install commands below, adds the pi package, and removes the hooks and MCP entries earlier versions of setup wrote, so nothing runs twice. It backs up each file it changes (`<file>.impression-backup-<timestamp>`) and is safe to rerun. `--dry-run` prints the changes without writing them; `--only claude|pi|codex` limits it to one.
+
+Every client reads `IMPRESSION_URL` (default `https://impression.quest`) and `IMPRESSION_TOKEN`, and falls back to the file `impression login` writes.
 
 ### Claude Code
 
-MCP tools (`search`, `add`):
+```sh
+claude plugin marketplace add aglowinthefield/impression
+claude plugin install impression@impression
+```
+
+The plugin adds the MCP tools (`search`, `add`) and three hooks: session start injects your core memories, each prompt adds memories that match it, and session end sends the transcript and queues proposals, which you review in the web UI. Update with `claude plugin update impression@impression`, or turn on auto-update for the marketplace in `/plugin`.
+
+### Codex
 
 ```sh
-claude mcp add -s user impression -- impression-mcp
+codex plugin marketplace add aglowinthefield/impression
+codex plugin add impression@impression
 ```
 
-Hooks, in `~/.claude/settings.json` (after `impression login`, no token is needed in the command):
-
-```json
-{
-  "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "impression hook session-start --agent claude"
-          }
-        ]
-      }
-    ],
-    "SessionEnd": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "impression hook session-end --extract --agent claude"
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-Session-start injects your core memories. Session-end sends the transcript and queues proposals, which you review in the web UI.
+The same MCP tools and hooks as Claude Code. Codex runs a plugin's hooks only after you trust them in `/hooks`, and asks again after each update. Update with `codex plugin marketplace upgrade impression`.
 
 ### pi
 

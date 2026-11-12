@@ -1,0 +1,12 @@
+{
+  "name": "impression",
+  "interface": { "displayName": "Impression" },
+  "plugins": [
+    {
+      "name": "impression",
+      "source": { "source": "npm", "package": "@aglowinthefield/impression" },
+      "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" },
+      "category": "Productivity"
+    }
+  ]
+}

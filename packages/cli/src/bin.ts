@@ -171,7 +171,7 @@ if (cmd === "hook") {
         const old = oldHookFiles();
         const s = await status(client, cwd, url);
         return old.length
-          ? `${s}\nOld hooks: ${old.join(", ")} (they do nothing now; run impression setup)`
+          ? `${s}\nOld hooks: ${old.join(", ")} (the plugin replaces them; run impression setup to remove them)`
           : s;
       },
       proposals: () => proposals(client, cwd),

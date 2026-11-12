@@ -3,3 +3,7 @@ pi/
 LICENSE
 README.md
 *.tgz
+.claude-plugin/
+.codex-plugin/
+hooks/
+.mcp.json
