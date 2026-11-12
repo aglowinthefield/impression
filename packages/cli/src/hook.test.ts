@@ -3,7 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
-import { claudeCodeOutput, sessionStartContext } from "./hook.js";
+import { sessionStartContext } from "./hook.js";
 
 const repo = () => {
   const dir = mkdtempSync(join(tmpdir(), "imp-hook-"));
@@ -63,14 +63,6 @@ describe("sessionStartContext", () => {
       post: async () => null,
     };
     expect(await sessionStartContext(c, repo())).toBeNull();
-  });
-  test("Claude Code output shape", () => {
-    expect(JSON.parse(claudeCodeOutput("hi"))).toEqual({
-      hookSpecificOutput: {
-        hookEventName: "SessionStart",
-        additionalContext: "hi",
-      },
-    });
   });
 });
 

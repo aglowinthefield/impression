@@ -77,3 +77,15 @@ test("sessions are visible only to their owner", async () => {
     ((await (await call(bob, "GET", "")).json()) as { items: unknown[] }).items,
   ).toEqual([]);
 });
+
+test("the same chunk sent twice is stored once", async () => {
+  const body = { project, transcript: "user: twice\n\nassistant: once" };
+  const first = await call(alice, "POST", "", body);
+  expect(first.status).toBe(201);
+  const a = (await first.json()) as { id: string };
+  const again = await call(alice, "POST", "", body);
+  expect(again.status).toBe(200);
+  expect(await again.json()).toMatchObject({ id: a.id, duplicate: true });
+  // Someone else's identical chunk is their own session.
+  expect((await call(bob, "POST", "", body)).status).toBe(201);
+});

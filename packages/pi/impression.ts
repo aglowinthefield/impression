@@ -113,10 +113,14 @@ export default function (pi: ExtensionAPI) {
       try {
         const file = join(dir, "chunk.jsonl");
         writeFileSync(file, text);
-        await run(["hook", "session-end", "--extract"], ctx.cwd, {
-          input: JSON.stringify({ transcript_path: file, cwd: ctx.cwd }),
-          timeout: 35_000,
-        });
+        await run(
+          ["hook", "session-end", "--extract", "--agent", "pi"],
+          ctx.cwd,
+          {
+            input: JSON.stringify({ transcript_path: file, cwd: ctx.cwd }),
+            timeout: 35_000,
+          },
+        );
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }

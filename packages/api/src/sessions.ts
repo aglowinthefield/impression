@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, gt, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import { projectIdCond, upsertProject } from "./access.js";
@@ -67,6 +67,23 @@ export function sessionRoutes(
     const clean = scrub(b.transcript);
     const p = await upsertProject(db, c.get("access"), b.project);
     if (!p) return c.json({ error: "project not found" }, 404);
+    // A hook that fires twice (two plugins, or a plugin beside an old setup hook)
+    // sends the same chunk twice. Hand back the first copy, so it's stored and
+    // extracted once.
+    const [dup] = await db
+      .select()
+      .from(sessions)
+      .where(
+        and(
+          eq(sessions.projectId, p.id),
+          eq(sessions.owner, c.get("principal")),
+          eq(sessions.transcript, clean.text),
+          gt(sessions.createdAt, sql`now() - interval '1 day'`),
+        ),
+      )
+      .limit(1);
+    if (dup)
+      return c.json({ ...dto(dup, b.project.key), duplicate: true }, 200);
     const [s] = await db
       .insert(sessions)
       .values({

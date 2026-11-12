@@ -1,9 +1,6 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { createClient } from "@impression/shared";
 import {
   accept,
@@ -20,13 +17,14 @@ import {
 import { loadConfig, saveConfig } from "./config.js";
 import { pushEvalTurns } from "./eval-push.js";
 import { githubDeviceLogin } from "./github-login.js";
+import { runHook } from "./hook-run.js";
 import {
-  claudeCodeOutput,
-  promptContext,
-  sessionStartContext,
-} from "./hook.js";
-import { sendSession } from "./session-end.js";
-import { formatSetup, HARNESSES, type Harness, setup } from "./setup.js";
+  formatSetup,
+  HARNESSES,
+  type Harness,
+  oldHookFiles,
+  setup,
+} from "./setup.js";
 import { checkForUpdate, PACKAGE, VERSION } from "./update-check.js";
 
 const [cmd, sub] = process.argv.slice(2);
@@ -45,61 +43,9 @@ if (cmd !== "hook" && cmd !== "update" && process.stderr.isTTY) {
   if (notice) console.error(notice);
 }
 
-if (cmd === "hook" && sub === "session-start") {
-  // Always exit 0 and stay quiet on failure: a hook must not break the session.
-  if (token) {
-    const ctx = await sessionStartContext(
-      createClient(url, token),
-      process.cwd(),
-    );
-    if (ctx) {
-      const plain = process.argv.includes("--plain");
-      process.stdout.write(`${plain ? ctx : claudeCodeOutput(ctx)}\n`);
-    }
-  }
-} else if (cmd === "hook" && sub === "prompt") {
-  // The prompt text arrives on stdin. Quiet on failure, like the other hooks.
-  if (token) {
-    const prompt = await new Promise<string>((resolve) => {
-      let data = "";
-      process.stdin.on("data", (d) => {
-        data += d;
-      });
-      process.stdin.on("end", () => resolve(data));
-      setTimeout(() => resolve(data), 2000).unref();
-    });
-    const ctx = await promptContext(
-      createClient(url, token),
-      process.cwd(),
-      prompt,
-    );
-    if (ctx) process.stdout.write(`${ctx}\n`);
-  }
-  process.exit(0);
-} else if (cmd === "hook" && sub === "session-end") {
-  // Fail quietly, and give up after a few seconds so exit is never held up.
-  if (token) {
-    const stdin = await new Promise<string>((resolve) => {
-      let data = "";
-      process.stdin.on("data", (d) => {
-        data += d;
-      });
-      process.stdin.on("end", () => resolve(data));
-      setTimeout(() => resolve(data), 2000).unref();
-    });
-    let input = {};
-    try {
-      input = JSON.parse(stdin);
-    } catch {}
-    const client = createClient(url, token);
-    await Promise.race([
-      sendSession(client, input, {
-        extract: process.argv.includes("--extract"),
-        sendInstructions: config.sendInstructions,
-      }),
-      new Promise((r) => setTimeout(r, 30_000).unref()),
-    ]);
-  }
+if (cmd === "hook") {
+  // Hooks always exit 0 and stay quiet on failure: a hook must not break the session.
+  await runHook(sub, process.argv.slice(4));
   process.exit(0);
 } else if (cmd === "update") {
   try {
@@ -221,7 +167,13 @@ if (cmd === "hook" && sub === "session-start") {
           pin: args.includes("--pin"),
         }),
       list: () => list(client, cwd),
-      status: () => status(client, cwd, url),
+      status: async () => {
+        const old = oldHookFiles();
+        const s = await status(client, cwd, url);
+        return old.length
+          ? `${s}\nOld hooks: ${old.join(", ")} (they do nothing now; run impression setup)`
+          : s;
+      },
       proposals: () => proposals(client, cwd),
       accept: () => accept(client, cwd, id ?? "", text || undefined),
       reject: () => reject(client, cwd, id ?? ""),
@@ -236,7 +188,7 @@ if (cmd === "hook" && sub === "session-start") {
   }
 } else {
   console.error(
-    "usage: impression --version | setup [--dry-run] [--only claude|pi|codex] | update\n       impression login [--github] | search <q> | add <text> [--user] [--pin] | list | status\n       impression proposals | accept <id> [edited text] | reject <id> | retire <id> | edit <id> <text> | keep <id>\n       impression hook session-start [--plain] | prompt (text on stdin) | session-end [--extract]\n       impression eval push [path-substring]",
+    "usage: impression --version | setup [--dry-run] [--only claude|pi|codex] | update\n       impression login [--github] | search <q> | add <text> [--user] [--pin] | list | status\n       impression proposals | accept <id> [edited text] | reject <id> | retire <id> | edit <id> <text> | keep <id>\n       impression hook session-start | prompt | session-end [--extract] --agent claude|codex|gemini|cursor|copilot|pi\n       impression eval push [path-substring]",
   );
   process.exit(2);
 }
