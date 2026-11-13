@@ -43,13 +43,14 @@ test("rejects a bad token and stays on the login form", async () => {
   expect(localStorage.getItem("impression.token")).toBeNull();
 });
 
-test("signs in, lists projects and remembers the choice", async () => {
+test("signs in and opens the most recently active project", async () => {
+  history.replaceState(null, "", "/");
   respond({
     "/whoami": { name: "alice" },
     "/projects": {
       items: [
+        { key: "github.com/a/y", name: "y" },
         { key: "a/x", name: "x" },
-        { key: "a/y", name: "y" },
       ],
     },
   });
@@ -59,9 +60,10 @@ test("signs in, lists projects and remembers the choice", async () => {
   });
   fireEvent.click(screen.getByText("Sign in"));
   const select = (await screen.findByLabelText("Project")) as HTMLSelectElement;
-  await waitFor(() => expect(select.value).toBe("a/x"));
-  fireEvent.change(select, { target: { value: "a/y" } });
-  expect(localStorage.getItem("impression.project")).toBe("a/y");
+  await waitFor(() => expect(select.value).toBe("github.com/a/y"));
+  expect(location.pathname).toBe("/a/y/memories");
+  fireEvent.change(select, { target: { value: "a/x" } });
+  expect(location.pathname + location.search).toBe("/memories?project=a%2Fx");
   fireEvent.click(screen.getByText("Sign out"));
   expect(localStorage.getItem("impression.token")).toBeNull();
   expect(screen.getByLabelText("API token")).toBeTruthy();
@@ -72,13 +74,25 @@ test("tab and project live in the URL", async () => {
   localStorage.setItem("impression.token", "imp_ok");
   respond({
     "/whoami": { name: "alice" },
-    "/projects": { items: [{ key: "a/x", name: "x" }] },
+    "/projects": {
+      items: [
+        { key: "github.com/a/x", name: "x" },
+        { key: "github.com/a/z", name: "z" },
+      ],
+    },
     "/debug/requests": { items: [] },
   });
   render(<App />);
   fireEvent.click(await screen.findByText("Debug"));
-  expect(location.pathname).toBe("/debug");
-  expect(location.search).toBe("?project=a%2Fx");
+  expect(location.pathname).toBe("/a/x/debug");
+  cleanup();
+  history.replaceState(null, "", "/a/z/review");
+  render(<App />);
+  const select = (await screen.findByLabelText("Project")) as HTMLSelectElement;
+  await waitFor(() => expect(select.value).toBe("github.com/a/z"));
+  expect(location.pathname).toBe("/a/z/review");
+  history.pushState(null, "", "/a/x/debug");
+  history.back();
   history.back();
   await waitFor(() => expect(location.pathname).not.toBe("/debug"));
 });

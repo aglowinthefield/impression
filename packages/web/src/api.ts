@@ -48,4 +48,5 @@ export async function api<T>(
 export interface Project {
   key: string;
   name: string;
+  lastActive?: string | null;
 }
