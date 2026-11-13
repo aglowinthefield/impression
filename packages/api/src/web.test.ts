@@ -36,7 +36,7 @@ test("API and health still win over the UI", async () => {
   expect((await app.request("/api/projects")).status).toBe(401);
 });
 
-test("GET /api/projects lists projects by name", async () => {
+test("GET /api/projects lists the most recently active first", async () => {
   for (const key of ["github.com/a/zed", "github.com/a/alpha"]) {
     await app.request("/api/memories", {
       method: "POST",
@@ -55,10 +55,12 @@ test("GET /api/projects lists projects by name", async () => {
   const res = await app.request("/api/projects", {
     headers: { authorization: `Bearer ${token}` },
   });
-  expect(await res.json()).toEqual({
-    items: [
-      { key: "github.com/a/alpha", name: "alpha" },
-      { key: "github.com/a/zed", name: "zed" },
-    ],
-  });
+  const { items } = (await res.json()) as {
+    items: { key: string; name: string; lastActive: string | null }[];
+  };
+  expect(items.map((p) => p.key)).toEqual([
+    "github.com/a/alpha",
+    "github.com/a/zed",
+  ]);
+  expect(items[0]?.lastActive).toEqual(expect.any(String));
 });

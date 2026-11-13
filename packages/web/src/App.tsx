@@ -13,8 +13,6 @@ import { Memories } from "./Memories";
 import { Review } from "./Review";
 import { Settings } from "./Settings";
 
-const PROJECT_KEY = "impression.project";
-
 function Login({ onDone }: { onDone: () => void }) {
   const [token, setTok] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -79,10 +77,35 @@ function Login({ onDone }: { onDone: () => void }) {
 const tabs = ["Memories", "Review", "Evals", "Settings", "Debug"] as const;
 type Tab = (typeof tabs)[number];
 
-const tabFromPath = (): Tab =>
-  tabs.find((t) => `/${t.toLowerCase()}` === location.pathname) ?? "Memories";
+const GITHUB = "github.com/";
 
-/** Keeps the tab in the path and the project in `?project=`, so views can be linked and reloaded. */
+/** `/owner/repo/tab` for GitHub projects; anything else keeps the key in `?project=`. */
+const pathFor = (t: Tab, p: string) => {
+  const tab = t.toLowerCase();
+  if (!p) return `/${tab}`;
+  const repo = p.startsWith(GITHUB) ? p.slice(GITHUB.length) : "";
+  return repo.split("/").length === 2
+    ? `/${repo}/${tab}`
+    : `/${tab}?project=${encodeURIComponent(p)}`;
+};
+
+const parsePath = (): { tab: Tab; project: string } => {
+  const parts = location.pathname.split("/").filter(Boolean);
+  const last = parts.length > 0 ? parts[parts.length - 1] : "";
+  const tab = tabs.find((t) => t.toLowerCase() === last) ?? "Memories";
+  const repo = parts.length >= 2 && parts.length <= 3 ? parts.slice(0, 2) : [];
+  const fromPath =
+    repo.length === 2 && !tabs.some((t) => t.toLowerCase() === repo[0])
+      ? `${GITHUB}${repo.join("/")}`
+      : "";
+  return {
+    tab,
+    project:
+      fromPath || new URLSearchParams(location.search).get("project") || "",
+  };
+};
+
+/** Keeps the tab and project in the URL, so views can be linked and reloaded. */
 function useLocation(): [Tab, string, (t: Tab, p: string) => void] {
   const [, bump] = useState(0);
   useEffect(() => {
@@ -91,19 +114,14 @@ function useLocation(): [Tab, string, (t: Tab, p: string) => void] {
     return () => window.removeEventListener("popstate", on);
   }, []);
   const go = (t: Tab, p: string) => {
-    const url = `/${t.toLowerCase()}${p ? `?project=${encodeURIComponent(p)}` : ""}`;
+    const url = pathFor(t, p);
     if (url !== location.pathname + location.search) {
       history.pushState(null, "", url);
       bump((n) => n + 1);
     }
   };
-  return [
-    tabFromPath(),
-    new URLSearchParams(location.search).get("project") ??
-      localStorage.getItem(PROJECT_KEY) ??
-      "",
-    go,
-  ];
+  const { tab, project } = parsePath();
+  return [tab, project, go];
 }
 
 function Shell({ onSignOut }: { onSignOut: () => void }) {
@@ -117,31 +135,24 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
       (w) => setWho(w.name),
       () => {},
     );
+    // The API lists the most recently active project first, so a bare URL opens
+    // on whatever you were just working in.
     api<{ items: Project[] }>("/projects").then(
       (r) => {
         setProjects(r.items);
-        const cur =
-          new URLSearchParams(location.search).get("project") ??
-          localStorage.getItem(PROJECT_KEY) ??
-          "";
+        const { tab: t, project: cur } = parsePath();
         const next = r.items.some((p) => p.key === cur)
           ? cur
           : (r.items[0]?.key ?? "");
-        if (next !== cur)
-          history.replaceState(
-            null,
-            "",
-            `${location.pathname}?project=${encodeURIComponent(next)}`,
-          );
-        localStorage.setItem(PROJECT_KEY, next);
-        window.dispatchEvent(new PopStateEvent("popstate"));
+        const url = pathFor(t, next);
+        if (url !== location.pathname + location.search) {
+          history.replaceState(null, "", url);
+          window.dispatchEvent(new PopStateEvent("popstate"));
+        }
       },
       () => {},
     );
   }, []);
-  useEffect(() => {
-    if (project) localStorage.setItem(PROJECT_KEY, project);
-  }, [project]);
 
   return (
     <div className="shell">
