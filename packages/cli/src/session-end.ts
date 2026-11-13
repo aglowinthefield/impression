@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { type ApiClient, resolveProject } from "@impression/shared";
+import { projectCandidates } from "./candidates.js";
 
 /** Keep well under the API's 2M character limit. */
 const MAX_CHARS = 1_500_000;
@@ -82,7 +83,7 @@ function turn(entry: Entry): [Role, string] | null {
  * Gemini's JSONL rewrites earlier lines with `{$patch: {id, ...}}` and drops later
  * ones, that id included, with `{$rewindTo: id}`; both are applied here.
  */
-function entries(raw: string): Entry[] {
+export function entries(raw: string): Entry[] {
   const trimmed = raw.trimStart();
   if (trimmed.startsWith("{") && !trimmed.includes("\n{")) {
     try {
@@ -176,6 +177,15 @@ function headSha(cwd: string): string | undefined {
   }
 }
 
+/** Candidates are a bonus: if working them out fails, the session still uploads. */
+function safeCandidates(raw: string, cwd: string, key: string) {
+  try {
+    return projectCandidates(entries(raw), cwd, key);
+  } catch {
+    return [];
+  }
+}
+
 export interface SessionEndInput {
   transcript_path?: string;
   cwd?: string;
@@ -194,14 +204,16 @@ export async function sendSession(
 ): Promise<string | null> {
   try {
     if (!input.transcript_path) return null;
-    const transcript = transcriptText(
-      readFileSync(input.transcript_path, "utf8"),
-    );
+    const raw = readFileSync(input.transcript_path, "utf8");
+    const transcript = transcriptText(raw);
     if (!transcript) return null;
     const cwd = input.cwd ?? process.cwd();
     const p = resolveProject(cwd);
+    const candidates = safeCandidates(raw, cwd, p.key);
     const { id, duplicate } = (await client.post("/sessions", {
       project: { key: p.key, name: p.name },
+      // Older servers ignore this; extraction there files everything under `project`.
+      ...(candidates.length ? { candidates } : {}),
       transcript,
       commitSha: headSha(cwd),
       agent: opts.agent ?? "claude-code",

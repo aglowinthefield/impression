@@ -1,5 +1,6 @@
 import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
+import { type Access, upsertProject } from "./access.js";
 import type { Db } from "./db/client.js";
 import { proposals } from "./db/schema.js";
 import { anchorInput, createMemory } from "./memories.js";
@@ -44,10 +45,48 @@ Reply with one JSON object and nothing else:
 Use "kind":"fact" for everything that is not a practice. "otherRepos" is true when the rule is about the user's own workflow (how they run a kind of session, review, git, shipping, testing, a slash command they use) and would hold in any of their projects, such as "run /nitpick design sessions against forks of production data". It is false when the rule is about this repo's own code, commands or config. A practice needs true.
 If nothing is worth keeping, reply {"memories":[]}.`;
 
+/** Added to SYSTEM when the session touched more than one repo. */
+export const PROJECTS_SYSTEM = `This session touched more than one repository; the prompt lists them.
+Give each fact a "project": the key of the repository it is about, copied exactly from that list, for example {"kind":"fact","project":"github.com/owner/repo","content":"...","confidence":0.8,"anchors":[]}.
+Edits and commands in a repository show work happened there. A repository that was only read is usually reference material: pick it only when the fact is clearly about that repository's own code or setup.
+If you are not sure which repository a fact is about, use the session's own project.
+Anchor paths are relative to the root of the repository you picked, never to another one. Leave an anchor out if you are unsure which repository its file is in.
+Practices follow the user, so they need no project.`;
+
+/** Repos a client may send with a session, beyond the one it ran in. */
+export const MAX_PROJECT_CANDIDATES = 10;
+
+export const candidateSchema = z.object({
+  key: z.string().trim().min(1).max(300),
+  name: z.string().trim().min(1).max(200).optional(),
+  headSha: z
+    .string()
+    .regex(/^[0-9a-f]{7,40}$/i)
+    .optional(),
+  /** Edits, writes and commands run in the repo. */
+  edits: z.number().int().min(0).catch(0).default(0),
+  /** Read-only hits. */
+  reads: z.number().int().min(0).catch(0).default(0),
+  /** Repo-relative files the session touched, used to check anchors. */
+  files: z
+    .array(z.string().trim().min(1).max(500))
+    .max(50)
+    .catch([])
+    .default([]),
+});
+
+export type SessionCandidate = z.infer<typeof candidateSchema>;
+
+export const candidatesSchema = z
+  .array(candidateSchema)
+  .max(MAX_PROJECT_CANDIDATES);
+
 const itemSchema = z.object({
   /** A practice is how the user likes work done. It follows them across projects. */
   kind: z.enum(["fact", "practice"]).catch("fact").default("fact"),
   otherRepos: z.boolean().catch(false).default(false),
+  /** Key of the repo a fact is about, from the candidate list. Checked against it later. */
+  project: z.string().trim().min(1).nullish().catch(undefined),
   content: z.string().trim().min(1).max(2000),
   confidence: z.number().min(0).max(1),
   anchors: z
@@ -101,6 +140,94 @@ export interface ExtractInput {
   transcript: string;
   /** Project instruction files the agent already loads. Used only to avoid restating them. */
   instructions?: string;
+  /** Repos the session's tool calls touched, from the client. */
+  candidates?: SessionCandidate[];
+  /** The request's access. A fact only goes to another repo the person can reach. */
+  access?: Access;
+}
+
+/** A repo a memory can be filed under. The session's own project comes first. */
+interface Target {
+  key: string;
+  name: string;
+  headSha: string | null;
+  edits: number;
+  reads: number;
+  files: string[];
+  /** Resolved lazily; null when the person can't reach the repo. */
+  projectId?: string | null;
+}
+
+/**
+ * The repos extraction may choose from, or [] when the session never left its
+ * own project, in which case extraction works exactly as before.
+ */
+export function projectTargets(input: ExtractInput): Target[] {
+  const seen = new Set([input.projectKey.toLowerCase()]);
+  const others: Target[] = [];
+  for (const c of input.candidates ?? []) {
+    const k = c.key.toLowerCase();
+    if (c.key.startsWith("path:") || seen.has(k)) continue;
+    seen.add(k);
+    others.push({
+      key: c.key,
+      name: c.name ?? c.key.split("/").pop() ?? c.key,
+      headSha: c.headSha ?? null,
+      edits: c.edits,
+      reads: c.reads,
+      files: c.files,
+    });
+  }
+  if (others.length === 0) return [];
+  const own = input.candidates?.find(
+    (c) => c.key.toLowerCase() === input.projectKey.toLowerCase(),
+  );
+  return [
+    {
+      key: input.projectKey,
+      name: own?.name ?? input.projectKey.split("/").pop() ?? input.projectKey,
+      headSha: input.commitSha ?? own?.headSha ?? null,
+      edits: own?.edits ?? 0,
+      reads: own?.reads ?? 0,
+      files: own?.files ?? [],
+      projectId: input.projectId,
+    },
+    ...others,
+  ];
+}
+
+const PROMPT_FILES = 20;
+
+function targetsPrompt(targets: Target[]): string {
+  const rows = targets.map((t, i) => {
+    const files = t.files.slice(0, PROMPT_FILES);
+    return `- ${t.key}${i === 0 ? " (the session's own project)" : ""}: ${t.edits} edits or commands, ${t.reads} reads${files.length ? `; files: ${files.join(", ")}` : ""}`;
+  });
+  return `Projects this session touched:\n${rows.join("\n")}`;
+}
+
+/**
+ * Whether an anchor path belongs to the picked repo. Another repo must have
+ * had that file touched in the session. The session's project keeps the old
+ * benefit of the doubt, unless the file is one another repo touched instead.
+ */
+function anchorFits(targets: Target[], target: Target, path: string): boolean {
+  if (targets.length === 0) return true;
+  const touched = (t: Target) =>
+    t.files.some((f) => f === path || f.startsWith(`${path}/`));
+  if (touched(target)) return true;
+  if (target !== targets[0]) return false;
+  return !targets.some((t) => t !== target && touched(t));
+}
+
+/** The candidate the model picked, or the session's project for a missing or made-up key. */
+function pickTarget(targets: Target[], key: string | null | undefined) {
+  const k = key?.toLowerCase();
+  return (
+    targets.find((t) => t.key === key) ??
+    targets.find((t) => t.key.toLowerCase() === k) ??
+    targets[0]
+  );
 }
 
 export interface ExtractSummary {
@@ -113,13 +240,16 @@ export interface ExtractSummary {
   skippedRepeats: number;
   /** Below the owner's extraction floor. */
   skippedBelowFloor: number;
+  /** About a repo the person can't reach, so dropped rather than filed elsewhere. */
+  skippedNoAccess: number;
 }
 
 /**
  * Turns a session transcript into memories. Each candidate at or above the
  * owner's confidence floor is scrubbed, recorded as a proposal and accepted,
  * which dedups it against active memories. Anchors without a session commit are
- * dropped, since they can't be verified later.
+ * dropped, since they can't be verified later. When the session touched other
+ * repos, each fact goes to the one the model picks from that list.
  */
 export async function extractProposals(
   db: Db,
@@ -127,11 +257,17 @@ export async function extractProposals(
   input: ExtractInput,
 ): Promise<ExtractSummary> {
   const text = input.transcript.slice(-MAX_PROMPT_CHARS);
+  const targets = projectTargets(input);
+  const parts = [
+    input.instructions
+      ? `Project instructions, already loaded into every session. Do not record anything they already say:\n${input.instructions}`
+      : "",
+    targets.length ? targetsPrompt(targets) : "",
+    `Transcript:\n${text}`,
+  ];
   const reply = await providers.llm.complete({
-    system: SYSTEM,
-    prompt: input.instructions
-      ? `Project instructions, already loaded into every session. Do not record anything they already say:\n${input.instructions}\n\nTranscript:\n${text}`
-      : `Transcript:\n${text}`,
+    system: targets.length ? `${SYSTEM}\n${PROJECTS_SYSTEM}` : SYSTEM,
+    prompt: parts.filter(Boolean).join("\n\n"),
     maxTokens: 2000,
   });
   const floor = await getExtractionFloor(db, input.owner);
@@ -141,6 +277,16 @@ export async function extractProposals(
     skippedEmpty: 0,
     skippedRepeats: 0,
     skippedBelowFloor: 0,
+    skippedNoAccess: 0,
+  };
+  const session: Target = targets[0] ?? {
+    key: input.projectKey,
+    name: input.projectKey,
+    headSha: input.commitSha,
+    edits: 0,
+    reads: 0,
+    files: [],
+    projectId: input.projectId,
   };
 
   for (const item of parseExtraction(reply)) {
@@ -154,10 +300,28 @@ export async function extractProposals(
       continue;
     }
     const practice = item.kind === "practice";
+    // Practices are user-scoped, so the session's project only records where they came from.
+    const target = practice
+      ? session
+      : (pickTarget(targets, item.project) ?? session);
+    if (target.projectId === undefined) {
+      const p = input.access
+        ? await upsertProject(db, input.access, {
+            key: target.key,
+            name: target.name,
+          })
+        : null;
+      target.projectId = p?.id ?? null;
+    }
+    const projectId = target.projectId;
+    if (!projectId) {
+      summary.skippedNoAccess++;
+      continue;
+    }
     let vec: number[] | null = null;
     try {
       vec = (await providers.embeddings.embed([clean.text]))[0] ?? null;
-      if (vec && (await isRepeat(db, input, practice, vec))) {
+      if (vec && (await isRepeat(db, input.owner, projectId, practice, vec))) {
         summary.skippedRepeats++;
         continue;
       }
@@ -167,7 +331,8 @@ export async function extractProposals(
         err instanceof Error ? err.message : err,
       );
     }
-    const sha = input.commitSha;
+    // The recheck reads the anchor at this commit, so it must be the picked repo's HEAD.
+    const sha = target.headSha;
     // A practice follows the user to other repos, so it has nothing to anchor to.
     const anchors =
       sha && !practice
@@ -181,11 +346,12 @@ export async function extractProposals(
               ...(a.symbol ? { symbol: a.symbol } : {}),
               commitSha: sha,
             }))
+            .filter((a) => anchorFits(targets, target, a.path))
         : [];
     const [proposal] = await db
       .insert(proposals)
       .values({
-        projectId: input.projectId,
+        projectId,
         sessionId: input.sessionId,
         content: clean.text,
         scope: practice ? "user" : "project",
@@ -202,7 +368,7 @@ export async function extractProposals(
       proposal.id,
       input.owner,
       {
-        projectKey: input.projectKey,
+        projectKey: target.key,
         sessionId: input.sessionId,
         embedding: vec,
       },
@@ -222,7 +388,8 @@ export async function extractProposals(
  */
 async function isRepeat(
   db: Db,
-  input: ExtractInput,
+  owner: string,
+  projectId: string,
   practice: boolean,
   vec: number[],
 ): Promise<boolean> {
@@ -232,8 +399,8 @@ async function isRepeat(
   // Rejections from the old review queue still say "don't keep this".
   const rejected = await db.execute(sql`
     SELECT 1 FROM proposals
-    WHERE ${practice ? sql`TRUE` : sql`project_id = ${input.projectId}`}
-      AND session_id IN (SELECT id FROM sessions WHERE owner = ${input.owner})
+    WHERE ${practice ? sql`TRUE` : sql`project_id = ${projectId}`}
+      AND session_id IN (SELECT id FROM sessions WHERE owner = ${owner})
       AND status = 'rejected'
       AND reviewed_at IS NOT NULL
       AND ${close("embedding")}
@@ -241,8 +408,8 @@ async function isRepeat(
   if (rejected.length > 0) return true;
   const retired = await db.execute(sql`
     SELECT 1 FROM memories
-    WHERE owner = ${input.owner}
-      AND ${practice ? sql`scope = 'user'` : sql`project_id = ${input.projectId}`}
+    WHERE owner = ${owner}
+      AND ${practice ? sql`scope = 'user'` : sql`project_id = ${projectId}`}
       AND agent = 'extraction'
       AND status = 'retired'
       AND ${close("embedding")}

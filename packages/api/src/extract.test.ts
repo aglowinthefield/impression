@@ -87,6 +87,7 @@ test("accepts scrubbed candidates with anchors at the session commit", async () 
     skippedEmpty: 1,
     skippedRepeats: 0,
     skippedBelowFloor: 1,
+    skippedNoAccess: 0,
   });
   const rows = await t.db
     .select()
