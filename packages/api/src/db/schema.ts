@@ -154,6 +154,11 @@ export const sessions = pgTable("sessions", {
   agent: text(),
   commitSha: text(),
   transcript: text().notNull(),
+  /**
+   * Other repos the session's tool calls touched, from the client:
+   * [{ key, name, headSha?, edits, reads, files }]. Extraction may file memories there.
+   */
+  candidates: jsonb(),
   createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 });
 

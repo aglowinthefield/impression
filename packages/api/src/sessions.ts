@@ -5,7 +5,11 @@ import { projectIdCond, upsertProject } from "./access.js";
 import type { AuthEnv } from "./auth.js";
 import type { Db } from "./db/client.js";
 import { projects, sessions } from "./db/schema.js";
-import { extractProposals } from "./extract.js";
+import {
+  candidatesSchema,
+  extractProposals,
+  type SessionCandidate,
+} from "./extract.js";
 import type { Providers } from "./providers/index.js";
 import { scrub } from "./scrub.js";
 
@@ -31,7 +35,15 @@ const body = z.object({
     .regex(/^[0-9a-f]{7,40}$/i, "commitSha must be a hex git SHA")
     .optional(),
   agent: z.string().min(1).optional(),
+  /** Repos the session's tool calls touched. Bad data is dropped, not a failed upload. */
+  candidates: candidatesSchema.optional().catch(undefined),
 });
+
+/** `path:` projects are local to one machine, so they never take another session's memories. */
+function storedCandidates(list: SessionCandidate[] | undefined) {
+  const kept = (list ?? []).filter((c) => !c.key.startsWith("path:"));
+  return kept.length ? kept : null;
+}
 
 function dto(
   s: typeof sessions.$inferSelect,
@@ -88,6 +100,7 @@ export function sessionRoutes(db: Db, providers: Providers) {
         agent: b.agent,
         commitSha: b.commitSha,
         transcript: clean.text,
+        candidates: storedCandidates(b.candidates),
       })
       .returning();
     return c.json(
@@ -168,6 +181,8 @@ export function sessionRoutes(db: Db, providers: Providers) {
         owner: s.owner,
         commitSha: s.commitSha,
         transcript: s.transcript,
+        candidates: candidatesSchema.catch([]).parse(s.candidates ?? []),
+        access: c.get("access"),
         ...(instructions ? { instructions } : {}),
       });
       return c.json(summary);
