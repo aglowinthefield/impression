@@ -31,7 +31,24 @@ jobs:
     concurrency: deploy
     steps:
       - uses: actions/checkout@v4
-      - uses: superfly/flyctl-actions/setup-flyctl@master
-      - run: flyctl deploy --remote-only
+        with: { fetch-depth: 0 }
+      # The server image runs only the API and web UI. Skip the deploy when a push
+      # touches none of their files, such as a README or CLI-only change. Deploy
+      # when the previous commit is unknown (first push, force-push).
+      - id: changed
+        env: { BEFORE: "${{ github.event.before }}" }
+        run: |
+          if ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null ||
+            ! git diff --quiet "$BEFORE" HEAD -- packages/api packages/web packages/shared \
+              Dockerfile .dockerignore fly.toml package.json pnpm-lock.yaml \
+              pnpm-workspace.yaml tsconfig.base.json turbo.json; then
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No server changes since $BEFORE, skipping deploy."
+          fi
+      - if: steps.changed.outputs.deploy == 'true'
+        uses: superfly/flyctl-actions/setup-flyctl@master
+      - if: steps.changed.outputs.deploy == 'true'
+        run: flyctl deploy --remote-only
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
