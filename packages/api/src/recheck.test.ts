@@ -415,10 +415,14 @@ describe("concurrent changes", () => {
       body(undefined, checked),
     );
     await vi.waitFor(() => expect(replies).toHaveLength(0));
+    // Either request may have reached the model first, so let the rewrite land
+    // before releasing the keep, whichever request holds it.
     rewrite.open();
-    expect((await first).status).toBe(200);
+    const done = await Promise.race([first, second]);
+    expect(done.status).toBe(200);
     keep.open();
-    expect((await second).status).toBe(409);
+    const statuses = [(await first).status, (await second).status].sort();
+    expect(statuses).toEqual([200, 409]);
     // Not resurrected next to its replacement.
     expect((await row(id))?.status).toBe("superseded");
     expect(await events(id)).toMatchObject([{ kind: "rewritten" }]);
