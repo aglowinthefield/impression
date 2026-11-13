@@ -1,6 +1,6 @@
 {
   "name": "@aglowinthefield/impression",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Memory for coding agents: CLI, MCP server, and plugins for Claude Code, Codex and pi",
   "license": "MIT",
   "type": "module",
