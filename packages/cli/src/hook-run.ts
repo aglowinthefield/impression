@@ -8,7 +8,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { createClient } from "@impression/shared";
+import { createClient, resolveProject } from "@impression/shared";
 import { loadConfig } from "./config.js";
 import { promptContext, sessionStartContext } from "./hook.js";
 import {
@@ -21,6 +21,7 @@ import {
   parseHookInput,
   sessionAgent,
 } from "./hook-io.js";
+import { claimRecheck, recheckProject } from "./recheck.js";
 import { sendSession } from "./session-end.js";
 
 /** Stdin as text. Gives up after `ms`, and reads nothing from a terminal. */
@@ -54,9 +55,22 @@ export async function runHook(
 
   if (sub === "session-start") {
     const input = parseHookInput(await readStdin(1000));
-    const ctx = await sessionStartContext(client(), hookCwd(input));
+    const cwd = hookCwd(input);
+    const ctx = await sessionStartContext(client(), cwd);
     if (ctx)
       process.stdout.write(`${formatContext(agent, "SessionStart", ctx)}\n`);
+    startRecheck(cwd, agent);
+    return;
+  }
+
+  if (sub === "recheck") {
+    const i = args.indexOf("--cwd");
+    const cwd = i >= 0 ? args[i + 1] : undefined;
+    if (!cwd) return;
+    await Promise.race([
+      recheckProject(client(), cwd),
+      new Promise((r) => setTimeout(r, 120_000).unref()),
+    ]);
     return;
   }
 
@@ -117,6 +131,31 @@ function handOff(
       { detached: true, stdio: "ignore", cwd },
     );
     child.on("error", () => rmSync(dir, { recursive: true, force: true }));
+    child.unref();
+  } catch {}
+}
+
+/**
+ * The staleness check reads files and waits on the model, too slow for session
+ * start, so it runs in a detached child, at most once an hour per project.
+ */
+function startRecheck(cwd: string, agent: Agent): void {
+  try {
+    if (!claimRecheck(resolveProject(cwd).key)) return;
+    const child = spawn(
+      process.execPath,
+      [
+        process.argv[1] as string,
+        "hook",
+        "recheck",
+        "--agent",
+        agent,
+        "--cwd",
+        cwd,
+      ],
+      { detached: true, stdio: "ignore", cwd },
+    );
+    child.on("error", () => {});
     child.unref();
   } catch {}
 }
