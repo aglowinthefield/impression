@@ -26,7 +26,7 @@ claude plugin marketplace add aglowinthefield/impression
 claude plugin install impression@impression
 ```
 
-The plugin adds the MCP tools (`search`, `add`) and three hooks: session start injects your core memories, each prompt adds memories that match it, and session end sends the transcript and queues proposals, which you review in the web UI. Update with `claude plugin update impression@impression`, or turn on auto-update for the marketplace in `/plugin`.
+The plugin adds the MCP tools (`search`, `add`) and three hooks: session start injects your core memories, each prompt adds memories that match it, and session end sends the transcript, and extraction turns it into memories. Update with `claude plugin update impression@impression`, or turn on auto-update for the marketplace in `/plugin`.
 
 ### Codex
 
@@ -54,7 +54,7 @@ pi installs and updates the package itself (`pi update --extensions`), so it doe
 
 ## Design decisions
 
-- **Capture:** explicit adds, plus session-end LLM extraction into a proposal queue (deduped, auto-accepted above a confidence threshold).
+- **Capture:** explicit adds, plus session-end LLM extraction. Extracted memories are deduped and stored right away. Each person sets a confidence floor in Settings (default 0.7), and extraction drops anything below it.
 - **Scopes:** user, project, team. A project is keyed by normalized git remote URL, falling back to root path. Memories can be narrowed to paths.
 - **Retrieval:** a small curated core is injected at session start. The rest is reached through a `search` tool. Per-prompt injection is optional per project.
 - **Staleness:** memories carry anchors (paths, symbols, commit SHA). Anchors are checked at retrieval and changed or missing ones are flagged. Contradictions supersede the old memory, which is kept as history.
@@ -87,7 +87,6 @@ TypeScript monorepo (pnpm workspaces, Node 22+). Packages: `shared`, `api`, `cli
 | `EMBEDDING_PROVIDER`                 | `openai`                                     | or `ollama`. Needs `OPENAI_API_KEY` for openai.                                       |
 | `LLM_PROVIDER`                       | `anthropic`                                  | or `ollama`. Needs `ANTHROPIC_API_KEY` for anthropic.                                 |
 | `EMBEDDING_MODEL`, `LLM_MODEL`       | `text-embedding-3-small`, `claude-haiku-4-5` | Required for ollama.                                                                  |
-| `AUTO_ACCEPT_CONFIDENCE`             | `0.9`                                        | Extracted memories at or above this become memories without review. `off` queues all. |
 | `EMBEDDING_DIMENSIONS`, `OLLAMA_URL` |                                              | Ollama only. The dimension must be 768 to match the column.                           |
 | `EMBEDDING_MIN_SIMILARITY`           | `0.3` openai, `0.45` ollama                  | Search floor. Cosine scores differ between models, so retune with the eval.           |
 
@@ -139,7 +138,7 @@ This uploads every prompt from `~/.pi/agent/sessions` with the memories that wer
 
 - **Sessions:** each prompt with its injected memories. Mark each one Useful, Irrelevant or Wrong. A Wrong rating offers to retire the memory.
 - **Memories:** per active memory, how often it was injected and how you rated it, plus the ones never injected. Often injected and often irrelevant means reword or retire.
-- **Extraction:** what the extractor wrote, with the share judged good. Accepting a proposal in Review counts as Good and rejecting one counts as Junk, so you only rate the auto-accepted ones by hand. Your own rating wins over the review one. Mark each Good or Junk. For junk, "Copy eval case" puts a case for `packages/api/src/eval/extraction-fixture.ts` on your clipboard, built from the source transcript.
+- **Extraction:** what the extractor wrote, with the share you judged good. Mark each Good or Junk. For junk, "Copy eval case" puts a case for `packages/api/src/eval/extraction-fixture.ts` on your clipboard, built from the source transcript.
 
 Terminal checks, none of which run in CI because they need a real model or your logs:
 
@@ -157,7 +156,7 @@ Terminal checks, none of which run in CI because they need a real model or your 
 
 ## Session-end hook
 
-`impression hook session-end --agent <agent>` reads the agent's session-end JSON from stdin, copies the transcript and returns at once, leaving a detached process to flatten it to user and assistant text and post it to `/api/sessions` with the project key and HEAD SHA. Add `--extract` to also queue proposals. It reads Claude Code, Codex, pi, Cursor, Gemini CLI and Copilot CLI transcripts. The server keeps one copy of a chunk sent twice. It always exits 0, prints nothing on failure, and the upload gives up after two minutes. Setup is under [Wire it into your agent](#wire-it-into-your-agent).
+`impression hook session-end --agent <agent>` reads the agent's session-end JSON from stdin, copies the transcript and returns at once, leaving a detached process to flatten it to user and assistant text and post it to `/api/sessions` with the project key and HEAD SHA. Add `--extract` to also extract memories from it. It reads Claude Code, Codex, pi, Cursor, Gemini CLI and Copilot CLI transcripts. The server keeps one copy of a chunk sent twice. It always exits 0, prints nothing on failure, and the upload gives up after two minutes. Setup is under [Wire it into your agent](#wire-it-into-your-agent).
 
 ## CLI
 
@@ -169,15 +168,12 @@ impression add "Migrations run via db:migrate" [--user] [--pin]
 impression search "how do migrations run"
 impression list
 impression status
-impression proposals                 # pending, with 8-character ids
-impression accept <id> [edited text]
-impression reject <id>
 impression edit <id> <text>
 impression retire <id>               # kept as history
 impression keep <id>                 # clears a possibly-stale flag
 ```
 
-Ids are the 8-character prefixes that `list`, `search` and `proposals` print.
+Ids are the 8-character prefixes that `list` and `search` print.
 
 `IMPRESSION_URL` and `IMPRESSION_TOKEN` override the saved config. The hooks read it too.
 
@@ -221,7 +217,7 @@ fly ssh console -C "pnpm --filter @impression/api token:create me"   # prints yo
 
 Then each teammate runs `impression login --url https://<app>.fly.dev --token imp_...` with their own token (create one per person). The token is the only protection, so don't share one.
 
-`fly.toml` keeps one machine running, because a cold start would make the session-start hook time out and skip injection. Don't mix embedding models in one database. To move existing data from a local Ollama setup, restore a data-only `pg_dump` (skip `api_tokens` and the `drizzle` schema) into the migrated Neon database, set `embedding` to null on `memories` and `proposals`, then run `pnpm --filter @impression/api db:reembed` with `EMBEDDING_PROVIDER=openai`. `db:reembed` only fills rows with no vector.
+`fly.toml` keeps one machine running, because a cold start would make the session-start hook time out and skip injection. Don't mix embedding models in one database. To move existing data from a local Ollama setup, restore a data-only `pg_dump` (skip `api_tokens` and the `drizzle` schema) into the migrated Neon database, set `embedding` to null on `memories` and `proposals`, then run `pnpm --filter @impression/api db:reembed` with `EMBEDDING_PROVIDER=openai`. `db:reembed` only fills rows with no vector. Servers that ran the old review queue should run `pnpm --filter @impression/api db:accept-backlog` once: it accepts pending proposals at or above their owner's floor and drops the rest. `--dry-run` prints the counts without writing.
 
 Pushes to `main` deploy automatically: the `deploy` job in `.github/workflows/ci.yml` runs after CI passes, using a `FLY_API_TOKEN` repo secret (`fly tokens create deploy -a <app>`).
 
@@ -239,7 +235,7 @@ Optional. Without it, sign-in is by API token only. Create a GitHub App (not an 
 The web login page then shows "Sign in with GitHub", and `impression login --github --url https://<host>` signs in from the terminal. Both mint an `imp_` token named after the GitHub login. A browser sign-in replaces that person's previous browser token. CLI tokens stay, so a second machine doesn't sign out the first. ### Who sees what
 
 - **Projects.** A signed-in person sees only projects for repos they can reach through their installations of the app (any installation, not just the allowlisted one). A `path:` project belongs to whoever first used it. Asking for a project you can't reach gives 404. GitHub is asked at most every 10 minutes per person, so losing repo access takes up to 10 minutes to show. If GitHub is down, the last answer is used. If their GitHub session is gone, requests get 401 and they sign in again.
-- **Memories.** Every memory is private to its author. The author can share a `project` memory with the team (web: "Share with team", or `PATCH /api/memories/:id {"scope":"team"}`), and then everyone who can see that project reads it. Only the author can edit, delete, share or unshare it. Proposals and sessions stay private to whoever's session they came from.
+- **Memories.** Every memory is private to its author. The author can share a `project` memory with the team (web: "Share with team", or `PATCH /api/memories/:id {"scope":"team"}`), and then everyone who can see that project reads it. Only the author can edit, delete, share or unshare it. Sessions stay private to whoever ran them.
 - **Tokens from `token:create`.** They are admin tokens: they see every project, but memory privacy still applies to them. Keep them for the operator.
 - **Existing data.** Memories written before this change were `project` scope, so they are now private to whichever token name wrote them. To hand them to a GitHub login: `pnpm --filter @impression/api owner:rename <token name> <github login>`. Sign-in is refused if the GitHub login matches an active `token:create` name, so rename or revoke that token first. A GitHub rename needs the same command.
 
