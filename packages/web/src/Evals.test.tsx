@@ -49,20 +49,18 @@ beforeEach(() => {
             items: [
               {
                 id: "m2",
-                kind: "memory",
                 content: "Use pnpm, never npm",
                 status: "active",
                 createdAt: "2026-01-01T00:00:00.000Z",
-                rating: null,
+                rating: "good",
                 verdict: "good",
               },
               {
-                id: "p1",
-                kind: "proposal",
+                id: "m3",
                 content: "Tests passed just now",
-                status: "rejected",
+                status: "retired",
                 createdAt: "2026-01-01T00:00:00.000Z",
-                rating: null,
+                rating: "junk",
                 verdict: "junk",
               },
             ],
@@ -108,14 +106,11 @@ test("a wrong rating offers to retire the memory", async () => {
   expect(await screen.findByText("Retire memory")).toBeTruthy();
 });
 
-test("extraction view shows what review decided and the share that was good", async () => {
+test("extraction view shows ratings and the share that was good", async () => {
   render(<Evals project="" />);
   fireEvent.click(screen.getByRole("button", { name: "Extraction" }));
   expect(await screen.findByText("50%")).toBeTruthy();
-  expect(screen.getByText("Accepted in review")).toBeTruthy();
-  expect(screen.getByText("Rejected in review")).toBeTruthy();
-  // The rejected proposal has no rating buttons but can become an eval case.
-  expect(screen.getAllByRole("button", { name: "Good" })).toHaveLength(1);
+  expect(screen.getAllByRole("button", { name: "Good" })).toHaveLength(2);
   expect(
     screen.getAllByRole("button", { name: "Copy eval case" }),
   ).toHaveLength(1);
