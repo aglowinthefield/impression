@@ -35,7 +35,7 @@ const projectRef = z.object({
 });
 
 /** A repo-relative path. Absolute paths and `..` would point outside the checkout. */
-const anchorPath = z
+export const anchorPath = z
   .string()
   .trim()
   .transform((p) => p.replace(/^(\.\/)+/, ""))
