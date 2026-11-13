@@ -63,10 +63,13 @@ const docs = {
 };
 const ownCandidate = { ...home, headSha: "abc1234", edits: 1, reads: 4 };
 
+// A counter, not Math.random(): the scrubber can redact a long digit run, and two
+// redacted transcripts would look like one session sent twice.
+let uploads = 0;
 const upload = async (candidates?: unknown) => {
   const r = await call("POST", "/sessions", {
     project: home,
-    transcript: `session ${Math.random()}`,
+    transcript: `session number ${++uploads}`,
     commitSha: "abc1234",
     ...(candidates === undefined ? {} : { candidates }),
   });
