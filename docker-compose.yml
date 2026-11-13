@@ -26,7 +26,6 @@ services:
       EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-768}
       OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      AUTO_ACCEPT_CONFIDENCE: ${AUTO_ACCEPT_CONFIDENCE:-0.9}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:

@@ -4,6 +4,7 @@ import {
   bigint,
   boolean,
   customType,
+  doublePrecision,
   index,
   integer,
   jsonb,
@@ -126,7 +127,10 @@ export const sessions = pgTable("sessions", {
   createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 });
 
-/** Candidate memories extracted at session end, waiting for accept or reject. */
+/**
+ * What extraction produced at session end. Each candidate at or above the owner's
+ * floor is accepted right away; `pending` and reviewed rows are from the old review queue.
+ */
 export const proposals = pgTable(
   "proposals",
   {
@@ -140,7 +144,7 @@ export const proposals = pgTable(
     scope: scopeEnum().notNull().default("project"),
     tags: text().array().notNull().default([]),
     confidence: real().notNull(),
-    /** Used to recognise a re-proposal of something already pending or rejected. */
+    /** Used to recognise a re-proposal of something a person rejected. */
     embedding: vector({ dimensions: EMBEDDING_DIM }),
     /** Proposed anchors: [{ path, symbol?, commitSha }]. */
     anchors: jsonb().notNull().default([]),
@@ -153,6 +157,14 @@ export const proposals = pgTable(
   },
   (t) => [index("proposals_project_status_idx").on(t.projectId, t.status)],
 );
+
+/** Per-person settings, keyed by principal (GitHub login or token name). */
+export const userSettings = pgTable("user_settings", {
+  owner: text().primaryKey(),
+  /** Extraction drops candidates below this confidence. */
+  extractionFloor: doublePrecision().notNull(),
+  updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+});
 
 /** A person who signed in with GitHub. */
 export const users = pgTable("users", {

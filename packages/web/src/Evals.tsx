@@ -29,10 +29,8 @@ interface Extracted {
   content: string;
   status: string;
   createdAt: string;
-  kind: "memory" | "proposal";
   /** Your rating, if you gave one. */
   rating: "good" | "junk" | null;
-  /** The rating, or what accepting or rejecting it in review implies. */
   verdict: "good" | "junk" | null;
 }
 
@@ -271,13 +269,7 @@ function Extraction({ project }: { project: string }) {
     setItems(
       (xs) =>
         xs?.map((x) =>
-          x.id === m.id
-            ? {
-                ...x,
-                rating: next,
-                verdict: next ?? (x.verdict === x.rating ? null : x.verdict),
-              }
-            : x,
+          x.id === m.id ? { ...x, rating: next, verdict: next } : x,
         ) ?? null,
     );
     try {
@@ -308,9 +300,8 @@ function Extraction({ project }: { project: string }) {
     <section>
       <p>
         <small>
-          What the extractor wrote. Accepting a proposal in Review counts as
-          good and rejecting one counts as junk. Rate the rest here. For junk,
-          copy an eval case so the extraction prompt gets tested against it.
+          What the extractor wrote. Rate it here. For junk, copy an eval case so
+          the extraction prompt gets tested against it.
         </small>
       </p>
       {precision !== null && (
@@ -331,30 +322,22 @@ function Extraction({ project }: { project: string }) {
               {m.status !== "active" ? ` · ${m.status}` : ""}
             </small>
             <div className="actions">
-              {m.kind === "memory" && (
-                <>
-                  <button
-                    type="button"
-                    className={`btn btn-sm ${m.verdict === "good" ? "btn-success" : "btn-outline"}`}
-                    aria-pressed={m.verdict === "good"}
-                    onClick={() => rate(m, "good")}
-                  >
-                    Good
-                  </button>
-                  <button
-                    type="button"
-                    className={`btn btn-sm ${m.verdict === "junk" ? "btn-error" : "btn-outline"}`}
-                    aria-pressed={m.verdict === "junk"}
-                    onClick={() => rate(m, "junk")}
-                  >
-                    Junk
-                  </button>
-                </>
-              )}
-              {m.kind === "proposal" && <small>Rejected in review</small>}
-              {m.verdict === "good" && !m.rating && (
-                <small>Accepted in review</small>
-              )}
+              <button
+                type="button"
+                className={`btn btn-sm ${m.verdict === "good" ? "btn-success" : "btn-outline"}`}
+                aria-pressed={m.verdict === "good"}
+                onClick={() => rate(m, "good")}
+              >
+                Good
+              </button>
+              <button
+                type="button"
+                className={`btn btn-sm ${m.verdict === "junk" ? "btn-error" : "btn-outline"}`}
+                aria-pressed={m.verdict === "junk"}
+                onClick={() => rate(m, "junk")}
+              >
+                Junk
+              </button>
               {m.verdict === "junk" && (
                 <button
                   type="button"

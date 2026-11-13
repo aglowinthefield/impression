@@ -40,21 +40,26 @@ export function buildPrompt(content: string, candidates: Candidate[]): string {
   return `Existing memories:\n${list}\n\nNew memory:\n${content}`;
 }
 
-/** Extracts the first JSON object from the reply and checks it against the candidates. Anything off means "add". */
-export function parseVerdict(reply: string, candidates: Candidate[]): Verdict {
+/** The first JSON object in the reply, if it is a verdict at all. */
+function readVerdict(reply: string): Verdict | null {
   const start = reply.indexOf("{");
   const end = reply.lastIndexOf("}");
-  if (start === -1 || end <= start) return { action: "add" };
+  if (start === -1 || end <= start) return null;
   let raw: unknown;
   try {
     raw = JSON.parse(reply.slice(start, end + 1));
   } catch {
-    return { action: "add" };
+    return null;
   }
   const parsed = verdictSchema.safeParse(raw);
-  if (!parsed.success) return { action: "add" };
+  return parsed.success ? parsed.data : null;
+}
+
+/** Extracts the first JSON object from the reply and checks it against the candidates. Anything off means "add". */
+export function parseVerdict(reply: string, candidates: Candidate[]): Verdict {
+  const v = readVerdict(reply);
+  if (!v) return { action: "add" };
   const known = new Set(candidates.map((c) => c.id));
-  const v = parsed.data;
   if (v.action === "duplicate") return known.has(v.id) ? v : { action: "add" };
   if (v.action === "supersede") {
     const ids = v.ids.filter((id) => known.has(id));
@@ -91,11 +96,15 @@ export async function findCandidates(
   return rows.map((r) => ({ id: r.id, content: r.content }));
 }
 
-/** Asks the LLM what to do with a new memory. Fails open: any error means "add". */
+/**
+ * Asks the LLM what to do with a new memory. Fails open: any error means "add".
+ * With `strict`, an LLM error or a reply that isn't a verdict throws instead.
+ */
 export async function decide(
   llm: LlmProvider,
   content: string,
   candidates: Candidate[],
+  opts: { strict?: boolean } = {},
 ): Promise<Verdict> {
   if (candidates.length === 0) return { action: "add" };
   try {
@@ -104,8 +113,11 @@ export async function decide(
       prompt: buildPrompt(content, candidates),
       maxTokens: 300,
     });
+    if (opts.strict && !readVerdict(reply))
+      throw new Error("dedup check gave no verdict");
     return parseVerdict(reply, candidates);
   } catch (err) {
+    if (opts.strict) throw err;
     console.error(
       "dedup check failed:",
       err instanceof Error ? err.message : err,

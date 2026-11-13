@@ -66,20 +66,12 @@ export async function status(client: ApiClient, cwd: string, url: string) {
   const p = resolveProject(cwd);
   const who = (await client.get("/whoami")) as { name: string };
   const review = (await client.get("/memories/review")) as { items: unknown[] };
-  const props = (await client.get("/proposals")) as { items: unknown[] };
   return [
     `Server:    ${url}`,
     `Signed in: ${who.name}`,
     `Project:   ${p.key}`,
     `Review:    ${review.items.length} possibly stale`,
-    `Proposals: ${props.items.length} pending`,
   ].join("\n");
-}
-
-interface Proposal {
-  id: string;
-  content: string;
-  confidence: number;
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -109,51 +101,6 @@ async function memoryId(client: ApiClient, cwd: string, prefix: string) {
   ]);
   const all = new Map([...mine.items, ...stale.items].map((m) => [m.id, m]));
   return byPrefix([...all.values()], prefix, "memory").id;
-}
-
-async function pending(client: ApiClient, cwd: string) {
-  const p = resolveProject(cwd);
-  const qs = new URLSearchParams({ project: p.key, limit: "100" });
-  return ((await client.get(`/proposals?${qs}`)) as { items: Proposal[] })
-    .items;
-}
-
-export async function proposals(client: ApiClient, cwd: string) {
-  const items = await pending(client, cwd);
-  return items.length
-    ? items
-        .map(
-          (i) =>
-            `${i.id.slice(0, 8)}  ${i.confidence.toFixed(2)}  ${i.content}`,
-        )
-        .join("\n")
-    : "No pending proposals.";
-}
-
-export async function accept(
-  client: ApiClient,
-  cwd: string,
-  prefix: string,
-  content?: string,
-) {
-  const id = UUID.test(prefix)
-    ? prefix
-    : byPrefix(await pending(client, cwd), prefix, "proposal").id;
-  const r = (await client.post(
-    `/proposals/${id}/accept`,
-    content ? { content } : {},
-  )) as {
-    id?: string;
-  };
-  return `Accepted${r.id ? `: ${r.id}` : ""}`;
-}
-
-export async function reject(client: ApiClient, cwd: string, prefix: string) {
-  const id = UUID.test(prefix)
-    ? prefix
-    : byPrefix(await pending(client, cwd), prefix, "proposal").id;
-  await client.post(`/proposals/${id}/reject`, {});
-  return "Rejected";
 }
 
 export async function retire(

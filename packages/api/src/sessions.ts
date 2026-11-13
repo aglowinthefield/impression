@@ -50,11 +50,7 @@ function dto(
   };
 }
 
-export function sessionRoutes(
-  db: Db,
-  providers: Providers,
-  autoAcceptConfidence: number | null,
-) {
+export function sessionRoutes(db: Db, providers: Providers) {
   const app = new Hono<AuthEnv>();
 
   app.post("/", async (c) => {
@@ -137,7 +133,7 @@ export function sessionRoutes(
     return c.json(dto(r.s, r.key));
   });
 
-  /** Runs extraction on a stored session and queues the results as proposals. */
+  /** Runs extraction on a stored session and stores what it finds as memories. */
   app.post("/:id/extract", async (c) => {
     const id = c.req.param("id");
     if (!z.uuid().safeParse(id).success)
@@ -169,7 +165,6 @@ export function sessionRoutes(
             .from(projects)
             .where(eq(projects.id, s.projectId))
         )[0]?.key as string,
-        autoAcceptConfidence,
         owner: s.owner,
         commitSha: s.commitSha,
         transcript: s.transcript,

@@ -10,8 +10,8 @@ import {
 import { Debug } from "./Debug";
 import { Evals } from "./Evals";
 import { Memories } from "./Memories";
-import { Proposals } from "./Proposals";
 import { Review } from "./Review";
+import { Settings } from "./Settings";
 
 const PROJECT_KEY = "impression.project";
 
@@ -76,7 +76,7 @@ function Login({ onDone }: { onDone: () => void }) {
   );
 }
 
-const tabs = ["Memories", "Proposals", "Review", "Evals", "Debug"] as const;
+const tabs = ["Memories", "Review", "Evals", "Settings", "Debug"] as const;
 type Tab = (typeof tabs)[number];
 
 const tabFromPath = (): Tab =>
@@ -186,8 +186,8 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
       <main>
         {tab === "Memories" ? (
           <Memories project={project} />
-        ) : tab === "Proposals" ? (
-          <Proposals project={project} />
+        ) : tab === "Settings" ? (
+          <Settings />
         ) : tab === "Evals" ? (
           <Evals project={project} />
         ) : tab === "Debug" ? (

@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { createApp } from "./app.js";
 import { createToken } from "./auth.js";
-import { proposals } from "./db/schema.js";
+import { memories, proposals } from "./db/schema.js";
 import { parseExtraction } from "./extract.js";
 import { createTestDb } from "./test-db.js";
 import { fakeProviders } from "./test-providers.js";
@@ -63,7 +63,7 @@ const session = async (transcript: string) =>
     ).json()) as { id: string }
   ).id;
 
-test("extracts scrubbed proposals with anchors at the session commit", async () => {
+test("accepts scrubbed candidates with anchors at the session commit", async () => {
   reply = JSON.stringify({
     memories: [
       {
@@ -74,18 +74,19 @@ test("extracts scrubbed proposals with anchors at the session commit", async () 
           { path: "/etc/x" },
         ],
       },
-      { content: "Use key AKIAIOSFODNN7EXAMPLE for S3", confidence: 0.6 },
+      { content: "Use key AKIAIOSFODNN7EXAMPLE for S3", confidence: 0.8 },
       { content: "AKIAIOSFODNN7EXAMPLE", confidence: 0.9 },
+      { content: "Maybe the cache is flaky", confidence: 0.5 },
     ],
   });
   const id = await session("long transcript here");
   const res = await call("POST", `/sessions/${id}/extract`);
   expect(await res.json()).toEqual({
-    proposed: 2,
+    accepted: 2,
     skippedDuplicates: 0,
     skippedEmpty: 1,
     skippedRepeats: 0,
-    autoAccepted: 0,
+    skippedBelowFloor: 1,
   });
   const rows = await t.db
     .select()
@@ -99,7 +100,15 @@ test("extracts scrubbed proposals with anchors at the session commit", async () 
   expect(first?.anchors).toEqual([
     { path: "Makefile", symbol: "db-migrate", commitSha: "abc1234" },
   ]);
-  expect(first?.status).toBe("pending");
+  expect(first?.status).toBe("accepted");
+  const mem = (await (
+    await call("GET", `/memories/${first?.memoryId}`)
+  ).json()) as { content: string; agent: string; anchors: unknown[] };
+  expect(mem).toMatchObject({
+    content: "Run make db-migrate before tests",
+    agent: "extraction",
+  });
+  expect(mem.anchors).toHaveLength(1);
 });
 
 test("skips candidates the project already knows", async () => {
@@ -137,7 +146,7 @@ test("skips candidates the project already knows", async () => {
     method: "POST",
     headers: { authorization: `Bearer ${token}` },
   });
-  expect(await res.json()).toMatchObject({ proposed: 0, skippedDuplicates: 1 });
+  expect(await res.json()).toMatchObject({ accepted: 0, skippedDuplicates: 1 });
 });
 
 test("sends only the tail of a huge transcript", async () => {
@@ -159,70 +168,148 @@ test("another token can't extract my session", async () => {
   expect(res.status).toBe(404);
 });
 
-describe("proposal review", () => {
-  const extractOne = async (content: string, confidence = 0.5) => {
+describe("extraction floor", () => {
+  const extractOne = async (content: string, confidence: number) => {
     reply = JSON.stringify({ memories: [{ content, confidence }] });
     const id = await session("transcript");
     const res = await call("POST", `/sessions/${id}/extract`);
-    return { sid: id, summary: (await res.json()) as Record<string, number> };
+    return (await res.json()) as Record<string, number>;
   };
-  const pending = async () =>
-    (await (await call("GET", "/proposals")).json()) as {
-      items: { id: string; content: string }[];
-    };
 
-  test("accept creates a memory, with an edit if given", async () => {
-    await extractOne("Tests need Postgres on 54329");
-    const p = (await pending()).items.find((x) => x.content.includes("54329"));
-    const res = await call("POST", `/proposals/${p?.id}/accept`, {
-      content: "Tests need Postgres on port 54329",
-    });
-    expect(res.status).toBe(201);
-    const mem = (await res.json()) as { content: string; agent: string };
-    expect(mem).toMatchObject({
-      content: "Tests need Postgres on port 54329",
-      agent: "extraction",
-    });
-    expect((await call("POST", `/proposals/${p?.id}/accept`)).status).toBe(409);
+  test("drops candidates below the owner's floor", async () => {
+    expect(
+      await extractOne("Tests need Postgres on 54329", 0.69),
+    ).toMatchObject({ accepted: 0, skippedBelowFloor: 1 });
+    await call("PUT", "/settings", { extractionFloor: 0.6 });
+    expect(
+      await extractOne("Tests need Postgres on 54329", 0.69),
+    ).toMatchObject({ accepted: 1, skippedBelowFloor: 0 });
+    await call("PUT", "/settings", { extractionFloor: 0.7 });
   });
 
-  test("reject hides it and the same idea isn't proposed again", async () => {
-    await extractOne("Lint with biome check");
-    const p = (await pending()).items.find((x) => x.content.includes("biome"));
-    expect((await call("POST", `/proposals/${p?.id}/reject`)).status).toBe(200);
-    expect((await pending()).items.some((x) => x.id === p?.id)).toBe(false);
-    const again = await extractOne("Lint with biome check");
-    expect(again.summary).toMatchObject({ proposed: 0, skippedRepeats: 1 });
-  });
-
-  test("high confidence auto-accepts when enabled", async () => {
-    const llm = fakeProviders();
-    llm.llm = {
-      model: "fake",
-      complete: async ({ system }) =>
-        system?.includes("maintain a developer's project memory")
-          ? '{"action":"add"}'
-          : JSON.stringify({
-              memories: [
-                { content: "Zebra cache lives in redis", confidence: 0.95 },
-              ],
-            }),
-    };
-    const a = createApp(t.db, llm, { autoAcceptConfidence: 0.8 });
-    const sid = await session("x");
-    const res = await a.request(`/api/sessions/${sid}/extract`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${token}` },
+  test("an idea a person rejected in review isn't accepted again", async () => {
+    const content = "Lint with biome check";
+    const [p] = await t.db.select().from(proposals).limit(1);
+    await t.db.insert(proposals).values({
+      projectId: p?.projectId as string,
+      sessionId: p?.sessionId,
+      content,
+      confidence: 0.8,
+      embedding: (await fakeProviders().embeddings.embed([content]))[0],
+      status: "rejected",
+      reviewedAt: new Date(),
     });
-    expect(await res.json()).toMatchObject({ proposed: 1, autoAccepted: 1 });
-    const list = (await (
-      await call("GET", "/memories?project=github.com/acme/ex")
-    ).json()) as { items: { content: string }[] };
-    expect(list.items.some((m) => m.content.includes("Zebra"))).toBe(true);
+    expect(await extractOne(content, 0.9)).toMatchObject({
+      accepted: 0,
+      skippedRepeats: 1,
+    });
   });
 });
 
-test("a practice is proposed user-scoped, never auto-accepted, and follows the user to other projects", async () => {
+describe("repeat check", () => {
+  const embed = async (text: string) =>
+    (await fakeProviders().embeddings.embed([text]))[0];
+  const extractIn = async (
+    key: string,
+    item: { content: string; kind?: string },
+  ) => {
+    reply = JSON.stringify({
+      memories: [{ ...item, otherRepos: true, confidence: 0.9 }],
+    });
+    const res = await call("POST", "/sessions", {
+      project: { key },
+      transcript: "t",
+    });
+    const { id } = (await res.json()) as { id: string };
+    return (await (
+      await call("POST", `/sessions/${id}/extract`)
+    ).json()) as Record<string, number>;
+  };
+  const projectIdOf = async (key: string) =>
+    (
+      await t.db.query.projects.findFirst({
+        where: (p, { eq }) => eq(p.key, key),
+      })
+    )?.id as string;
+
+  test("an extracted memory I retired isn't extracted again in that project", async () => {
+    const content = "Seed data lives in fixtures/seed.sql";
+    await extractIn(project.key, { content: "warm up" });
+    const projectId = await projectIdOf(project.key);
+    await t.db.insert(memories).values({
+      scope: "project",
+      projectId,
+      owner: "alice",
+      author: "alice",
+      agent: "extraction",
+      status: "retired",
+      content,
+      embedding: await embed(content),
+    });
+    expect(await extractIn(project.key, { content })).toMatchObject({
+      accepted: 0,
+      skippedRepeats: 1,
+    });
+    // Another project's fact is a different fact.
+    expect(
+      await extractIn("github.com/acme/elsewhere", { content }),
+    ).toMatchObject({ accepted: 1, skippedRepeats: 0 });
+  });
+
+  test("a memory I wrote and retired doesn't block extraction", async () => {
+    const content = "Feature flags live in flags.json";
+    await t.db.insert(memories).values({
+      scope: "project",
+      projectId: await projectIdOf(project.key),
+      owner: "alice",
+      author: "alice",
+      agent: "cli",
+      status: "retired",
+      content,
+      embedding: await embed(content),
+    });
+    expect(await extractIn(project.key, { content })).toMatchObject({
+      accepted: 1,
+    });
+  });
+
+  test("a practice turned down in one project stays out of every project", async () => {
+    const retired = "When reviewing a PR, read the tests first";
+    const rejected = "When shipping, write the changelog before merging";
+    await t.db.insert(memories).values({
+      scope: "user",
+      owner: "alice",
+      author: "alice",
+      agent: "extraction",
+      status: "retired",
+      tags: ["practice"],
+      content: retired,
+      embedding: await embed(retired),
+    });
+    await extractIn("github.com/acme/one", { content: "warm up one" });
+    const [s1] = await t.db
+      .select()
+      .from(proposals)
+      .where(eq(proposals.content, "warm up one"));
+    await t.db.insert(proposals).values({
+      projectId: s1?.projectId as string,
+      sessionId: s1?.sessionId,
+      scope: "user",
+      tags: ["practice"],
+      content: rejected,
+      confidence: 0.8,
+      embedding: await embed(rejected),
+      status: "rejected",
+      reviewedAt: new Date(),
+    });
+    for (const content of [retired, rejected])
+      expect(
+        await extractIn("github.com/acme/two", { kind: "practice", content }),
+      ).toMatchObject({ accepted: 0, skippedRepeats: 1 });
+  });
+});
+
+test("a practice is accepted user-scoped and follows the user to other projects", async () => {
   const llm = fakeProviders();
   llm.llm = {
     model: "fake",
@@ -237,6 +324,7 @@ test("a practice is proposed user-scoped, never auto-accepted, and follows the u
                 content:
                   "When doing a /nitpick design session, run the app against a fork of production data",
                 confidence: 0.99,
+                anchors: [{ path: "scripts/fork.ts" }],
               },
               {
                 kind: "practice",
@@ -248,47 +336,37 @@ test("a practice is proposed user-scoped, never auto-accepted, and follows the u
             ],
           }),
   };
-  const a = createApp(t.db, llm, { autoAcceptConfidence: 0.8 });
+  const a = createApp(t.db, llm);
   const sid = await session("practice transcript");
   const res = await a.request(`/api/sessions/${sid}/extract`, {
     method: "POST",
     headers: { authorization: `Bearer ${token}` },
   });
-  // The repo-specific "practice" is downgraded to a fact, so it auto-accepts. The real practice waits.
-  expect(await res.json()).toMatchObject({ proposed: 2, autoAccepted: 1 });
-  const pending = (await (await call("GET", "/proposals")).json()) as {
-    items: { id: string; content: string; scope: string; tags: string[] }[];
-  };
-  const p = pending.items.find((x) => x.content.includes("nitpick"));
-  expect(p).toMatchObject({ scope: "user", tags: ["practice"] });
-  expect(pending.items.some((x) => x.content.includes("reembed"))).toBe(false);
-
-  // Bob can't see or accept Alice's practice.
-  const bob = await createToken(t.db, "bob3");
-  const bobCall = (method: string, path: string) =>
-    app.request(`/api${path}`, {
-      method,
-      headers: { authorization: `Bearer ${bob}` },
-    });
-  const theirs = (await (await bobCall("GET", "/proposals")).json()) as {
-    items: { content: string }[];
-  };
-  expect(theirs.items.some((x) => x.content.includes("nitpick"))).toBe(false);
-  expect((await bobCall("POST", `/proposals/${p?.id}/accept`)).status).toBe(
-    404,
+  expect(await res.json()).toMatchObject({ accepted: 2 });
+  const rows = await t.db
+    .select()
+    .from(proposals)
+    .where(eq(proposals.sessionId, sid));
+  // The repo-specific "practice" is downgraded to a project fact.
+  expect(rows.find((r) => r.content.includes("reembed"))?.scope).toBe(
+    "project",
   );
-
-  const accepted = await call("POST", `/proposals/${p?.id}/accept`, {});
-  expect(accepted.status).toBe(201);
-  const mem = (await accepted.json()) as {
+  const p = rows.find((r) => r.content.includes("nitpick"));
+  // A practice isn't tied to this repo, so it keeps no anchors.
+  expect(p?.anchors).toEqual([]);
+  const mem = (await (
+    await call("GET", `/memories/${p?.memoryId}`)
+  ).json()) as {
     scope: string;
     project: string | null;
     tags: string[];
+    anchors: unknown[];
   };
   expect(mem).toMatchObject({
     scope: "user",
     project: null,
     tags: ["practice"],
+    anchors: [],
   });
 
   // It shows up at session start in a project the session never touched, first in the list.
@@ -307,33 +385,6 @@ test("a practice is proposed user-scoped, never auto-accepted, and follows the u
   expect(byTag.items.map((m) => m.content)).toEqual([
     expect.stringContaining("nitpick"),
   ]);
-});
-
-test("proposals are private to the person whose session produced them", async () => {
-  reply = JSON.stringify({
-    memories: [{ content: "Excerpt check memory", confidence: 0.4 }],
-  });
-  const id = await session(`secret-ish ${"y".repeat(1000)}`);
-  await call("POST", `/sessions/${id}/extract`);
-  const mine = (await (await call("GET", "/proposals")).json()) as {
-    items: { id: string; content: string; sessionExcerpt: string | null }[];
-  };
-  const p = mine.items.find((x) => x.content === "Excerpt check memory");
-  expect(p?.sessionExcerpt).toHaveLength(600);
-  expect(p?.sessionExcerpt?.startsWith("secret-ish")).toBe(true);
-  const bob = await createToken(t.db, "bob2");
-  const theirs = (await (
-    await app.request("/api/proposals", {
-      headers: { authorization: `Bearer ${bob}` },
-    })
-  ).json()) as { items: { content: string; sessionExcerpt: string | null }[] };
-  expect(
-    theirs.items.find((x) => x.content === "Excerpt check memory"),
-  ).toBeUndefined();
-  const id404 = await app.request(`/api/proposals/${p?.id}`, {
-    headers: { authorization: `Bearer ${bob}` },
-  });
-  expect(id404.status).toBe(404);
 });
 
 test("extract passes scrubbed instructions to the model, only when sent", async () => {

@@ -3,18 +3,7 @@ import { mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
-import {
-  accept,
-  add,
-  edit,
-  keep,
-  list,
-  proposals,
-  reject,
-  retire,
-  search,
-  status,
-} from "./commands.js";
+import { add, edit, keep, list, retire, search, status } from "./commands.js";
 import { configPath, loadConfig, saveConfig } from "./config.js";
 
 const repo = () => {
@@ -108,7 +97,7 @@ describe("commands", () => {
       p === "/whoami" ? { name: "me" } : { items: [1, 2] },
     );
     expect(await status(c, repo(), "http://h")).toBe(
-      "Server:    http://h\nSigned in: me\nProject:   github.com/acme/ex\nReview:    2 possibly stale\nProposals: 2 pending",
+      "Server:    http://h\nSigned in: me\nProject:   github.com/acme/ex\nReview:    2 possibly stale",
     );
   });
 });
@@ -124,36 +113,11 @@ describe("review commands", () => {
     pinned: false,
   });
   const reply = (p: string) =>
-    p.startsWith("/proposals?")
-      ? { items: [{ id: ID, content: "Use pnpm", confidence: 0.8 }] }
-      : p === "/memories/review"
-        ? { items: [] }
-        : p.startsWith("/memories?")
-          ? { items: [mem(ID), mem(OTHER)] }
-          : { id: ID };
-
-  test("proposals lists pending with short ids", async () => {
-    const c = fake(reply);
-    expect(await proposals(c, repo())).toBe("abcdef12  0.80  Use pnpm");
-    expect(c.calls[0]?.[0]).toContain("project=github.com%2Facme%2Fex");
-  });
-
-  test("accept resolves a prefix and sends edited text", async () => {
-    const c = fake(reply);
-    expect(await accept(c, repo(), "abcdef12", "Use pnpm 12")).toBe(
-      `Accepted: ${ID}`,
-    );
-    expect(c.calls.at(-1)).toEqual([
-      `POST /proposals/${ID}/accept`,
-      { content: "Use pnpm 12" },
-    ]);
-  });
-
-  test("reject posts to the proposal", async () => {
-    const c = fake(reply);
-    await reject(c, repo(), "abcdef12");
-    expect(c.calls.at(-1)?.[0]).toBe(`POST /proposals/${ID}/reject`);
-  });
+    p === "/memories/review"
+      ? { items: [] }
+      : p.startsWith("/memories?")
+        ? { items: [mem(ID), mem(OTHER)] }
+        : { id: ID };
 
   test("retire, edit and keep resolve memory prefixes", async () => {
     const c = fake(reply);

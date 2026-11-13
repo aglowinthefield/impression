@@ -196,6 +196,13 @@ export async function embedMemory(
 
 export type CreateInput = z.infer<typeof createBody>;
 
+export interface CreateOptions {
+  /** Throw instead of storing when the dedup check can't run: no vector, or the LLM failed. */
+  requireDedup?: boolean;
+  /** A vector already computed for this exact content. Used only if scrubbing leaves the content unchanged. */
+  embedding?: number[] | null;
+}
+
 /**
  * Stores a memory: scrub, embed, dedup, insert, anchors. Shared by the create
  * route and proposal acceptance. The caller validates scope and project. Pass
@@ -208,6 +215,7 @@ export async function createMemory(
   principal: string,
   b: CreateInput,
   access?: Access,
+  opts: CreateOptions = {},
 ) {
   let projectId: string | null = null;
   if (b.project) {
@@ -237,18 +245,24 @@ export async function createMemory(
       body: bad("content is only secrets or personal data, nothing was stored"),
     };
   }
+  const unchanged = clean.text === b.content;
   b.content = clean.text;
 
   // Embed first, so similar memories can be found before anything is written.
-  let vector: number[] | null = null;
-  try {
-    vector = (await providers.embeddings.embed([b.content]))[0] ?? null;
-  } catch (err) {
-    console.error(
-      "embedding failed on create:",
-      err instanceof Error ? err.message : err,
-    );
+  let vector: number[] | null =
+    unchanged && opts.embedding ? opts.embedding : null;
+  if (!vector) {
+    try {
+      vector = (await providers.embeddings.embed([b.content]))[0] ?? null;
+    } catch (err) {
+      console.error(
+        "embedding failed on create:",
+        err instanceof Error ? err.message : err,
+      );
+    }
   }
+  if (opts.requireDedup && b.dedup && !vector)
+    throw new Error("no embedding, so the dedup check could not run");
 
   let supersedes: string[] = [];
   if (b.dedup && vector) {
@@ -257,7 +271,9 @@ export async function createMemory(
       { scope: b.scope, projectId, owner: principal },
       vector,
     );
-    const verdict = await decide(providers.llm, b.content, candidates);
+    const verdict = await decide(providers.llm, b.content, candidates, {
+      strict: opts.requireDedup,
+    });
     if (verdict.action === "duplicate") {
       const existing = candidates.find((c) => c.id === verdict.id);
       const merged =

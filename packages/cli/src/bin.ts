@@ -2,18 +2,7 @@
 import { execFileSync } from "node:child_process";
 import { homedir } from "node:os";
 import { createClient } from "@impression/shared";
-import {
-  accept,
-  add,
-  edit,
-  keep,
-  list,
-  proposals,
-  reject,
-  retire,
-  search,
-  status,
-} from "./commands.js";
+import { add, edit, keep, list, retire, search, status } from "./commands.js";
 import { loadConfig, saveConfig } from "./config.js";
 import { pushEvalTurns } from "./eval-push.js";
 import { githubDeviceLogin } from "./github-login.js";
@@ -127,18 +116,7 @@ if (cmd === "hook") {
   }
 } else if (
   cmd &&
-  [
-    "search",
-    "add",
-    "list",
-    "status",
-    "proposals",
-    "accept",
-    "reject",
-    "retire",
-    "edit",
-    "keep",
-  ].includes(cmd)
+  ["search", "add", "list", "status", "retire", "edit", "keep"].includes(cmd)
 ) {
   if (!token) {
     console.error("Not signed in. Run: impression login --github");
@@ -153,7 +131,7 @@ if (cmd === "hook") {
     const cwd = process.cwd();
     if ((cmd === "search" || cmd === "add") && !words)
       throw new Error(`usage: impression ${cmd} <text>`);
-    if (["accept", "reject", "retire", "edit", "keep"].includes(cmd) && !id)
+    if (["retire", "edit", "keep"].includes(cmd) && !id)
       throw new Error(
         `usage: impression ${cmd} <id>${cmd === "edit" ? " <text>" : ""}`,
       );
@@ -174,9 +152,6 @@ if (cmd === "hook") {
           ? `${s}\nOld hooks: ${old.join(", ")} (the plugin replaces them; run impression setup to remove them)`
           : s;
       },
-      proposals: () => proposals(client, cwd),
-      accept: () => accept(client, cwd, id ?? "", text || undefined),
-      reject: () => reject(client, cwd, id ?? ""),
       retire: () => retire(client, cwd, id ?? ""),
       edit: () => edit(client, cwd, id ?? "", text),
       keep: () => keep(client, cwd, id ?? ""),
@@ -188,7 +163,7 @@ if (cmd === "hook") {
   }
 } else {
   console.error(
-    "usage: impression --version | setup [--dry-run] [--only claude|pi|codex] | update\n       impression login [--github] | search <q> | add <text> [--user] [--pin] | list | status\n       impression proposals | accept <id> [edited text] | reject <id> | retire <id> | edit <id> <text> | keep <id>\n       impression hook session-start | prompt | session-end [--extract] --agent claude|codex|gemini|cursor|copilot|pi\n       impression eval push [path-substring]",
+    "usage: impression --version | setup [--dry-run] [--only claude|pi|codex] | update\n       impression login [--github] | search <q> | add <text> [--user] [--pin] | list | status\n       impression retire <id> | edit <id> <text> | keep <id>\n       impression hook session-start | prompt | session-end [--extract] --agent claude|codex|gemini|cursor|copilot|pi\n       impression eval push [path-substring]",
   );
   process.exit(2);
 }

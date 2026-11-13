@@ -69,7 +69,6 @@ describe("loadConfig", () => {
     expect(loadConfig({ PORT: "8080", DATABASE_URL: "postgres://x" })).toEqual({
       port: 8080,
       databaseUrl: "postgres://x",
-      autoAcceptConfidence: 0.9,
       github: null,
     });
   });

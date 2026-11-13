@@ -16,7 +16,6 @@ const { db } = createDb(config.databaseUrl);
 const usage = new UsageRecorder(db);
 serve({
   fetch: createApp(db, createProviders(process.env, undefined, usage.record), {
-    autoAcceptConfidence: config.autoAcceptConfidence,
     github: config.github,
     webDir: existsSync(webDir) ? webDir : undefined,
   }).fetch,
