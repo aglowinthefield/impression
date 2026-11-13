@@ -114,6 +114,31 @@ export const anchors = pgTable(
   (t) => [index("anchors_memory_idx").on(t.memoryId)],
 );
 
+export const memoryEventKindEnum = pgEnum("memory_event_kind", [
+  "kept",
+  "rewritten",
+  "retired",
+]);
+
+/**
+ * What the automatic staleness check did to a memory, so the activity log can show
+ * it and offer undo. `reason` is why the check ran, `detail` what it decided.
+ */
+export const memoryEvents = pgTable(
+  "memory_events",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    memoryId: uuid()
+      .notNull()
+      .references(() => memories.id, { onDelete: "cascade" }),
+    kind: memoryEventKindEnum().notNull(),
+    reason: text().notNull(),
+    detail: jsonb().notNull().default({}),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("memory_events_memory_idx").on(t.memoryId)],
+);
+
 export const sessions = pgTable("sessions", {
   id: uuid().primaryKey().defaultRandom(),
   projectId: uuid()

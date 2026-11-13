@@ -92,6 +92,13 @@
       "when": 1794541633669,
       "tag": "0012_user_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1794581539586,
+      "tag": "0013_memory_events",
+      "breakpoints": true
     }
   ]
 }
