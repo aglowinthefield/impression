@@ -64,8 +64,7 @@ export async function runHook(
   }
 
   if (sub === "recheck") {
-    const i = args.indexOf("--cwd");
-    const cwd = i >= 0 ? args[i + 1] : undefined;
+    const cwd = cwdArg(args);
     if (!cwd) return;
     await Promise.race([
       recheckProject(client(), cwd),
@@ -133,6 +132,13 @@ function handOff(
     child.on("error", () => rmSync(dir, { recursive: true, force: true }));
     child.unref();
   } catch {}
+}
+
+/** The checkout `hook recheck` works on, from `--cwd <dir>`. */
+export function cwdArg(args: string[]): string | undefined {
+  const i = args.indexOf("--cwd");
+  const v = i >= 0 ? args[i + 1] : undefined;
+  return v && !v.startsWith("--") ? v : undefined;
 }
 
 /**
