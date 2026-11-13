@@ -11,6 +11,7 @@ import { githubAuthRoutes } from "./github-auth.js";
 import { memoryRoutes } from "./memories.js";
 import { projectRoutes } from "./projects.js";
 import type { Providers } from "./providers/index.js";
+import { recheckRoutes } from "./recheck.js";
 import { RepoAccess } from "./repo-access.js";
 import { RequestLog } from "./request-log.js";
 import { searchRoutes } from "./search.js";
@@ -58,6 +59,7 @@ export function createApp(
   api.use(requireAuth(db, repoAccess));
   api.use(usageContext());
   api.route("/debug", log.routes());
+  api.route("/memories", recheckRoutes(db, providers));
   api.route("/memories", memoryRoutes(db, providers));
   api.route("/core", coreRoutes(db));
   api.route("/search", searchRoutes(db, providers));

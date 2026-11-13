@@ -1,5 +1,5 @@
 import { and, eq, inArray, or, type SQL, sql } from "drizzle-orm";
-import type { Db } from "./db/client.js";
+import type { Db, Queryer } from "./db/client.js";
 import { projects } from "./db/schema.js";
 
 /**
@@ -19,7 +19,7 @@ export class Access {
   ) {}
 
   /** Ids of the projects this request may see. Null means all of them. */
-  projectIds(db: Db): Promise<string[] | null> {
+  projectIds(db: Queryer): Promise<string[] | null> {
     this.ids ??= this.admin
       ? Promise.resolve(null)
       : db
@@ -65,14 +65,14 @@ export async function projectIdCond(
 }
 
 /** Finds a project by key if this request may see it. */
-export async function findProject(db: Db, a: Access, key: string) {
+export async function findProject(db: Queryer, a: Access, key: string) {
   const [p] = await db.select().from(projects).where(eq(projects.key, key));
   return p && a.canSeeKey(p.key, p.createdBy) ? p : null;
 }
 
 /** Creates the project if needed. Returns null if this request may not use that project. */
 export async function upsertProject(
-  db: Db,
+  db: Queryer,
   a: Access,
   ref: { key: string; name?: string },
 ) {

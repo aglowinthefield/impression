@@ -1,6 +1,6 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
-import type { Db } from "./db/client.js";
+import type { Queryer } from "./db/client.js";
 import { memories } from "./db/schema.js";
 import type { LlmProvider } from "./providers/index.js";
 
@@ -76,7 +76,7 @@ export interface Target {
 
 /** Active memories in the same scope and project that are close to the new vector. */
 export async function findCandidates(
-  db: Db,
+  db: Queryer,
   target: Target,
   vector: number[],
 ): Promise<Candidate[]> {
@@ -127,7 +127,11 @@ export async function decide(
 }
 
 /** Marks old memories as replaced by the new one. They stay as history. */
-export async function markSuperseded(db: Db, oldIds: string[], newId: string) {
+export async function markSuperseded(
+  db: Queryer,
+  oldIds: string[],
+  newId: string,
+) {
   await db
     .update(memories)
     .set({ status: "superseded", supersededBy: newId, updatedAt: new Date() })

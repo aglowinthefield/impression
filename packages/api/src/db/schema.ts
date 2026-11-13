@@ -82,6 +82,8 @@ export const memories = pgTable(
     }),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    /** Last automatic staleness check. Kept apart from updatedAt so a check doesn't count as recent. */
+    checkedAt: timestamp({ withTimezone: true }),
     search: tsvector().generatedAlwaysAs(
       (): ReturnType<typeof sql> => sql`to_tsvector('english', content)`,
     ),
@@ -112,6 +114,34 @@ export const anchors = pgTable(
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("anchors_memory_idx").on(t.memoryId)],
+);
+
+export const memoryEventKindEnum = pgEnum("memory_event_kind", [
+  "kept",
+  "rewritten",
+  "retired",
+]);
+
+/**
+ * What the automatic staleness check did to a memory, so the activity log can show
+ * it and offer undo. `reason` is why the check ran, `detail` what it decided.
+ */
+export const memoryEvents = pgTable(
+  "memory_events",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    memoryId: uuid()
+      .notNull()
+      .references(() => memories.id, { onDelete: "cascade" }),
+    kind: memoryEventKindEnum().notNull(),
+    reason: text().notNull(),
+    detail: jsonb().notNull().default({}),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("memory_events_memory_idx").on(t.memoryId, t.createdAt),
+    index("memory_events_created_idx").on(t.createdAt),
+  ],
 );
 
 export const sessions = pgTable("sessions", {
