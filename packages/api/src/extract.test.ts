@@ -63,7 +63,7 @@ const session = async (transcript: string) =>
     ).json()) as { id: string }
   ).id;
 
-test("extracts scrubbed proposals with anchors at the session commit", async () => {
+test("accepts scrubbed candidates with anchors at the session commit", async () => {
   reply = JSON.stringify({
     memories: [
       {
@@ -74,18 +74,19 @@ test("extracts scrubbed proposals with anchors at the session commit", async () 
           { path: "/etc/x" },
         ],
       },
-      { content: "Use key AKIAIOSFODNN7EXAMPLE for S3", confidence: 0.6 },
+      { content: "Use key AKIAIOSFODNN7EXAMPLE for S3", confidence: 0.8 },
       { content: "AKIAIOSFODNN7EXAMPLE", confidence: 0.9 },
+      { content: "Maybe the cache is flaky", confidence: 0.5 },
     ],
   });
   const id = await session("long transcript here");
   const res = await call("POST", `/sessions/${id}/extract`);
   expect(await res.json()).toEqual({
-    proposed: 2,
+    accepted: 2,
     skippedDuplicates: 0,
     skippedEmpty: 1,
     skippedRepeats: 0,
-    autoAccepted: 0,
+    skippedBelowFloor: 1,
   });
   const rows = await t.db
     .select()
@@ -99,7 +100,15 @@ test("extracts scrubbed proposals with anchors at the session commit", async () 
   expect(first?.anchors).toEqual([
     { path: "Makefile", symbol: "db-migrate", commitSha: "abc1234" },
   ]);
-  expect(first?.status).toBe("pending");
+  expect(first?.status).toBe("accepted");
+  const mem = (await (
+    await call("GET", `/memories/${first?.memoryId}`)
+  ).json()) as { content: string; agent: string; anchors: unknown[] };
+  expect(mem).toMatchObject({
+    content: "Run make db-migrate before tests",
+    agent: "extraction",
+  });
+  expect(mem.anchors).toHaveLength(1);
 });
 
 test("skips candidates the project already knows", async () => {
@@ -137,7 +146,7 @@ test("skips candidates the project already knows", async () => {
     method: "POST",
     headers: { authorization: `Bearer ${token}` },
   });
-  expect(await res.json()).toMatchObject({ proposed: 0, skippedDuplicates: 1 });
+  expect(await res.json()).toMatchObject({ accepted: 0, skippedDuplicates: 1 });
 });
 
 test("sends only the tail of a huge transcript", async () => {
@@ -159,70 +168,45 @@ test("another token can't extract my session", async () => {
   expect(res.status).toBe(404);
 });
 
-describe("proposal review", () => {
-  const extractOne = async (content: string, confidence = 0.5) => {
+describe("extraction floor", () => {
+  const extractOne = async (content: string, confidence: number) => {
     reply = JSON.stringify({ memories: [{ content, confidence }] });
     const id = await session("transcript");
     const res = await call("POST", `/sessions/${id}/extract`);
-    return { sid: id, summary: (await res.json()) as Record<string, number> };
+    return (await res.json()) as Record<string, number>;
   };
-  const pending = async () =>
-    (await (await call("GET", "/proposals")).json()) as {
-      items: { id: string; content: string }[];
-    };
 
-  test("accept creates a memory, with an edit if given", async () => {
-    await extractOne("Tests need Postgres on 54329");
-    const p = (await pending()).items.find((x) => x.content.includes("54329"));
-    const res = await call("POST", `/proposals/${p?.id}/accept`, {
-      content: "Tests need Postgres on port 54329",
-    });
-    expect(res.status).toBe(201);
-    const mem = (await res.json()) as { content: string; agent: string };
-    expect(mem).toMatchObject({
-      content: "Tests need Postgres on port 54329",
-      agent: "extraction",
-    });
-    expect((await call("POST", `/proposals/${p?.id}/accept`)).status).toBe(409);
+  test("drops candidates below the owner's floor", async () => {
+    expect(
+      await extractOne("Tests need Postgres on 54329", 0.69),
+    ).toMatchObject({ accepted: 0, skippedBelowFloor: 1 });
+    await call("PUT", "/settings", { extractionFloor: 0.6 });
+    expect(
+      await extractOne("Tests need Postgres on 54329", 0.69),
+    ).toMatchObject({ accepted: 1, skippedBelowFloor: 0 });
+    await call("PUT", "/settings", { extractionFloor: 0.7 });
   });
 
-  test("reject hides it and the same idea isn't proposed again", async () => {
-    await extractOne("Lint with biome check");
-    const p = (await pending()).items.find((x) => x.content.includes("biome"));
-    expect((await call("POST", `/proposals/${p?.id}/reject`)).status).toBe(200);
-    expect((await pending()).items.some((x) => x.id === p?.id)).toBe(false);
-    const again = await extractOne("Lint with biome check");
-    expect(again.summary).toMatchObject({ proposed: 0, skippedRepeats: 1 });
-  });
-
-  test("high confidence auto-accepts when enabled", async () => {
-    const llm = fakeProviders();
-    llm.llm = {
-      model: "fake",
-      complete: async ({ system }) =>
-        system?.includes("maintain a developer's project memory")
-          ? '{"action":"add"}'
-          : JSON.stringify({
-              memories: [
-                { content: "Zebra cache lives in redis", confidence: 0.95 },
-              ],
-            }),
-    };
-    const a = createApp(t.db, llm, { autoAcceptConfidence: 0.8 });
-    const sid = await session("x");
-    const res = await a.request(`/api/sessions/${sid}/extract`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${token}` },
+  test("an idea a person rejected in review isn't accepted again", async () => {
+    const content = "Lint with biome check";
+    const [p] = await t.db.select().from(proposals).limit(1);
+    await t.db.insert(proposals).values({
+      projectId: p?.projectId as string,
+      sessionId: p?.sessionId,
+      content,
+      confidence: 0.8,
+      embedding: (await fakeProviders().embeddings.embed([content]))[0],
+      status: "rejected",
+      reviewedAt: new Date(),
     });
-    expect(await res.json()).toMatchObject({ proposed: 1, autoAccepted: 1 });
-    const list = (await (
-      await call("GET", "/memories?project=github.com/acme/ex")
-    ).json()) as { items: { content: string }[] };
-    expect(list.items.some((m) => m.content.includes("Zebra"))).toBe(true);
+    expect(await extractOne(content, 0.9)).toMatchObject({
+      accepted: 0,
+      skippedRepeats: 1,
+    });
   });
 });
 
-test("a practice is proposed user-scoped, never auto-accepted, and follows the user to other projects", async () => {
+test("a practice is accepted user-scoped and follows the user to other projects", async () => {
   const llm = fakeProviders();
   llm.llm = {
     model: "fake",
@@ -248,43 +232,25 @@ test("a practice is proposed user-scoped, never auto-accepted, and follows the u
             ],
           }),
   };
-  const a = createApp(t.db, llm, { autoAcceptConfidence: 0.8 });
+  const a = createApp(t.db, llm);
   const sid = await session("practice transcript");
   const res = await a.request(`/api/sessions/${sid}/extract`, {
     method: "POST",
     headers: { authorization: `Bearer ${token}` },
   });
-  // The repo-specific "practice" is downgraded to a fact, so it auto-accepts. The real practice waits.
-  expect(await res.json()).toMatchObject({ proposed: 2, autoAccepted: 1 });
-  const pending = (await (await call("GET", "/proposals")).json()) as {
-    items: { id: string; content: string; scope: string; tags: string[] }[];
-  };
-  const p = pending.items.find((x) => x.content.includes("nitpick"));
-  expect(p).toMatchObject({ scope: "user", tags: ["practice"] });
-  expect(pending.items.some((x) => x.content.includes("reembed"))).toBe(false);
-
-  // Bob can't see or accept Alice's practice.
-  const bob = await createToken(t.db, "bob3");
-  const bobCall = (method: string, path: string) =>
-    app.request(`/api${path}`, {
-      method,
-      headers: { authorization: `Bearer ${bob}` },
-    });
-  const theirs = (await (await bobCall("GET", "/proposals")).json()) as {
-    items: { content: string }[];
-  };
-  expect(theirs.items.some((x) => x.content.includes("nitpick"))).toBe(false);
-  expect((await bobCall("POST", `/proposals/${p?.id}/accept`)).status).toBe(
-    404,
+  expect(await res.json()).toMatchObject({ accepted: 2 });
+  const rows = await t.db
+    .select()
+    .from(proposals)
+    .where(eq(proposals.sessionId, sid));
+  // The repo-specific "practice" is downgraded to a project fact.
+  expect(rows.find((r) => r.content.includes("reembed"))?.scope).toBe(
+    "project",
   );
-
-  const accepted = await call("POST", `/proposals/${p?.id}/accept`, {});
-  expect(accepted.status).toBe(201);
-  const mem = (await accepted.json()) as {
-    scope: string;
-    project: string | null;
-    tags: string[];
-  };
+  const p = rows.find((r) => r.content.includes("nitpick"));
+  const mem = (await (
+    await call("GET", `/memories/${p?.memoryId}`)
+  ).json()) as { scope: string; project: string | null; tags: string[] };
   expect(mem).toMatchObject({
     scope: "user",
     project: null,
@@ -307,33 +273,6 @@ test("a practice is proposed user-scoped, never auto-accepted, and follows the u
   expect(byTag.items.map((m) => m.content)).toEqual([
     expect.stringContaining("nitpick"),
   ]);
-});
-
-test("proposals are private to the person whose session produced them", async () => {
-  reply = JSON.stringify({
-    memories: [{ content: "Excerpt check memory", confidence: 0.4 }],
-  });
-  const id = await session(`secret-ish ${"y".repeat(1000)}`);
-  await call("POST", `/sessions/${id}/extract`);
-  const mine = (await (await call("GET", "/proposals")).json()) as {
-    items: { id: string; content: string; sessionExcerpt: string | null }[];
-  };
-  const p = mine.items.find((x) => x.content === "Excerpt check memory");
-  expect(p?.sessionExcerpt).toHaveLength(600);
-  expect(p?.sessionExcerpt?.startsWith("secret-ish")).toBe(true);
-  const bob = await createToken(t.db, "bob2");
-  const theirs = (await (
-    await app.request("/api/proposals", {
-      headers: { authorization: `Bearer ${bob}` },
-    })
-  ).json()) as { items: { content: string; sessionExcerpt: string | null }[] };
-  expect(
-    theirs.items.find((x) => x.content === "Excerpt check memory"),
-  ).toBeUndefined();
-  const id404 = await app.request(`/api/proposals/${p?.id}`, {
-    headers: { authorization: `Bearer ${bob}` },
-  });
-  expect(id404.status).toBe(404);
 });
 
 test("extract passes scrubbed instructions to the model, only when sent", async () => {

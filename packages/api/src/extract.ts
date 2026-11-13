@@ -4,8 +4,8 @@ import type { Db } from "./db/client.js";
 import { proposals } from "./db/schema.js";
 import { anchorInput, createMemory } from "./memories.js";
 import type { Providers } from "./providers/index.js";
-import { decide, findCandidates } from "./reconcile.js";
 import { isEmptyAfterScrub, scrub } from "./scrub.js";
+import { getExtractionFloor } from "./settings.js";
 
 /** Characters of transcript sent to the model. The tail is kept: conclusions come last. */
 export const MAX_PROMPT_CHARS = 60_000;
@@ -89,15 +89,13 @@ export function parseExtraction(reply: string): Extracted[] {
   return out;
 }
 
-/** A candidate this close to a pending or rejected proposal is treated as the same one. */
+/** A candidate this close to a proposal a person rejected is treated as the same one. */
 export const REPROPOSAL_MIN_SIMILARITY = 0.9;
 
 export interface ExtractInput {
   sessionId: string;
   projectId: string;
   projectKey: string;
-  /** Proposals at or above this confidence become memories right away. Null turns auto-accept off. */
-  autoAcceptConfidence: number | null;
   owner: string;
   commitSha: string | null;
   transcript: string;
@@ -106,19 +104,22 @@ export interface ExtractInput {
 }
 
 export interface ExtractSummary {
-  proposed: number;
+  /** New memories. */
+  accepted: number;
+  /** Already known: matched or merged into an active memory. */
   skippedDuplicates: number;
   skippedEmpty: number;
-  /** Skipped because a pending or rejected proposal already says it. */
+  /** Skipped because a person rejected the same thing before. */
   skippedRepeats: number;
-  autoAccepted: number;
+  /** Below the owner's extraction floor. */
+  skippedBelowFloor: number;
 }
 
 /**
- * Turns a session transcript into stored proposals. Each candidate is scrubbed,
- * then compared with existing project memories: ones the project already knows
- * are dropped. Anchors without a session commit are dropped, since they can't
- * be verified later.
+ * Turns a session transcript into memories. Each candidate at or above the
+ * owner's confidence floor is scrubbed, recorded as a proposal and accepted,
+ * which dedups it against active memories. Anchors without a session commit are
+ * dropped, since they can't be verified later.
  */
 export async function extractProposals(
   db: Db,
@@ -133,15 +134,20 @@ export async function extractProposals(
       : `Transcript:\n${text}`,
     maxTokens: 2000,
   });
+  const floor = await getExtractionFloor(db, input.owner);
   const summary: ExtractSummary = {
-    proposed: 0,
+    accepted: 0,
     skippedDuplicates: 0,
     skippedEmpty: 0,
     skippedRepeats: 0,
-    autoAccepted: 0,
+    skippedBelowFloor: 0,
   };
 
   for (const item of parseExtraction(reply)) {
+    if (item.confidence < floor) {
+      summary.skippedBelowFloor++;
+      continue;
+    }
     const clean = scrub(item.content);
     if (isEmptyAfterScrub(clean.text)) {
       summary.skippedEmpty++;
@@ -152,11 +158,13 @@ export async function extractProposals(
       vec = (await providers.embeddings.embed([clean.text]))[0] ?? null;
       if (vec) {
         const literal = JSON.stringify(vec);
+        // Rejections from the old review queue still say "don't keep this".
         const repeats = await db.execute(sql`
           SELECT 1 FROM proposals
           WHERE project_id = ${input.projectId}
             AND session_id IN (SELECT id FROM sessions WHERE owner = ${input.owner})
-            AND status IN ('pending', 'rejected')
+            AND status = 'rejected'
+            AND reviewed_at IS NOT NULL
             AND embedding IS NOT NULL
             AND 1 - (embedding <=> ${literal}::vector) >= ${REPROPOSAL_MIN_SIMILARITY}
           LIMIT 1`);
@@ -164,24 +172,10 @@ export async function extractProposals(
           summary.skippedRepeats++;
           continue;
         }
-        const candidates = await findCandidates(
-          db,
-          {
-            scope: item.kind === "practice" ? "user" : "project",
-            projectId: input.projectId,
-            owner: input.owner,
-          },
-          vec,
-        );
-        const verdict = await decide(providers.llm, clean.text, candidates);
-        if (verdict.action === "duplicate") {
-          summary.skippedDuplicates++;
-          continue;
-        }
       }
     } catch (err) {
       console.error(
-        "extraction dedup failed:",
+        "extraction repeat check failed:",
         err instanceof Error ? err.message : err,
       );
     }
@@ -210,36 +204,36 @@ export async function extractProposals(
         anchors,
       })
       .returning();
-    if (
-      proposal &&
-      input.autoAcceptConfidence !== null &&
-      // A practice changes every future session, so a person always reviews it.
-      item.kind === "fact" &&
-      item.confidence >= input.autoAcceptConfidence
-    ) {
-      await acceptProposal(db, providers, proposal.id, input.owner, {
-        projectKey: input.projectKey,
-        sessionId: input.sessionId,
-      });
-      summary.autoAccepted++;
-    }
-    summary.proposed++;
+    if (!proposal) continue;
+    const outcome = await acceptProposal(
+      db,
+      providers,
+      proposal.id,
+      input.owner,
+      { projectKey: input.projectKey, sessionId: input.sessionId },
+    );
+    if (outcome === "created") summary.accepted++;
+    else if (outcome === "duplicate") summary.skippedDuplicates++;
+    else if (outcome === "empty") summary.skippedEmpty++;
   }
   return summary;
 }
 
+export type AcceptOutcome = "created" | "duplicate" | "empty";
+
 /**
- * Turns a pending proposal into a project memory, optionally with edited text.
- * Goes through the normal create path, so it is scrubbed and deduped again.
- * Returns null if the proposal isn't pending.
+ * Turns a pending proposal into a memory. Goes through the normal create path,
+ * so it is scrubbed and deduped against active memories again. Returns null if
+ * the proposal isn't pending. A proposal with nothing left after scrubbing is
+ * marked rejected, since no one reviews it.
  */
 export async function acceptProposal(
   db: Db,
   providers: Providers,
   id: string,
   principal: string,
-  opts: { projectKey: string; sessionId?: string | null; content?: string },
-) {
+  opts: { projectKey: string; sessionId?: string | null },
+): Promise<AcceptOutcome | null> {
   const [claimed] = await db
     .update(proposals)
     .set({ status: "accepted" })
@@ -247,12 +241,13 @@ export async function acceptProposal(
     .returning();
   if (!claimed) return null;
   const anchors = z.array(anchorInput).catch([]).parse(claimed.anchors);
+  const user = claimed.scope === "user";
   const result = await createMemory(db, providers, principal, {
-    scope: claimed.scope === "user" ? "user" : "project",
+    scope: user ? "user" : "project",
     // A user-scoped memory follows the person, so it carries no project.
-    project: claimed.scope === "user" ? undefined : { key: opts.projectKey },
+    project: user ? undefined : { key: opts.projectKey },
     tags: claimed.tags,
-    content: opts.content ?? claimed.content,
+    content: claimed.content,
     confidence: claimed.confidence,
     agent: "extraction",
     sessionId: opts.sessionId ?? claimed.sessionId ?? undefined,
@@ -262,11 +257,16 @@ export async function acceptProposal(
   if (result.status === 422) {
     await db
       .update(proposals)
-      .set({ status: "pending" })
+      .set({ status: "rejected" })
       .where(eq(proposals.id, id));
-    return result;
+    return "empty";
   }
-  const memoryId = (result.body as { id: string }).id;
-  await db.update(proposals).set({ memoryId }).where(eq(proposals.id, id));
-  return result;
+  const body = result.body as { id: string; outcome?: string };
+  await db
+    .update(proposals)
+    .set({ memoryId: body.id })
+    .where(eq(proposals.id, id));
+  return body.outcome === "duplicate" || body.outcome === "merged"
+    ? "duplicate"
+    : "created";
 }

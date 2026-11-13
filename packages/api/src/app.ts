@@ -10,19 +10,18 @@ import { createGithubClient, type GithubClient } from "./github.js";
 import { githubAuthRoutes } from "./github-auth.js";
 import { memoryRoutes } from "./memories.js";
 import { projectRoutes } from "./projects.js";
-import { proposalRoutes } from "./proposals.js";
 import type { Providers } from "./providers/index.js";
 import { RepoAccess } from "./repo-access.js";
 import { RequestLog } from "./request-log.js";
 import { searchRoutes } from "./search.js";
 import { sessionRoutes } from "./sessions.js";
+import { settingsRoutes } from "./settings.js";
 import { usageContext } from "./usage.js";
 
 export function createApp(
   db: Db,
   providers: Providers,
   opts: {
-    autoAcceptConfidence?: number | null;
     /** Directory of the built web UI. Served at / when set. */
     webDir?: string;
     /** Turns on GitHub sign-in. */
@@ -62,13 +61,10 @@ export function createApp(
   api.route("/memories", memoryRoutes(db, providers));
   api.route("/core", coreRoutes(db));
   api.route("/search", searchRoutes(db, providers));
-  api.route(
-    "/sessions",
-    sessionRoutes(db, providers, opts.autoAcceptConfidence ?? null),
-  );
+  api.route("/sessions", sessionRoutes(db, providers));
   api.route("/projects", projectRoutes(db));
   api.route("/evals", evalRoutes(db));
-  api.route("/proposals", proposalRoutes(db, providers));
+  api.route("/settings", settingsRoutes(db));
   api.get("/whoami", (c) => c.json({ name: c.get("principal") }));
   app.route("/api", api);
 
