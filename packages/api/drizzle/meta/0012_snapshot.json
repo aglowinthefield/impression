@@ -1,5 +1,5 @@
 {
-  "id": "47e05b01-173b-4a01-9a35-57c64ae416d4",
+  "id": "3d86f7aa-ec6c-480e-918e-b423bfc6a43f",
   "prevId": "caf986e4-5273-43ce-b845-103e22714ac3",
   "version": "7",
   "dialect": "postgresql",
@@ -1073,7 +1073,7 @@
         },
         "extraction_floor": {
           "name": "extraction_floor",
-          "type": "real",
+          "type": "double precision",
           "primaryKey": false,
           "notNull": true
         },

@@ -4,6 +4,7 @@ import {
   bigint,
   boolean,
   customType,
+  doublePrecision,
   index,
   integer,
   jsonb,
@@ -161,7 +162,7 @@ export const proposals = pgTable(
 export const userSettings = pgTable("user_settings", {
   owner: text().primaryKey(),
   /** Extraction drops candidates below this confidence. */
-  extractionFloor: real().notNull(),
+  extractionFloor: doublePrecision().notNull(),
   updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 });
 
