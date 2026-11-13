@@ -54,7 +54,7 @@ pi installs and updates the package itself (`pi update --extensions`), so it doe
 
 ## Design decisions
 
-- **Capture:** explicit adds, plus session-end LLM extraction. Extracted memories are deduped and stored right away. Each person sets a confidence floor in Settings (default 0.7), and extraction drops anything below it.
+- **Capture:** explicit adds, plus session-end LLM extraction. Extracted memories are deduped and stored right away. Each person sets a confidence floor in Settings (default 0.7), and extraction drops anything below it. The floor belongs to the principal, so a break-glass `token:create` token minted under another name has its own floor.
 - **Scopes:** user, project, team. A project is keyed by normalized git remote URL, falling back to root path. Memories can be narrowed to paths.
 - **Retrieval:** a small curated core is injected at session start. The rest is reached through a `search` tool. Per-prompt injection is optional per project.
 - **Staleness:** memories carry anchors (paths, symbols, commit SHA). Anchors are checked at retrieval and changed or missing ones are flagged. Contradictions supersede the old memory, which is kept as history.
@@ -217,7 +217,7 @@ fly ssh console -C "pnpm --filter @impression/api token:create me"   # prints yo
 
 Then each teammate runs `impression login --url https://<app>.fly.dev --token imp_...` with their own token (create one per person). The token is the only protection, so don't share one.
 
-`fly.toml` keeps one machine running, because a cold start would make the session-start hook time out and skip injection. Don't mix embedding models in one database. To move existing data from a local Ollama setup, restore a data-only `pg_dump` (skip `api_tokens` and the `drizzle` schema) into the migrated Neon database, set `embedding` to null on `memories` and `proposals`, then run `pnpm --filter @impression/api db:reembed` with `EMBEDDING_PROVIDER=openai`. `db:reembed` only fills rows with no vector. Servers that ran the old review queue should run `pnpm --filter @impression/api db:accept-backlog` once: it accepts pending proposals at or above their owner's floor and drops the rest. `--dry-run` prints the counts without writing.
+`fly.toml` keeps one machine running, because a cold start would make the session-start hook time out and skip injection. Don't mix embedding models in one database. To move existing data from a local Ollama setup, restore a data-only `pg_dump` (skip `api_tokens` and the `drizzle` schema) into the migrated Neon database, set `embedding` to null on `memories` and `proposals`, then run `pnpm --filter @impression/api db:reembed` with `EMBEDDING_PROVIDER=openai`. `db:reembed` only fills rows with no vector. Servers that ran the old review queue should run `pnpm --filter @impression/api db:accept-backlog` once: it accepts pending proposals at or above their owner's floor and drops the rest. `--dry-run` prints the counts without writing, and `--limit N` takes only the oldest N pending proposals. A proposal whose embedding or dedup check fails goes back to pending, and the run stops after 3 failures in a row.
 
 Pushes to `main` deploy automatically: the `deploy` job in `.github/workflows/ci.yml` runs after CI passes, using a `FLY_API_TOKEN` repo secret (`fly tokens create deploy -a <app>`).
 

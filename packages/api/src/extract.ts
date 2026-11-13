@@ -153,25 +153,13 @@ export async function extractProposals(
       summary.skippedEmpty++;
       continue;
     }
+    const practice = item.kind === "practice";
     let vec: number[] | null = null;
     try {
       vec = (await providers.embeddings.embed([clean.text]))[0] ?? null;
-      if (vec) {
-        const literal = JSON.stringify(vec);
-        // Rejections from the old review queue still say "don't keep this".
-        const repeats = await db.execute(sql`
-          SELECT 1 FROM proposals
-          WHERE project_id = ${input.projectId}
-            AND session_id IN (SELECT id FROM sessions WHERE owner = ${input.owner})
-            AND status = 'rejected'
-            AND reviewed_at IS NOT NULL
-            AND embedding IS NOT NULL
-            AND 1 - (embedding <=> ${literal}::vector) >= ${REPROPOSAL_MIN_SIMILARITY}
-          LIMIT 1`);
-        if (repeats.length > 0) {
-          summary.skippedRepeats++;
-          continue;
-        }
+      if (vec && (await isRepeat(db, input, practice, vec))) {
+        summary.skippedRepeats++;
+        continue;
       }
     } catch (err) {
       console.error(
@@ -180,25 +168,28 @@ export async function extractProposals(
       );
     }
     const sha = input.commitSha;
-    const anchors = sha
-      ? item.anchors
-          .filter(
-            (a) => !a.path.startsWith("/") && !a.path.split("/").includes(".."),
-          )
-          .map((a) => ({
-            path: a.path.replace(/^(\.\/)+/, ""),
-            ...(a.symbol ? { symbol: a.symbol } : {}),
-            commitSha: sha,
-          }))
-      : [];
+    // A practice follows the user to other repos, so it has nothing to anchor to.
+    const anchors =
+      sha && !practice
+        ? item.anchors
+            .filter(
+              (a) =>
+                !a.path.startsWith("/") && !a.path.split("/").includes(".."),
+            )
+            .map((a) => ({
+              path: a.path.replace(/^(\.\/)+/, ""),
+              ...(a.symbol ? { symbol: a.symbol } : {}),
+              commitSha: sha,
+            }))
+        : [];
     const [proposal] = await db
       .insert(proposals)
       .values({
         projectId: input.projectId,
         sessionId: input.sessionId,
         content: clean.text,
-        scope: item.kind === "practice" ? "user" : "project",
-        tags: item.kind === "practice" ? [PRACTICE_TAG] : [],
+        scope: practice ? "user" : "project",
+        tags: practice ? [PRACTICE_TAG] : [],
         confidence: item.confidence,
         embedding: vec,
         anchors,
@@ -210,29 +201,82 @@ export async function extractProposals(
       providers,
       proposal.id,
       input.owner,
-      { projectKey: input.projectKey, sessionId: input.sessionId },
+      {
+        projectKey: input.projectKey,
+        sessionId: input.sessionId,
+        embedding: vec,
+      },
     );
-    if (outcome === "created") summary.accepted++;
-    else if (outcome === "duplicate") summary.skippedDuplicates++;
+    if (outcome === "created" || outcome === "superseded") summary.accepted++;
+    else if (outcome === "duplicate" || outcome === "merged")
+      summary.skippedDuplicates++;
     else if (outcome === "empty") summary.skippedEmpty++;
   }
   return summary;
 }
 
-export type AcceptOutcome = "created" | "duplicate" | "empty";
+/**
+ * Whether the candidate is something the owner already turned down: a proposal
+ * a person rejected in review, or an extracted memory they retired. Facts are
+ * checked within the project; practices follow the user, so across projects.
+ */
+async function isRepeat(
+  db: Db,
+  input: ExtractInput,
+  practice: boolean,
+  vec: number[],
+): Promise<boolean> {
+  const literal = JSON.stringify(vec);
+  const close = (col: string) =>
+    sql`${sql.raw(col)} IS NOT NULL AND 1 - (${sql.raw(col)} <=> ${literal}::vector) >= ${REPROPOSAL_MIN_SIMILARITY}`;
+  // Rejections from the old review queue still say "don't keep this".
+  const rejected = await db.execute(sql`
+    SELECT 1 FROM proposals
+    WHERE ${practice ? sql`TRUE` : sql`project_id = ${input.projectId}`}
+      AND session_id IN (SELECT id FROM sessions WHERE owner = ${input.owner})
+      AND status = 'rejected'
+      AND reviewed_at IS NOT NULL
+      AND ${close("embedding")}
+    LIMIT 1`);
+  if (rejected.length > 0) return true;
+  const retired = await db.execute(sql`
+    SELECT 1 FROM memories
+    WHERE owner = ${input.owner}
+      AND ${practice ? sql`scope = 'user'` : sql`project_id = ${input.projectId}`}
+      AND agent = 'extraction'
+      AND status = 'retired'
+      AND ${close("embedding")}
+    LIMIT 1`);
+  return retired.length > 0;
+}
+
+export type AcceptOutcome =
+  | "created"
+  | "superseded"
+  | "duplicate"
+  | "merged"
+  | "empty";
 
 /**
  * Turns a pending proposal into a memory. Goes through the normal create path,
  * so it is scrubbed and deduped against active memories again. Returns null if
  * the proposal isn't pending. A proposal with nothing left after scrubbing is
- * marked rejected, since no one reviews it.
+ * marked rejected, since no one reviews it. If storing the memory throws, the
+ * proposal goes back to pending before the error is rethrown.
  */
 export async function acceptProposal(
   db: Db,
   providers: Providers,
   id: string,
   principal: string,
-  opts: { projectKey: string; sessionId?: string | null },
+  opts: {
+    projectKey: string;
+    sessionId?: string | null;
+    /** Throw rather than add when the dedup check can't run. */
+    requireDedup?: boolean;
+    /** The proposal content's vector, if the caller already has it. */
+    embedding?: number[] | null;
+  },
 ): Promise<AcceptOutcome | null> {
   const [claimed] = await db
     .update(proposals)
@@ -240,20 +284,39 @@ export async function acceptProposal(
     .where(and(eq(proposals.id, id), eq(proposals.status, "pending")))
     .returning();
   if (!claimed) return null;
-  const anchors = z.array(anchorInput).catch([]).parse(claimed.anchors);
   const user = claimed.scope === "user";
-  const result = await createMemory(db, providers, principal, {
-    scope: user ? "user" : "project",
-    // A user-scoped memory follows the person, so it carries no project.
-    project: user ? undefined : { key: opts.projectKey },
-    tags: claimed.tags,
-    content: claimed.content,
-    confidence: claimed.confidence,
-    agent: "extraction",
-    sessionId: opts.sessionId ?? claimed.sessionId ?? undefined,
-    dedup: true,
-    anchors,
-  });
+  // A user-scoped memory isn't tied to a repo, so its anchors would go stale.
+  const anchors = user
+    ? []
+    : z.array(anchorInput).catch([]).parse(claimed.anchors);
+  let result: Awaited<ReturnType<typeof createMemory>>;
+  try {
+    result = await createMemory(
+      db,
+      providers,
+      principal,
+      {
+        scope: user ? "user" : "project",
+        // A user-scoped memory follows the person, so it carries no project.
+        project: user ? undefined : { key: opts.projectKey },
+        tags: claimed.tags,
+        content: claimed.content,
+        confidence: claimed.confidence,
+        agent: "extraction",
+        sessionId: opts.sessionId ?? claimed.sessionId ?? undefined,
+        dedup: true,
+        anchors,
+      },
+      undefined,
+      { requireDedup: opts.requireDedup, embedding: opts.embedding },
+    );
+  } catch (err) {
+    await db
+      .update(proposals)
+      .set({ status: "pending", memoryId: null })
+      .where(eq(proposals.id, id));
+    throw err;
+  }
   if (result.status === 422) {
     await db
       .update(proposals)
@@ -266,7 +329,9 @@ export async function acceptProposal(
     .update(proposals)
     .set({ memoryId: body.id })
     .where(eq(proposals.id, id));
-  return body.outcome === "duplicate" || body.outcome === "merged"
-    ? "duplicate"
+  return body.outcome === "duplicate" ||
+    body.outcome === "merged" ||
+    body.outcome === "superseded"
+    ? body.outcome
     : "created";
 }

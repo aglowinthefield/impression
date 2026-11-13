@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { createApp } from "./app.js";
 import { createToken } from "./auth.js";
-import { proposals } from "./db/schema.js";
+import { memories, proposals } from "./db/schema.js";
 import { parseExtraction } from "./extract.js";
 import { createTestDb } from "./test-db.js";
 import { fakeProviders } from "./test-providers.js";
@@ -206,6 +206,109 @@ describe("extraction floor", () => {
   });
 });
 
+describe("repeat check", () => {
+  const embed = async (text: string) =>
+    (await fakeProviders().embeddings.embed([text]))[0];
+  const extractIn = async (
+    key: string,
+    item: { content: string; kind?: string },
+  ) => {
+    reply = JSON.stringify({
+      memories: [{ ...item, otherRepos: true, confidence: 0.9 }],
+    });
+    const res = await call("POST", "/sessions", {
+      project: { key },
+      transcript: "t",
+    });
+    const { id } = (await res.json()) as { id: string };
+    return (await (
+      await call("POST", `/sessions/${id}/extract`)
+    ).json()) as Record<string, number>;
+  };
+  const projectIdOf = async (key: string) =>
+    (
+      await t.db.query.projects.findFirst({
+        where: (p, { eq }) => eq(p.key, key),
+      })
+    )?.id as string;
+
+  test("an extracted memory I retired isn't extracted again in that project", async () => {
+    const content = "Seed data lives in fixtures/seed.sql";
+    await extractIn(project.key, { content: "warm up" });
+    const projectId = await projectIdOf(project.key);
+    await t.db.insert(memories).values({
+      scope: "project",
+      projectId,
+      owner: "alice",
+      author: "alice",
+      agent: "extraction",
+      status: "retired",
+      content,
+      embedding: await embed(content),
+    });
+    expect(await extractIn(project.key, { content })).toMatchObject({
+      accepted: 0,
+      skippedRepeats: 1,
+    });
+    // Another project's fact is a different fact.
+    expect(
+      await extractIn("github.com/acme/elsewhere", { content }),
+    ).toMatchObject({ accepted: 1, skippedRepeats: 0 });
+  });
+
+  test("a memory I wrote and retired doesn't block extraction", async () => {
+    const content = "Feature flags live in flags.json";
+    await t.db.insert(memories).values({
+      scope: "project",
+      projectId: await projectIdOf(project.key),
+      owner: "alice",
+      author: "alice",
+      agent: "cli",
+      status: "retired",
+      content,
+      embedding: await embed(content),
+    });
+    expect(await extractIn(project.key, { content })).toMatchObject({
+      accepted: 1,
+    });
+  });
+
+  test("a practice turned down in one project stays out of every project", async () => {
+    const retired = "When reviewing a PR, read the tests first";
+    const rejected = "When shipping, write the changelog before merging";
+    await t.db.insert(memories).values({
+      scope: "user",
+      owner: "alice",
+      author: "alice",
+      agent: "extraction",
+      status: "retired",
+      tags: ["practice"],
+      content: retired,
+      embedding: await embed(retired),
+    });
+    await extractIn("github.com/acme/one", { content: "warm up one" });
+    const [s1] = await t.db
+      .select()
+      .from(proposals)
+      .where(eq(proposals.content, "warm up one"));
+    await t.db.insert(proposals).values({
+      projectId: s1?.projectId as string,
+      sessionId: s1?.sessionId,
+      scope: "user",
+      tags: ["practice"],
+      content: rejected,
+      confidence: 0.8,
+      embedding: await embed(rejected),
+      status: "rejected",
+      reviewedAt: new Date(),
+    });
+    for (const content of [retired, rejected])
+      expect(
+        await extractIn("github.com/acme/two", { kind: "practice", content }),
+      ).toMatchObject({ accepted: 0, skippedRepeats: 1 });
+  });
+});
+
 test("a practice is accepted user-scoped and follows the user to other projects", async () => {
   const llm = fakeProviders();
   llm.llm = {
@@ -221,6 +324,7 @@ test("a practice is accepted user-scoped and follows the user to other projects"
                 content:
                   "When doing a /nitpick design session, run the app against a fork of production data",
                 confidence: 0.99,
+                anchors: [{ path: "scripts/fork.ts" }],
               },
               {
                 kind: "practice",
@@ -248,13 +352,21 @@ test("a practice is accepted user-scoped and follows the user to other projects"
     "project",
   );
   const p = rows.find((r) => r.content.includes("nitpick"));
+  // A practice isn't tied to this repo, so it keeps no anchors.
+  expect(p?.anchors).toEqual([]);
   const mem = (await (
     await call("GET", `/memories/${p?.memoryId}`)
-  ).json()) as { scope: string; project: string | null; tags: string[] };
+  ).json()) as {
+    scope: string;
+    project: string | null;
+    tags: string[];
+    anchors: unknown[];
+  };
   expect(mem).toMatchObject({
     scope: "user",
     project: null,
     tags: ["practice"],
+    anchors: [],
   });
 
   // It shows up at session start in a project the session never touched, first in the list.
