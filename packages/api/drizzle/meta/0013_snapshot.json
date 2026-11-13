@@ -1,5 +1,5 @@
 {
-  "id": "6dd0d255-8a30-4bc9-8d71-d224498b995d",
+  "id": "e2fa9d5a-b20b-4bb2-be5c-fde86380e1a4",
   "prevId": "3d86f7aa-ec6c-480e-918e-b423bfc6a43f",
   "version": "7",
   "dialect": "postgresql",
@@ -437,6 +437,12 @@
           "notNull": true,
           "default": "now()"
         },
+        "checked_at": {
+          "name": "checked_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
         "search": {
           "name": "search",
           "type": "tsvector",
@@ -621,6 +627,27 @@
           "columns": [
             {
               "expression": "memory_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "memory_events_created_idx": {
+          "name": "memory_events_created_idx",
+          "columns": [
+            {
+              "expression": "created_at",
               "isExpression": false,
               "asc": true,
               "nulls": "last"

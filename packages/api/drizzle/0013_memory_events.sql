@@ -8,5 +8,7 @@ CREATE TABLE "memory_events" (
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
+ALTER TABLE "memories" ADD COLUMN "checked_at" timestamp with time zone;--> statement-breakpoint
 ALTER TABLE "memory_events" ADD CONSTRAINT "memory_events_memory_id_memories_id_fk" FOREIGN KEY ("memory_id") REFERENCES "public"."memories"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-CREATE INDEX "memory_events_memory_idx" ON "memory_events" USING btree ("memory_id");
+CREATE INDEX "memory_events_memory_idx" ON "memory_events" USING btree ("memory_id","created_at");--> statement-breakpoint
+CREATE INDEX "memory_events_created_idx" ON "memory_events" USING btree ("created_at");

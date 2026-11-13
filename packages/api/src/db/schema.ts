@@ -82,6 +82,8 @@ export const memories = pgTable(
     }),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    /** Last automatic staleness check. Kept apart from updatedAt so a check doesn't count as recent. */
+    checkedAt: timestamp({ withTimezone: true }),
     search: tsvector().generatedAlwaysAs(
       (): ReturnType<typeof sql> => sql`to_tsvector('english', content)`,
     ),
@@ -136,7 +138,10 @@ export const memoryEvents = pgTable(
     detail: jsonb().notNull().default({}),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("memory_events_memory_idx").on(t.memoryId)],
+  (t) => [
+    index("memory_events_memory_idx").on(t.memoryId, t.createdAt),
+    index("memory_events_created_idx").on(t.createdAt),
+  ],
 );
 
 export const sessions = pgTable("sessions", {
