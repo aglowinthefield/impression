@@ -18,7 +18,7 @@ import {
   upsertProject,
 } from "./access.js";
 import type { AuthEnv } from "./auth.js";
-import type { Db } from "./db/client.js";
+import type { Db, Queryer } from "./db/client.js";
 import { anchors, memories, projects } from "./db/schema.js";
 import type { Providers } from "./providers/index.js";
 import { decide, findCandidates, markSuperseded } from "./reconcile.js";
@@ -113,7 +113,7 @@ export type AnchorDto = {
 
 /** Adds each memory's anchors in one query. */
 export async function withAnchors<T extends { id: string }>(
-  db: Db,
+  db: Queryer,
   items: T[],
 ): Promise<(T & { anchors: AnchorDto[] })[]> {
   if (items.length === 0) return [];
@@ -170,7 +170,7 @@ const bad = (message: string) => ({ error: message });
  * by full text, and a later re-embed can fill the vector in.
  */
 export async function embedMemory(
-  db: Db,
+  db: Queryer,
   providers: Providers,
   id: string,
   content: string,
@@ -210,7 +210,7 @@ export interface CreateOptions {
  * project they already checked omit it.
  */
 export async function createMemory(
-  db: Db,
+  db: Queryer,
   providers: Providers,
   principal: string,
   b: CreateInput,

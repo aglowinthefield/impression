@@ -61,13 +61,14 @@ function hasSymbol(file: string, symbol: string): boolean | null {
  * this checkout the result is "unknown", never stale.
  *
  * Cost is one `git diff` per distinct commit plus a file read per symbol anchor
- * on a changed file, so it stays cheap enough to run on every search.
+ * on a changed file, so it stays cheap enough to run on every search. Pass the
+ * same `changed` map to calls on the same checkout to diff each commit once.
  */
 export function verifyAnchors(
   repo: string,
   anchors: AnchorRef[],
+  changed = new Map<string, Set<string> | null>(),
 ): AnchorCheck[] {
-  const changed = new Map<string, Set<string> | null>();
   for (const a of anchors) {
     if (!changed.has(a.commitSha))
       changed.set(a.commitSha, changedSince(repo, a.commitSha));
