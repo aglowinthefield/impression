@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { createApp } from "./app.js";
 import { createToken } from "./auth.js";
 import { anchors, memories, memoryEvents, usageEvents } from "./db/schema.js";
-import { excerpts, parseRecheck } from "./recheck.js";
+import { excerpts, type FileState, parseRecheck } from "./recheck.js";
 import { createTestDb } from "./test-db.js";
 import { fakeProviders } from "./test-providers.js";
 import { UsageRecorder } from "./usage.js";
@@ -75,7 +75,7 @@ async function anchored(content: string, extra: Record<string, unknown> = {}) {
 }
 
 const body = (
-  files = [{ path: "src/a.ts", content: "export const bar = 1" }],
+  files: FileState[] = [{ path: "src/a.ts", content: "export const bar = 1" }],
 ) => ({
   reason: "foo is no longer in src/a.ts",
   commitSha: NEW,
