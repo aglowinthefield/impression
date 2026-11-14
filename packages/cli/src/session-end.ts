@@ -193,6 +193,72 @@ export interface SessionEndInput {
   session_id?: string;
 }
 
+/** What POST /sessions/:id/extract reports. */
+export interface ExtractSummary {
+  accepted?: number;
+  skippedDuplicates?: number;
+  skippedEmpty?: number;
+  skippedRepeats?: number;
+  skippedBelowFloor?: number;
+  skippedNoAccess?: number;
+}
+
+export interface UploadOptions {
+  extract?: boolean;
+  agent?: string;
+  sendInstructions?: boolean;
+  /** Extract even when the server already had the chunk, for a retry whose first reply got lost. */
+  extractDuplicate?: boolean;
+}
+
+export interface UploadResult {
+  id: string;
+  duplicate: boolean;
+  /** Set when extraction ran. */
+  extracted?: ExtractSummary;
+}
+
+/**
+ * Uploads one transcript chunk to ingest and, with extract, asks the API to
+ * propose memories from it. Returns null when the chunk has no conversation
+ * text. Throws on any API or network error; `sendSession` is the hook-safe
+ * wrapper.
+ */
+export async function uploadSession(
+  client: ApiClient,
+  input: { raw: string; cwd: string; sessionKey?: string },
+  opts: UploadOptions = {},
+): Promise<UploadResult | null> {
+  const { raw, cwd } = input;
+  const transcript = transcriptText(raw);
+  if (!transcript) return null;
+  const p = resolveProject(cwd);
+  const candidates = safeCandidates(raw, cwd, p.key);
+  const { id, duplicate } = (await client.post("/sessions", {
+    project: { key: p.key, name: p.name },
+    // Older servers ignore this; extraction there files everything under `project`.
+    ...(candidates.length ? { candidates } : {}),
+    transcript,
+    commitSha: headSha(cwd),
+    agent: opts.agent ?? "claude-code",
+    ...(input.sessionKey ? { sessionKey: input.sessionKey } : {}),
+  })) as { id: string; duplicate?: boolean };
+  const result: UploadResult = { id, duplicate: duplicate === true };
+  // The server already had this chunk, and extracted it then if asked.
+  if (opts.extract && (!duplicate || opts.extractDuplicate)) {
+    const instructions = opts.sendInstructions
+      ? readInstructions(cwd)
+      : undefined;
+    const summary = await client.post(
+      `/sessions/${id}/extract`,
+      instructions ? { instructions } : {},
+    );
+    result.extracted =
+      summary && typeof summary === "object" ? (summary as ExtractSummary) : {};
+  }
+  return result;
+}
+
 /**
  * Sends the finished session to ingest. Returns the session id, or null when
  * there is nothing to send or anything fails: a hook must never break exit.
@@ -207,31 +273,16 @@ export async function sendSession(
   try {
     if (!input.transcript_path) return null;
     const raw = readFileSync(input.transcript_path, "utf8");
-    const transcript = transcriptText(raw);
-    if (!transcript) return null;
-    const cwd = input.cwd ?? process.cwd();
-    const p = resolveProject(cwd);
-    const candidates = safeCandidates(raw, cwd, p.key);
-    const { id, duplicate } = (await client.post("/sessions", {
-      project: { key: p.key, name: p.name },
-      // Older servers ignore this; extraction there files everything under `project`.
-      ...(candidates.length ? { candidates } : {}),
-      transcript,
-      commitSha: headSha(cwd),
-      agent: opts.agent ?? "claude-code",
-      ...(input.session_id ? { sessionKey: input.session_id } : {}),
-    })) as { id: string; duplicate?: boolean };
-    // The server already had this chunk, and extracted it then if asked.
-    if (opts.extract && !duplicate) {
-      const instructions = opts.sendInstructions
-        ? readInstructions(cwd)
-        : undefined;
-      await client.post(
-        `/sessions/${id}/extract`,
-        instructions ? { instructions } : {},
-      );
-    }
-    return id;
+    const result = await uploadSession(
+      client,
+      {
+        raw,
+        cwd: input.cwd ?? process.cwd(),
+        ...(input.session_id ? { sessionKey: input.session_id } : {}),
+      },
+      opts,
+    );
+    return result?.id ?? null;
   } catch {
     return null;
   }

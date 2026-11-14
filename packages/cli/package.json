@@ -12,7 +12,8 @@
     "build": "tsrs -p tsconfig.build.json",
     "typecheck": "tsrs -p . --noEmit",
     "test": "vitest run --passWithNoTests",
-    "lint": "biome check ."
+    "lint": "biome check .",
+    "seed": "tsx src/seed-cli.ts"
   },
   "dependencies": {
     "@impression/shared": "workspace:*"
