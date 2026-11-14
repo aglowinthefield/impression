@@ -37,6 +37,8 @@ const body = z.object({
   agent: z.string().min(1).optional(),
   /** Repos the session's tool calls touched. Bad data is dropped, not a failed upload. */
   candidates: candidatesSchema.optional().catch(undefined),
+  /** The agent's own session id. Malformed values are dropped, not a failed upload. */
+  sessionKey: z.string().min(1).max(200).optional().catch(undefined),
 });
 
 /** `path:` projects are local to one machine, so they never take another session's memories. */
@@ -55,6 +57,7 @@ function dto(
     project: projectKey,
     owner: s.owner,
     agent: s.agent,
+    sessionKey: s.sessionKey,
     commitSha: s.commitSha,
     transcriptChars: s.transcript.length,
     createdAt: s.createdAt,
@@ -101,6 +104,7 @@ export function sessionRoutes(db: Db, providers: Providers) {
         commitSha: b.commitSha,
         transcript: clean.text,
         candidates: storedCandidates(b.candidates),
+        sessionKey: b.sessionKey,
       })
       .returning();
     return c.json(

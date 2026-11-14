@@ -84,3 +84,42 @@ test("promptContext lists matching memories and is null on failure", async () =>
   expect(await promptContext(down, "/tmp", "x")).toBeNull();
   expect(await promptContext(ok, "/tmp", "  ")).toBeNull();
 });
+
+test("session and agent reach /core and /search", async () => {
+  const { promptContext } = await import("./hook.js");
+  let path = "";
+  await sessionStartContext(
+    {
+      get: async (p) => {
+        path = p;
+        return { items: [] };
+      },
+      post: async () => null,
+    },
+    repo(),
+    { session: "s-1", agent: "pi" },
+  );
+  expect(new URLSearchParams(path.split("?")[1]).get("session")).toBe("s-1");
+  expect(new URLSearchParams(path.split("?")[1]).get("agent")).toBe("pi");
+
+  const bodies: unknown[] = [];
+  const c = {
+    get: async () => null,
+    post: async (_p: string, b: unknown) => {
+      bodies.push(b);
+      return { results: [] };
+    },
+  };
+  await promptContext(c, repo(), "how do I install", {
+    session: "s-1",
+    agent: "claude-code",
+  });
+  await promptContext(c, repo(), "how do I install");
+  expect(bodies[0]).toMatchObject({
+    session: "s-1",
+    agent: "claude-code",
+    source: "prompt",
+  });
+  expect(bodies[1]).toMatchObject({ source: "prompt" });
+  expect(bodies[1]).not.toHaveProperty("session");
+});

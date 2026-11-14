@@ -89,3 +89,25 @@ test("the same chunk sent twice is stored once", async () => {
   // Someone else's identical chunk is their own session.
   expect((await call(bob, "POST", "", body)).status).toBe(201);
 });
+
+test("stores the agent's session id, and drops a malformed one", async () => {
+  const res = await call(alice, "POST", "", {
+    project,
+    transcript: "keyed session",
+    sessionKey: "agent-sess-9",
+  });
+  expect(res.status).toBe(201);
+  const s = (await res.json()) as { id: string; sessionKey: string };
+  expect(s.sessionKey).toBe("agent-sess-9");
+  const [row] = await t.db.select().from(sessions).where(eq(sessions.id, s.id));
+  expect(row?.sessionKey).toBe("agent-sess-9");
+
+  const bad = await call(alice, "POST", "", {
+    project,
+    transcript: "badly keyed session",
+    sessionKey: 7,
+  });
+  expect(bad.status).toBe(201);
+  const b = (await bad.json()) as { sessionKey: string | null };
+  expect(b.sessionKey).toBeNull();
+});

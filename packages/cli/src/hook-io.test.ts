@@ -4,6 +4,7 @@ import {
   foreignHost,
   formatContext,
   hookCwd,
+  hookSessionId,
   hookTranscript,
   parseHookInput,
 } from "./hook-io.js";
@@ -51,5 +52,17 @@ describe("hook io", () => {
     expect(hookTranscript({ transcript_path: null })).toBeUndefined();
     expect(parseHookInput("not json")).toEqual({});
     expect(parseHookInput("[1]")).toEqual({});
+  });
+
+  test("session id from each agent's input", () => {
+    expect(hookSessionId({ session_id: "claude-1" })).toBe("claude-1");
+    expect(hookSessionId({ sessionId: "copilot-1" })).toBe("copilot-1");
+    expect(
+      hookSessionId({ conversation_id: "cursor-1", session_id: "other" }),
+    ).toBe("cursor-1");
+    expect(hookSessionId({ session_id: "  " })).toBeUndefined();
+    expect(hookSessionId({ session_id: 7 } as never)).toBeUndefined();
+    expect(hookSessionId({})).toBeUndefined();
+    expect(hookSessionId({ session_id: "x".repeat(300) })).toHaveLength(200);
   });
 });

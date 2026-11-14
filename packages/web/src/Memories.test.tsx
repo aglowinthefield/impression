@@ -74,6 +74,7 @@ test("typing searches instead of listing", async () => {
   const search = calls.find((c) => c.url === "/api/search");
   expect(JSON.parse(search?.body ?? "{}")).toEqual({
     query: "deploy",
+    source: "web",
     project: "a/x",
   });
 });

@@ -1,5 +1,13 @@
 import { type ApiClient, resolveProject } from "@impression/shared";
 
+/** Who is being served, so the server can log which memories reached which session. */
+export interface ServeOptions {
+  /** The agent's own session id. */
+  session?: string;
+  /** The agent name sessions are stored under, e.g. "claude-code" or "pi". */
+  agent?: string;
+}
+
 interface Core {
   items: { content: string; pinned: boolean; tags?: string[] }[];
 }
@@ -12,12 +20,17 @@ interface Core {
 export async function sessionStartContext(
   client: ApiClient,
   cwd: string,
-  budget = 800,
+  opts: ServeOptions & { budget?: number } = {},
 ): Promise<string | null> {
   try {
     const p = resolveProject(cwd);
-    const qs = new URLSearchParams({ project: p.key, budget: String(budget) });
+    const qs = new URLSearchParams({
+      project: p.key,
+      budget: String(opts.budget ?? 800),
+    });
     if (p.pathPrefix) qs.set("path", p.pathPrefix);
+    if (opts.session) qs.set("session", opts.session);
+    if (opts.agent) qs.set("agent", opts.agent);
     const core = (await client.get(`/core?${qs}`)) as Core;
     if (!core.items?.length) return null;
     const practices = core.items.filter((i) => i.tags?.includes("practice"));
@@ -49,7 +62,7 @@ export async function promptContext(
   client: ApiClient,
   cwd: string,
   prompt: string,
-  limit = 5,
+  opts: ServeOptions & { limit?: number } = {},
 ): Promise<string | null> {
   try {
     const query = prompt.trim().slice(0, 2000);
@@ -58,9 +71,12 @@ export async function promptContext(
     const r = (await client.post("/search", {
       query,
       project: p.key,
-      limit,
+      limit: opts.limit ?? 5,
       strict: true,
+      source: "prompt",
       ...(p.pathPrefix ? { path: p.pathPrefix } : {}),
+      ...(opts.session ? { session: opts.session } : {}),
+      ...(opts.agent ? { agent: opts.agent } : {}),
     })) as { results?: { content: string }[] };
     if (!r.results?.length) return null;
     return [

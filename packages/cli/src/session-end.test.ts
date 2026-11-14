@@ -180,6 +180,25 @@ describe("sendSession", () => {
     });
     expect(calls[1]?.[0]).toBe("/sessions/s1/extract");
   });
+  test("sends the agent's session id as sessionKey, only when known", async () => {
+    const { dir, file } = setup();
+    const bodies: unknown[] = [];
+    const c = {
+      get: async () => null,
+      post: async (_p: string, b: unknown) => {
+        bodies.push(b);
+        return { id: "s1" };
+      },
+    };
+    await sendSession(c, {
+      transcript_path: file,
+      cwd: dir,
+      session_id: "a-1",
+    });
+    await sendSession(c, { transcript_path: file, cwd: dir });
+    expect(bodies[0]).toMatchObject({ sessionKey: "a-1" });
+    expect(bodies[1]).not.toHaveProperty("sessionKey");
+  });
   test("a chunk the server already has is not extracted again", async () => {
     const { dir, file } = setup();
     const paths: string[] = [];

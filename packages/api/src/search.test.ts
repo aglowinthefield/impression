@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { createApp } from "./app.js";
 import { createToken } from "./auth.js";
-import { memories } from "./db/schema.js";
+import { memories, memoryServes } from "./db/schema.js";
 import { toTsQuery } from "./search.js";
 import { createTestDb } from "./test-db.js";
 import { fakeProviders } from "./test-providers.js";
@@ -277,5 +277,61 @@ test("a stale result carries a warning with the reason", async () => {
   expect(r.results[0]).toMatchObject({
     stale: true,
     warning: "May be out of date: src/g.ts changed",
+  });
+});
+
+describe("serve log", () => {
+  test("logs each result with source, session and agent", async () => {
+    await add(alice, { scope: "user", content: "wombats dig square burrows" });
+    const r = await search(alice, {
+      query: "wombats burrows",
+      session: "sess-search-1",
+      agent: "claude-code",
+      source: "prompt",
+    });
+    expect(r.results.length).toBeGreaterThan(0);
+    const rows = await t.db
+      .select()
+      .from(memoryServes)
+      .where(eq(memoryServes.sessionKey, "sess-search-1"));
+    expect(rows.map((s) => s.memoryId).sort()).toEqual(
+      r.results.map((x) => x.id).sort(),
+    );
+    expect(rows[0]).toMatchObject({
+      source: "prompt",
+      agent: "claude-code",
+      principal: "alice",
+      projectId: null,
+    });
+  });
+
+  test("defaults to source search and ignores a malformed session", async () => {
+    const before = (await t.db.select().from(memoryServes)).length;
+    const r = await search(alice, { query: "wombats", session: 42 });
+    expect(r.results.length).toBeGreaterThan(0);
+    const rows = (await t.db.select().from(memoryServes)).slice(before);
+    expect(rows).toHaveLength(r.results.length);
+    expect(rows.every((s) => s.source === "search" && !s.sessionKey)).toBe(
+      true,
+    );
+  });
+
+  test("an empty result logs nothing", async () => {
+    const before = (await t.db.select().from(memoryServes)).length;
+    const r = await search(alice, { query: "zzqxv", session: "sess-empty" });
+    expect(r.results).toEqual([]);
+    expect((await t.db.select().from(memoryServes)).length).toBe(before);
+  });
+
+  test("a dashboard search logs nothing", async () => {
+    const before = (await t.db.select().from(memoryServes)).length;
+    const r = await search(alice, { query: "wombats", source: "web" });
+    expect(r.results.length).toBeGreaterThan(0);
+    expect((await t.db.select().from(memoryServes)).length).toBe(before);
+  });
+
+  test("a bad source is rejected", async () => {
+    const res = await call(alice, "/search", { query: "x", source: "core" });
+    expect(res.status).toBe(400);
   });
 });

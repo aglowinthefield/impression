@@ -144,23 +144,29 @@ export const memoryEvents = pgTable(
   ],
 );
 
-export const sessions = pgTable("sessions", {
-  id: uuid().primaryKey().defaultRandom(),
-  projectId: uuid()
-    .notNull()
-    .references(() => projects.id, { onDelete: "cascade" }),
-  /** Who ended the session. Sessions are visible only to their owner. */
-  owner: text().notNull(),
-  agent: text(),
-  commitSha: text(),
-  transcript: text().notNull(),
-  /**
-   * Other repos the session's tool calls touched, from the client:
-   * [{ key, name, headSha?, edits, reads, files }]. Extraction may file memories there.
-   */
-  candidates: jsonb(),
-  createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
-});
+export const sessions = pgTable(
+  "sessions",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    projectId: uuid()
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    /** Who ended the session. Sessions are visible only to their owner. */
+    owner: text().notNull(),
+    agent: text(),
+    commitSha: text(),
+    transcript: text().notNull(),
+    /**
+     * Other repos the session's tool calls touched, from the client:
+     * [{ key, name, headSha?, edits, reads, files }]. Extraction may file memories there.
+     */
+    candidates: jsonb(),
+    /** The agent's own session id, so serves and uploads from one session can be joined. */
+    sessionKey: text(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("sessions_session_key_idx").on(t.sessionKey)],
+);
 
 /**
  * What extraction produced at session end. Each candidate at or above the owner's
@@ -300,5 +306,41 @@ export const usageEvents = pgTable(
   (t) => [
     index("usage_events_user_created_idx").on(t.userId, t.createdAt),
     index("usage_events_created_idx").on(t.createdAt),
+  ],
+);
+
+export const serveSourceEnum = pgEnum("serve_source", [
+  "core",
+  "prompt",
+  "search",
+]);
+
+/**
+ * One memory handed to an agent: by /core at session start, by a prompt hook's
+ * search, or by an explicit search. Written to rank memories by use later, so it
+ * is never edited after insert.
+ */
+export const memoryServes = pgTable(
+  "memory_serves",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    memoryId: uuid()
+      .notNull()
+      .references(() => memories.id, { onDelete: "cascade" }),
+    /** The project the request named. Null when it named none or one the caller can't see. */
+    projectId: uuid().references(() => projects.id, { onDelete: "cascade" }),
+    /** The signed-in GitHub user. Null for admin tokens. */
+    userId: uuid().references(() => users.id, { onDelete: "set null" }),
+    /** Token name of the caller. */
+    principal: text().notNull(),
+    source: serveSourceEnum().notNull(),
+    /** The agent's own session id, when the client sent one. */
+    sessionKey: text(),
+    agent: text(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("memory_serves_memory_idx").on(t.memoryId, t.createdAt),
+    index("memory_serves_session_idx").on(t.sessionKey),
   ],
 );

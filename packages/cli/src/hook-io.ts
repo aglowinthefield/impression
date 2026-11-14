@@ -48,6 +48,12 @@ export interface HookInput {
   transcriptPath?: string | null;
   workspace_roots?: string[];
   workspacePaths?: string[];
+  /** Claude Code, Codex and Gemini CLI. Cursor sends it too, equal to conversation_id. */
+  session_id?: string;
+  /** Cursor's id for the chat, sent with every hook. */
+  conversation_id?: string;
+  /** Copilot CLI. */
+  sessionId?: string;
 }
 
 export function parseHookInput(text: string): HookInput {
@@ -76,6 +82,13 @@ export function hookCwd(
 
 export function hookTranscript(input: HookInput): string | undefined {
   return input.transcript_path || input.transcriptPath || undefined;
+}
+
+/** The agent's own id for this session, or undefined when its hook input has none. */
+export function hookSessionId(input: HookInput): string | undefined {
+  for (const v of [input.conversation_id, input.session_id, input.sessionId])
+    if (typeof v === "string" && v.trim()) return v.trim().slice(0, 200);
+  return undefined;
 }
 
 /**
