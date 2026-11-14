@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
 import { homedir } from "node:os";
-import { createClient } from "@impression/shared";
+import { createClient, resolveProject } from "@impression/shared";
+import { dashboardUrl, openUrl } from "./browser.js";
 import { add, edit, keep, list, retire, search, status } from "./commands.js";
 import { loadConfig, saveConfig } from "./config.js";
 import { pushEvalTurns } from "./eval-push.js";
@@ -76,7 +77,7 @@ if (cmd === "hook") {
   let newToken = flag("--token");
   if (rest.includes("--github")) {
     try {
-      newToken = (await githubDeviceLogin(newUrl)).token;
+      newToken = (await githubDeviceLogin(newUrl, { open: openUrl })).token;
     } catch (e) {
       console.error((e as Error).message);
       process.exit(1);
@@ -99,6 +100,10 @@ if (cmd === "hook") {
     console.error((e as Error).message);
     process.exit(1);
   }
+} else if (cmd === "dashboard") {
+  const target = dashboardUrl(url, resolveProject(process.cwd()).key);
+  console.log(target);
+  openUrl(target);
 } else if (cmd === "eval" && sub === "push") {
   if (!token) {
     console.error("Not signed in. Run: impression login --github");
@@ -163,7 +168,7 @@ if (cmd === "hook") {
   }
 } else {
   console.error(
-    "usage: impression --version | setup [--dry-run] [--only claude|pi|codex] | update\n       impression login [--github] | search <q> | add <text> [--user] [--pin] | list | status\n       impression retire <id> | edit <id> <text> | keep <id>\n       impression hook session-start | prompt | session-end [--extract] --agent claude|codex|gemini|cursor|copilot|pi\n       impression eval push [path-substring]",
+    "usage: impression --version | setup [--dry-run] [--only claude|pi|codex] | update\n       impression login [--github] | search <q> | add <text> [--user] [--pin] | list | status | dashboard\n       impression retire <id> | edit <id> <text> | keep <id>\n       impression hook session-start | prompt | session-end [--extract] --agent claude|codex|gemini|cursor|copilot|pi\n       impression eval push [path-substring]",
   );
   process.exit(2);
 }
