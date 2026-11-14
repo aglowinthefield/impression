@@ -36,8 +36,8 @@ const body = z.object({
   /** The agent's own session id, recorded with what is served. Ignored when malformed. */
   session: z.string().min(1).max(200).optional().catch(undefined),
   agent: z.string().min(1).max(100).optional().catch(undefined),
-  /** "prompt" when a hook injects the results into a prompt, otherwise an explicit search. */
-  source: z.enum(["prompt", "search"]).default("search"),
+  /** "prompt" when a hook injects the results into a prompt, "web" for a person in the dashboard (not logged), otherwise an agent's search. */
+  source: z.enum(["prompt", "search", "web"]).default("search"),
 });
 
 /** How many candidates each ranking contributes before fusion. */
@@ -167,18 +167,20 @@ export function searchRoutes(db: Db, providers: Providers) {
       ];
     });
     const results = await withAnchors(db, ranked);
-    await logServes(
-      db,
-      results.map((r) => r.id),
-      {
-        source: q.source,
-        principal,
-        access: c.get("access"),
-        projectId,
-        sessionKey: q.session,
-        agent: q.agent,
-      },
-    );
+    // The log is what agents were handed; a person searching the dashboard isn't one.
+    if (q.source !== "web")
+      await logServes(
+        db,
+        results.map((r) => r.id),
+        {
+          source: q.source,
+          principal,
+          access: c.get("access"),
+          projectId,
+          sessionKey: q.session,
+          agent: q.agent,
+        },
+      );
     return c.json({ degraded, results });
   });
 

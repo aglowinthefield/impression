@@ -280,6 +280,7 @@ export function Memories({ project }: { project: string }) {
         ? await api<{ results: Memory[] }>("/search", {
             body: {
               query: query.trim(),
+              source: "web",
               ...(project ? { project } : {}),
               ...(scope ? { scope } : {}),
               ...(status ? { status } : {}),

@@ -323,6 +323,13 @@ describe("serve log", () => {
     expect((await t.db.select().from(memoryServes)).length).toBe(before);
   });
 
+  test("a dashboard search logs nothing", async () => {
+    const before = (await t.db.select().from(memoryServes)).length;
+    const r = await search(alice, { query: "wombats", source: "web" });
+    expect(r.results.length).toBeGreaterThan(0);
+    expect((await t.db.select().from(memoryServes)).length).toBe(before);
+  });
+
   test("a bad source is rejected", async () => {
     const res = await call(alice, "/search", { query: "x", source: "core" });
     expect(res.status).toBe(400);
