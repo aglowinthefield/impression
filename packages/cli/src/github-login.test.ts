@@ -15,11 +15,13 @@ function harness(polls: Response[], start = reply(200, device)) {
   const calls: string[] = [];
   const sleeps: number[] = [];
   const lines: string[] = [];
+  const opened: string[] = [];
   const queue = [...polls];
   return {
     calls,
     sleeps,
     lines,
+    opened,
     run: () =>
       githubDeviceLogin("http://srv/", {
         fetch: (async (url: string) => {
@@ -30,6 +32,7 @@ function harness(polls: Response[], start = reply(200, device)) {
           sleeps.push(ms);
         },
         print: (l) => lines.push(l),
+        open: (u) => opened.push(u),
       }),
   };
 }
@@ -42,6 +45,7 @@ test("shows the code, polls until approved and returns the token", async () => {
   ]);
   expect(await h.run()).toEqual({ token: "imp_x", name: "sam" });
   expect(h.lines[0]).toContain("ABCD-1234");
+  expect(h.opened).toEqual(["https://github.com/login/device"]);
   expect(h.calls[0]).toBe("http://srv/auth/github/device");
   // slow_down adds 5 seconds to every later wait.
   expect(h.sleeps).toEqual([5000, 5000, 10000]);

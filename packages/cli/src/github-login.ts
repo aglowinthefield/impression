@@ -12,6 +12,8 @@ export interface GithubLoginDeps {
   sleep?: (ms: number) => Promise<void>;
   /** Shows the code to the person. */
   print?: (line: string) => void;
+  /** Opens the verification page in a browser. */
+  open?: (url: string) => void;
 }
 
 /**
@@ -50,6 +52,7 @@ export async function githubDeviceLogin(
   }
   const device = start.json as unknown as DeviceStart;
   print(`Open ${device.verificationUri} and enter the code ${device.userCode}`);
+  deps.open?.(device.verificationUri);
 
   let interval = device.interval;
   const deadline = Date.now() + device.expiresIn * 1000;

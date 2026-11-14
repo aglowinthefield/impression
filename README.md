@@ -170,6 +170,7 @@ impression add "Migrations run via db:migrate" [--user] [--pin]
 impression search "how do migrations run"
 impression list
 impression status
+impression dashboard                  # opens this project's memories in the browser
 impression edit <id> <text>
 impression retire <id>               # kept as history
 impression keep <id>                 # clears a possibly-stale flag
@@ -234,7 +235,7 @@ Optional. Without it, sign-in is by API token only. Create a GitHub App (not an 
 | `GITHUB_APP_SLUG`                          | Lets allowlisted people who haven't installed the app see an install link.                                                                                |
 | `PUBLIC_URL`                               | Public origin, used for the callback. Defaults to the request's origin, which is wrong behind some proxies.                                               |
 
-The web login page then shows "Sign in with GitHub", and `impression login --github --url https://<host>` signs in from the terminal. Both mint an `imp_` token named after the GitHub login. A browser sign-in replaces that person's previous browser token. CLI tokens stay, so a second machine doesn't sign out the first. ### Who sees what
+The web login page then shows "Sign in with GitHub", and `impression login --github --url https://<host>` signs in from the terminal and opens GitHub's device page. Both mint an `imp_` token named after the GitHub login. A browser sign-in replaces that person's previous browser token. CLI tokens stay, so a second machine doesn't sign out the first. ### Who sees what
 
 - **Projects.** A signed-in person sees only projects for repos they can reach through their installations of the app (any installation, not just the allowlisted one). A `path:` project belongs to whoever first used it. Asking for a project you can't reach gives 404. GitHub is asked at most every 10 minutes per person, so losing repo access takes up to 10 minutes to show. If GitHub is down, the last answer is used. If their GitHub session is gone, requests get 401 and they sign in again.
 - **Memories.** Every memory is private to its author. The author can share a `project` memory with the team (web: "Share with team", or `PATCH /api/memories/:id {"scope":"team"}`), and then everyone who can see that project reads it. Only the author can edit, delete, share or unshare it. Sessions stay private to whoever ran them.
