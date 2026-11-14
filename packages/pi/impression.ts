@@ -89,11 +89,19 @@ export default function (pi: ExtensionAPI) {
   let sent = 0; // entries of the session file already sent
   let sending: Promise<void> = Promise.resolve();
 
+  /** pi's id for the session, logged with the memories it is served. */
+  const sessionId = (ctx: {
+    sessionManager: { getSessionId?(): string | undefined };
+  }): string | undefined => ctx.sessionManager.getSessionId?.() || undefined;
+
   /** Sends session entries not sent yet as their own session, and queues extraction. */
   const flush = (
     ctx: {
       cwd: string;
-      sessionManager: { getEntries(): unknown[] };
+      sessionManager: {
+        getEntries(): unknown[];
+        getSessionId?(): string | undefined;
+      };
     },
     minChars: number,
   ) => {
@@ -117,7 +125,11 @@ export default function (pi: ExtensionAPI) {
           ["hook", "session-end", "--extract", "--agent", "pi"],
           ctx.cwd,
           {
-            input: JSON.stringify({ transcript_path: file, cwd: ctx.cwd }),
+            input: JSON.stringify({
+              transcript_path: file,
+              cwd: ctx.cwd,
+              session_id: sessionId(ctx),
+            }),
             timeout: 35_000,
           },
         );
@@ -133,7 +145,10 @@ export default function (pi: ExtensionAPI) {
     sent = ctx.sessionManager.getEntries().length;
     lib = await loadLib();
     context = lib
-      ? ((await lib.cli.sessionStartContext(lib.client, ctx.cwd)) ?? "")
+      ? ((await lib.cli.sessionStartContext(lib.client, ctx.cwd, {
+          session: sessionId(ctx),
+          agent: "pi",
+        })) ?? "")
       : "";
   });
 
@@ -149,7 +164,10 @@ export default function (pi: ExtensionAPI) {
     const result =
       lib && prompt.length >= MIN_PROMPT_CHARS
         ? await Promise.race([
-            lib.cli.promptContext(lib.client, ctx.cwd, prompt),
+            lib.cli.promptContext(lib.client, ctx.cwd, prompt, {
+              session: sessionId(ctx),
+              agent: "pi",
+            }),
             new Promise<null>((r) => setTimeout(r, 2_000, null).unref()),
           ])
         : null;

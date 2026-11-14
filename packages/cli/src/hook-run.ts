@@ -17,6 +17,7 @@ import {
   foreignHost,
   formatContext,
   hookCwd,
+  hookSessionId,
   hookTranscript,
   parseHookInput,
   sessionAgent,
@@ -56,7 +57,10 @@ export async function runHook(
   if (sub === "session-start") {
     const input = parseHookInput(await readStdin(1000));
     const cwd = hookCwd(input);
-    const ctx = await sessionStartContext(client(), cwd);
+    const ctx = await sessionStartContext(client(), cwd, {
+      session: hookSessionId(input),
+      agent: sessionAgent(agent),
+    });
     if (ctx)
       process.stdout.write(`${formatContext(agent, "SessionStart", ctx)}\n`);
     startRecheck(cwd, agent);
@@ -78,7 +82,10 @@ export async function runHook(
     const stdin = await readStdin(2000);
     const input = agent === "pi" ? {} : parseHookInput(stdin);
     const prompt = agent === "pi" ? stdin : (input.prompt ?? "");
-    const ctx = await promptContext(client(), hookCwd(input), prompt);
+    const ctx = await promptContext(client(), hookCwd(input), prompt, {
+      session: hookSessionId(input),
+      agent: sessionAgent(agent),
+    });
     if (ctx)
       process.stdout.write(
         `${formatContext(agent, "UserPromptSubmit", ctx)}\n`,
@@ -96,7 +103,7 @@ export async function runHook(
     const input = parseHookInput(await readStdin(2000));
     const transcript = hookTranscript(input);
     if (!transcript) return;
-    handOff(transcript, hookCwd(input), agent, extract);
+    handOff(transcript, hookCwd(input), hookSessionId(input), agent, extract);
   }
 }
 
@@ -108,13 +115,17 @@ export async function runHook(
 function handOff(
   transcript: string,
   cwd: string,
+  sessionKey: string | undefined,
   agent: Agent,
   extract: boolean,
 ): void {
   try {
     const dir = mkdtempSync(join(tmpdir(), "impression-end-"));
     copyFileSync(transcript, join(dir, "transcript"));
-    writeFileSync(join(dir, "input.json"), JSON.stringify({ cwd }));
+    writeFileSync(
+      join(dir, "input.json"),
+      JSON.stringify({ cwd, session_id: sessionKey }),
+    );
     const child = spawn(
       process.execPath,
       [
@@ -175,11 +186,13 @@ async function uploadCopy(
 ): Promise<void> {
   if (!dir || dirname(dir) !== tmpdir().replace(/\/$/, "")) return;
   try {
-    const { cwd } = JSON.parse(readFileSync(join(dir, "input.json"), "utf8"));
+    const { cwd, session_id } = JSON.parse(
+      readFileSync(join(dir, "input.json"), "utf8"),
+    );
     await Promise.race([
       sendSession(
         client,
-        { transcript_path: join(dir, "transcript"), cwd },
+        { transcript_path: join(dir, "transcript"), cwd, session_id },
         {
           extract,
           agent: sessionAgent(agent),

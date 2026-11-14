@@ -189,6 +189,8 @@ function safeCandidates(raw: string, cwd: string, key: string) {
 export interface SessionEndInput {
   transcript_path?: string;
   cwd?: string;
+  /** The agent's own session id, sent as `sessionKey`. */
+  session_id?: string;
 }
 
 /**
@@ -217,6 +219,7 @@ export async function sendSession(
       transcript,
       commitSha: headSha(cwd),
       agent: opts.agent ?? "claude-code",
+      ...(input.session_id ? { sessionKey: input.session_id } : {}),
     })) as { id: string; duplicate?: boolean };
     // The server already had this chunk, and extracted it then if asked.
     if (opts.extract && !duplicate) {

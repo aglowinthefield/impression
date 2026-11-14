@@ -7,6 +7,7 @@ import type { Db } from "./db/client.js";
 import { memories, projects } from "./db/schema.js";
 import { toDto, withAnchors } from "./memories.js";
 import type { Providers } from "./providers/index.js";
+import { logServes } from "./serves.js";
 
 /**
  * Without a floor the vector leg returns its nearest neighbours even when none
@@ -32,6 +33,11 @@ const body = z.object({
   minSimilarity: z.number().min(0).max(1).optional(),
   /** Raises the model's floor by STRICT_EXTRA. For injection into a prompt, where a wrong memory costs more than a missed one. */
   strict: z.boolean().optional(),
+  /** The agent's own session id, recorded with what is served. Ignored when malformed. */
+  session: z.string().min(1).max(200).optional().catch(undefined),
+  agent: z.string().min(1).max(100).optional().catch(undefined),
+  /** "prompt" when a hook injects the results into a prompt, otherwise an explicit search. */
+  source: z.enum(["prompt", "search"]).default("search"),
 });
 
 /** How many candidates each ranking contributes before fusion. */
@@ -65,8 +71,10 @@ export function searchRoutes(db: Db, providers: Providers) {
     ];
     if (q.scope) conds.push(sql`m.scope = ${q.scope}`);
     if (q.tag) conds.push(sql`${q.tag} = ANY(m.tags)`);
+    let projectId: string | null = null;
     if (q.project) {
       const p = await findProject(db, c.get("access"), q.project);
+      projectId = p?.id ?? null;
       conds.push(p ? sql`m.project_id = ${p.id}` : sql`false`);
     }
     if (q.path) {
@@ -158,7 +166,20 @@ export function searchRoutes(db: Db, providers: Providers) {
         },
       ];
     });
-    return c.json({ degraded, results: await withAnchors(db, ranked) });
+    const results = await withAnchors(db, ranked);
+    await logServes(
+      db,
+      results.map((r) => r.id),
+      {
+        source: q.source,
+        principal,
+        access: c.get("access"),
+        projectId,
+        sessionKey: q.session,
+        agent: q.agent,
+      },
+    );
+    return c.json({ degraded, results });
   });
 
   return app;

@@ -6,6 +6,7 @@ import type { AuthEnv } from "./auth.js";
 import type { Db } from "./db/client.js";
 import { memories } from "./db/schema.js";
 import { PRACTICE_TAG } from "./extract.js";
+import { logServes } from "./serves.js";
 
 const query = z.object({
   project: z.string().min(1).optional(),
@@ -13,6 +14,9 @@ const query = z.object({
   path: z.string().min(1).optional(),
   /** Rough token budget for the whole set. */
   budget: z.coerce.number().int().min(50).max(20_000).default(800),
+  /** The agent's own session id, recorded with what is served. Ignored when malformed. */
+  session: z.string().min(1).max(200).optional().catch(undefined),
+  agent: z.string().min(1).max(100).optional().catch(undefined),
 });
 
 /** Rough token count: about four characters each. */
@@ -38,8 +42,10 @@ export function coreRoutes(db: Db) {
       eq(memories.status, "active"),
       await memoryVisible(db, c.get("access"), principal),
     ];
+    let projectId: string | null = null;
     if (q.project) {
       const p = await findProject(db, c.get("access"), q.project);
+      projectId = p?.id ?? null;
       // User memories without a project still apply everywhere.
       where.push(
         p
@@ -90,6 +96,18 @@ export function coreRoutes(db: Db) {
         tags: m.tags,
       });
     }
+    await logServes(
+      db,
+      items.map((i) => i.id),
+      {
+        source: "core",
+        principal,
+        access: c.get("access"),
+        projectId,
+        sessionKey: q.session,
+        agent: q.agent,
+      },
+    );
     return c.json({ items, tokens: used, budget: q.budget });
   });
 
