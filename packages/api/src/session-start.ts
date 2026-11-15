@@ -23,6 +23,18 @@ export interface ConceptStart {
   tokens: number;
 }
 
+/** Words a map line keeps of a concept's summary. */
+export const MAP_WORDS = 12;
+
+/** The first sentence of a summary, cut to `MAP_WORDS` words. */
+export function shortSummary(summary: string): string {
+  const first = summary.split(/(?<=[.!?])\s/)[0]?.replace(/[.!?]$/, "") ?? "";
+  const words = first.split(/\s+/).filter(Boolean);
+  return words.length > MAP_WORDS
+    ? `${words.slice(0, MAP_WORDS).join(" ")}...`
+    : words.join(" ");
+}
+
 /**
  * The concept version of the session-start set: the practices and pinned
  * memories the top-N set leads with, a map of the person's concepts in the
@@ -73,11 +85,12 @@ export async function conceptStart(
       [a, false] as const,
       ...kids(a.id).map((k) => [k, true] as const),
     ]) {
-      const line = `${c.name}: ${c.summary}`;
+      const summary = shortSummary(c.summary);
+      const line = `${c.name}: ${summary}`;
       const cost = estimateTokens(line) + 2;
       if (used + cost > budget) continue;
       used += cost;
-      map.push({ id: c.id, name: c.name, summary: c.summary, sub });
+      map.push({ id: c.id, name: c.name, summary, sub });
     }
   }
 

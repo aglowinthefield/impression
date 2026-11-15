@@ -8,7 +8,7 @@ import {
   type SessionResult,
   summarize,
 } from "./eval/session-start.js";
-import { conceptStart } from "./session-start.js";
+import { conceptStart, shortSummary } from "./session-start.js";
 import { createTestDb } from "./test-db.js";
 
 describe("conceptStart", () => {
@@ -107,6 +107,17 @@ describe("conceptStart", () => {
     expect(s.tokens).toBeLessThanOrEqual(12);
     expect(s.map.length + s.top.length).toBeLessThan(6);
   });
+});
+
+test("shortSummary keeps the first sentence, cut to twelve words", () => {
+  expect(shortSummary("Deploys run in CI. Then Fly.")).toBe(
+    "Deploys run in CI",
+  );
+  expect(
+    shortSummary(
+      "one two three four five six seven eight nine ten eleven twelve thirteen",
+    ),
+  ).toBe("one two three four five six seven eight nine ten eleven twelve...");
 });
 
 describe("session-start eval", () => {
