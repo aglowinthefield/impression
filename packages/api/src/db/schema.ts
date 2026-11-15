@@ -344,3 +344,58 @@ export const memoryServes = pgTable(
     index("memory_serves_session_idx").on(t.sessionKey),
   ],
 );
+
+/**
+ * A subject a dream run grouped memories under, like "how auth works". Derived from
+ * memories and safe to rebuild. Each belongs to one person in one project, since it
+ * summarizes that person's view of the project, private memories included.
+ */
+export const concepts = pgTable(
+  "concepts",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    projectId: uuid()
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    owner: text().notNull(),
+    /** The area this concept is a subtopic of. Concepts nest one level only. */
+    parentId: uuid().references((): AnyPgColumn => concepts.id, {
+      onDelete: "set null",
+    }),
+    name: text().notNull(),
+    summary: text().notNull(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("concepts_project_owner_idx").on(t.projectId, t.owner)],
+);
+
+export const conceptMemories = pgTable(
+  "concept_memories",
+  {
+    conceptId: uuid()
+      .notNull()
+      .references(() => concepts.id, { onDelete: "cascade" }),
+    memoryId: uuid()
+      .notNull()
+      .references(() => memories.id, { onDelete: "cascade" }),
+  },
+  (t) => [
+    primaryKey({ columns: [t.conceptId, t.memoryId] }),
+    index("concept_memories_memory_idx").on(t.memoryId),
+  ],
+);
+
+/** Two related concepts. Stored once, with the smaller id in `aId`. */
+export const conceptLinks = pgTable(
+  "concept_links",
+  {
+    aId: uuid()
+      .notNull()
+      .references(() => concepts.id, { onDelete: "cascade" }),
+    bId: uuid()
+      .notNull()
+      .references(() => concepts.id, { onDelete: "cascade" }),
+  },
+  (t) => [primaryKey({ columns: [t.aId, t.bId] })],
+);

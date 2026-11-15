@@ -15,6 +15,8 @@ export { anthropicLlm, ollamaEmbeddings, ollamaLlm, openaiEmbeddings };
 export interface Providers {
   embeddings: EmbeddingProvider;
   llm: LlmProvider;
+  /** A stronger model for dreaming, which groups a whole project in one call. */
+  dreamLlm: LlmProvider;
 }
 
 type Env = Record<string, string | undefined>;
@@ -30,13 +32,16 @@ function need(env: Env, key: string, why: string): string {
  *
  *   EMBEDDING_PROVIDER = openai (default) | ollama
  *   LLM_PROVIDER       = anthropic (default) | ollama
- *   EMBEDDING_MODEL, LLM_MODEL, OLLAMA_URL override model names and the Ollama host.
+ *   EMBEDDING_MODEL, LLM_MODEL, DREAM_MODEL, OLLAMA_URL override model names and the Ollama host.
  *   EMBEDDING_MIN_SIMILARITY sets the search floor (Ollama default 0.45, tuned on nomic-embed-text).
  *
  * The embedding column is `EMBEDDING_DIM` wide, so a provider with another
  * dimension is rejected here rather than failing on the first insert.
  * `onUsage` receives the token usage of every successful call.
  */
+/** Anthropic model for dreaming. In testing it left 1 of 100 memories ungrouped, where Haiku left 5 to 18. */
+export const DREAM_MODEL = "claude-sonnet-5-5";
+
 export function createProviders(
   env: Env = process.env,
   fetchFn?: Fetch,
@@ -79,10 +84,22 @@ export function createProviders(
   }
 
   let llm: LlmProvider;
+  let dreamLlm: LlmProvider;
   if (llmKind === "anthropic") {
+    const apiKey = need(
+      env,
+      "ANTHROPIC_API_KEY",
+      "when LLM_PROVIDER=anthropic",
+    );
     llm = anthropicLlm({
-      apiKey: need(env, "ANTHROPIC_API_KEY", "when LLM_PROVIDER=anthropic"),
-      model: env.LLM_MODEL,
+      apiKey,
+      model: env.LLM_MODEL || undefined,
+      fetch: fetchFn,
+      onUsage,
+    });
+    dreamLlm = anthropicLlm({
+      apiKey,
+      model: env.DREAM_MODEL || DREAM_MODEL,
       fetch: fetchFn,
       onUsage,
     });
@@ -93,9 +110,17 @@ export function createProviders(
       fetch: fetchFn,
       onUsage,
     });
+    dreamLlm = env.DREAM_MODEL
+      ? ollamaLlm({
+          model: env.DREAM_MODEL,
+          baseUrl: ollamaUrl,
+          fetch: fetchFn,
+          onUsage,
+        })
+      : llm;
   } else {
     throw new Error(`unknown LLM_PROVIDER "${llmKind}" (anthropic or ollama)`);
   }
 
-  return { embeddings, llm };
+  return { embeddings, llm, dreamLlm };
 }

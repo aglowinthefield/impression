@@ -86,7 +86,8 @@ TypeScript monorepo (pnpm workspaces, Node 22+). Packages: `shared`, `api`, `cli
 | `PORT`                               | `3000`                                       |                                                                             |
 | `EMBEDDING_PROVIDER`                 | `openai`                                     | or `ollama`. Needs `OPENAI_API_KEY` for openai.                             |
 | `LLM_PROVIDER`                       | `anthropic`                                  | or `ollama`. Needs `ANTHROPIC_API_KEY` for anthropic.                       |
-| `EMBEDDING_MODEL`, `LLM_MODEL`       | `text-embedding-3-small`, `claude-haiku-4-5` | Required for ollama.                                                        |
+| `EMBEDDING_MODEL`, `LLM_MODEL`       | `text-embedding-3-small`, `claude-haiku-5-5` | Required for ollama.                                                        |
+| `DREAM_MODEL`                        | `claude-sonnet-5-5`                          | Model for dreaming. With ollama, defaults to `LLM_MODEL`.                   |
 | `EMBEDDING_DIMENSIONS`, `OLLAMA_URL` |                                              | Ollama only. The dimension must be 768 to match the column.                 |
 | `EMBEDDING_MIN_SIMILARITY`           | `0.3` openai, `0.45` ollama                  | Search floor. Cosine scores differ between models, so retune with the eval. |
 
@@ -206,6 +207,10 @@ pnpm --filter @impression/cli seed -- --repo ~/code/my-repo --token imp_...
 ```
 
 It finds the repo's sessions (including ones run in subdirectories and `.worktrees/*`) under `~/.pi/agent/sessions`, `~/.claude/projects` and `~/.codex/sessions`, oldest first, splits each into pieces of about 55,000 characters of conversation, and uploads each piece with extraction, three at a time. Each piece prints one line, and the run ends with totals. `--dry-run` lists sessions and piece counts without sending anything. Other flags: `--agents pi,claude,codex`, `--since 2026-10-01`, `--limit <sessions>`, `--concurrency 3`, `--timeout <seconds per request>`. The URL and token come from `--url`/`--token`, then `IMPRESSION_URL`/`IMPRESSION_TOKEN`, then the saved config, and it refuses any host other than localhost unless you pass `--allow-remote`. The server keeps one copy of a piece sent twice within a day and doesn't extract it again, so a rerun soon after a partial run only extracts the new pieces. `IMPRESSION_SEED_PI_DIR`, `IMPRESSION_SEED_CLAUDE_DIR` and `IMPRESSION_SEED_CODEX_DIR` point it at other transcript folders.
+
+## Dreaming
+
+A dream run groups one person's memories in a project into concepts, given the concepts from the last run. Practices and other people's private memories are left out. Run it with `POST /api/dream?project=<key>`, or from the API package with `pnpm db:dream <project key or name> <owner>`, which prints the concepts. `GET /api/dream?project=<key>` lists them, and `GET /api/memories?concept=<id>` (or `none`) filters by one. In the web UI the Memories tab lists them on the left, with a Regroup button. A rerun keeps a concept's id when most of its memories stay the same, and its name too when they barely change.
 
 ## Web UI
 

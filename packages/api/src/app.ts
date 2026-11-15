@@ -5,6 +5,7 @@ import { type AuthEnv, requireAuth } from "./auth.js";
 import type { GithubConfig } from "./config.js";
 import { coreRoutes } from "./core.js";
 import type { Db } from "./db/client.js";
+import { dreamRoutes } from "./dream.js";
 import { evalRoutes } from "./evals.js";
 import { createGithubClient, type GithubClient } from "./github.js";
 import { githubAuthRoutes } from "./github-auth.js";
@@ -66,6 +67,7 @@ export function createApp(
   api.route("/sessions", sessionRoutes(db, providers));
   api.route("/projects", projectRoutes(db));
   api.route("/evals", evalRoutes(db));
+  api.route("/dream", dreamRoutes(db, providers));
   api.route("/settings", settingsRoutes(db));
   api.get("/whoami", (c) => c.json({ name: c.get("principal") }));
   app.route("/api", api);
