@@ -12,20 +12,41 @@ export interface Concept {
   updatedAt: string;
 }
 
+interface LastRun {
+  finishedAt: string | null;
+  trigger: string;
+  error: string | null;
+}
+
+/** "just now", "5 minutes ago", "3 hours ago", "2 days ago". */
+export function ago(iso: string, now = Date.now()): string {
+  const minutes = Math.floor((now - new Date(iso).getTime()) / 60_000);
+  if (minutes < 1) return "just now";
+  const [n, unit] =
+    minutes < 60
+      ? [minutes, "minute"]
+      : minutes < 60 * 24
+        ? [Math.floor(minutes / 60), "hour"]
+        : [Math.floor(minutes / (60 * 24)), "day"];
+  return `${n} ${unit}${n === 1 ? "" : "s"} ago`;
+}
+
 /** The Memories tab: your concepts in the project on the left, their memories on the right. */
 export function MemoriesPage({ project }: { project: string }) {
   const [concepts, setConcepts] = useState<Concept[] | null>(null);
   const [selected, setSelected] = useState("");
   const [dreaming, setDreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [lastRun, setLastRun] = useState<LastRun | null>(null);
 
   const load = useCallback(async () => {
     if (!project) return setConcepts([]);
     try {
-      const r = await api<{ items: Concept[] }>(
+      const r = await api<{ items: Concept[]; lastRun: LastRun | null }>(
         `/dream?project=${encodeURIComponent(project)}`,
       );
       setConcepts(r.items);
+      setLastRun(r.lastRun);
     } catch (e) {
       setError((e as Error).message);
     }
@@ -34,6 +55,7 @@ export function MemoriesPage({ project }: { project: string }) {
   useEffect(() => {
     setSelected("");
     setConcepts(null);
+    setLastRun(null);
     setError(null);
     void load();
   }, [load]);
@@ -105,6 +127,12 @@ export function MemoriesPage({ project }: { project: string }) {
                 ? "Regroup"
                 : "Group into concepts"}
           </button>
+        )}
+        {lastRun?.finishedAt && (
+          <p className="mt-2 text-xs opacity-60">
+            {lastRun.error ? "Grouping failed" : "Grouped"}{" "}
+            {ago(lastRun.finishedAt)}
+          </p>
         )}
         {error && <p role="alert">{error}</p>}
       </nav>

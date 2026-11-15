@@ -399,3 +399,32 @@ export const conceptLinks = pgTable(
   },
   (t) => [primaryKey({ columns: [t.aId, t.bId] })],
 );
+
+/** One dream run, manual or scheduled. The schedule reads it to decide when the next is due. */
+export const dreamRuns = pgTable(
+  "dream_runs",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    projectId: uuid()
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    owner: text().notNull(),
+    /** "manual", "count" (enough memories changed) or "daily". */
+    trigger: text().notNull(),
+    model: text().notNull(),
+    startedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    /** Null while running. */
+    finishedAt: timestamp({ withTimezone: true }),
+    memories: integer(),
+    concepts: integer(),
+    created: integer(),
+    kept: integer(),
+    removed: integer(),
+    uncategorized: integer(),
+    costMicros: integer(),
+    error: text(),
+  },
+  (t) => [
+    index("dream_runs_project_owner_idx").on(t.projectId, t.owner, t.startedAt),
+  ],
+);

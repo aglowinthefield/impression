@@ -11,8 +11,8 @@ import {
   concepts,
   memories,
 } from "./db/schema.js";
+import { lastDream, runDream } from "./dream-schedule.js";
 import type { LlmProvider, Providers } from "./providers/index.js";
-import { withUsageContext } from "./usage.js";
 
 /** Memory text shown to the model is cut to this, so one run stays one call. */
 export const MAX_MEMORY_CHARS = 600;
@@ -585,7 +585,11 @@ export function dreamRoutes(db: Db, providers: Providers) {
     if (!key) return c.json({ error: "project is required" }, 400);
     const p = await findProject(db, c.get("access"), key);
     if (!p) return c.json({ error: "project not found" }, 404);
-    return c.json({ items: await listConcepts(db, p.id, c.get("principal")) });
+    const principal = c.get("principal");
+    return c.json({
+      items: await listConcepts(db, p.id, principal),
+      lastRun: await lastDream(db, p.id, principal),
+    });
   });
   app.post("/", async (c) => {
     const key = c.req.query("project");
@@ -594,13 +598,13 @@ export function dreamRoutes(db: Db, providers: Providers) {
     if (!p) return c.json({ error: "project not found" }, 404);
     const principal = c.get("principal");
     try {
-      const result = await withUsageContext(
-        {
-          userId: c.get("access")?.userId ?? null,
-          principal,
-          operation: "dream",
-        },
-        () => dream(db, providers.dreamLlm, p.id, principal),
+      const result = await runDream(
+        db,
+        providers.dreamLlm,
+        p.id,
+        principal,
+        "manual",
+        c.get("access")?.userId ?? null,
       );
       return c.json(result);
     } catch (err) {

@@ -7,9 +7,9 @@ import {
   memories,
   projects,
 } from "./db/schema.js";
-import { dream } from "./dream.js";
+import { runDream } from "./dream-schedule.js";
 import { createProviders } from "./providers/index.js";
-import { UsageRecorder, withUsageContext } from "./usage.js";
+import { UsageRecorder } from "./usage.js";
 
 // Usage: db:dream <project key or name> <owner> [--quiet]
 const [project, owner] = process.argv
@@ -41,10 +41,7 @@ try {
     process.exitCode = 1;
   } else {
     const started = Date.now();
-    const r = await withUsageContext(
-      { userId: null, principal: owner, operation: "dream" },
-      () => dream(db, providers.dreamLlm, p.id, owner),
-    );
+    const r = await runDream(db, providers.dreamLlm, p.id, owner, "manual");
     console.log(
       `${p.key}: ${r.memories} memories into ${r.concepts} concepts (${r.created} new, ${r.kept} kept, ${r.removed} removed), ${r.uncategorized} uncategorized, ${((Date.now() - started) / 1000).toFixed(0)}s`,
     );
