@@ -1,6 +1,6 @@
 import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, expect, test } from "vitest";
-import { dreamRuns, memories, projects } from "./db/schema.js";
+import { concepts, dreamRuns, memories, projects } from "./db/schema.js";
 import { dueDreams, runDream, sweepDreams } from "./dream-schedule.js";
 import type { LlmProvider } from "./providers/index.js";
 import { createTestDb } from "./test-db.js";
@@ -9,7 +9,7 @@ import { UsageRecorder } from "./usage.js";
 let t: Awaited<ReturnType<typeof createTestDb>>;
 let projectId: string;
 let usage: UsageRecorder;
-let reply: () => string;
+let reply: (prompt: string) => string;
 
 /** Puts every memory it is shown into one concept, and reports 1000 tokens each way. */
 const llm: LlmProvider = {
@@ -23,7 +23,7 @@ const llm: LlmProvider = {
       outputTokens: 1000,
     });
     return (
-      reply() ||
+      reply(prompt) ||
       JSON.stringify({
         concepts: [
           {
@@ -51,6 +51,7 @@ afterAll(() => t.drop());
 beforeEach(async () => {
   reply = () => "";
   await t.db.delete(dreamRuns);
+  await t.db.delete(concepts);
   await t.db.delete(memories);
 });
 
@@ -175,4 +176,49 @@ test("a sweep runs what's due and keeps going past a failure", async () => {
   expect(runs.map((r) => r.error === null).sort()).toEqual([false, true]);
   // Both just ran, so nothing is due.
   expect(await due()).toEqual([]);
+});
+
+test("retiring a memory regroups its owner and removes a concept left empty", async () => {
+  await add(9);
+  reply = (p) => {
+    const refs = [...p.matchAll(/^(m\d+): (.*)$/gm)];
+    const lonely = refs.filter(
+      (m) => m[2]?.replace(/ \[.*$/, "") === "alice memory 0",
+    );
+    const rest = refs.filter((m) => !lonely.includes(m));
+    return JSON.stringify({
+      concepts: [
+        {
+          ref: "n1",
+          name: "Lonely",
+          summary: "s",
+          memories: lonely.map((m) => m[1]),
+        },
+        {
+          ref: "n2",
+          name: "Rest",
+          summary: "s",
+          memories: rest.map((m) => m[1]),
+        },
+      ],
+    });
+  };
+  await runDream(t.db, llm, projectId, "alice", "manual");
+  const names = async () =>
+    (await t.db.select().from(concepts)).map((c) => c.name).sort();
+  expect(await names()).toEqual(["Lonely", "Rest"]);
+
+  // A day later the recheck retires the only member of Lonely.
+  await t.db.update(memories).set({ updatedAt: ago(26) });
+  await t.db
+    .update(memories)
+    .set({ status: "retired", updatedAt: sql`now()` })
+    .where(eq(memories.content, "alice memory 0"));
+  await t.db.update(dreamRuns).set({ startedAt: ago(25), finishedAt: ago(25) });
+  expect(await due()).toEqual([["alice", "daily"]]);
+
+  reply = () => "";
+  expect(await sweepDreams(t.db, llm)).toBe(1);
+  expect(await names()).not.toContain("Lonely");
+  expect(await names()).toHaveLength(1);
 });
