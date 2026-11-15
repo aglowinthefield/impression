@@ -68,10 +68,12 @@ export function requireAuth(db: Db, repoAccess?: RepoAccess) {
       .where(eq(apiTokens.tokenHash, hashToken(match[1] as string)))
       .limit(1);
     if (!row) return c.json({ error: "invalid token" }, 401);
-    const client = (c.req.header("x-impression-client") ?? "unknown").slice(
-      0,
-      200,
-    );
+    // Older clients don't name themselves, so their user agent stands in.
+    const client = (
+      c.req.header("x-impression-client") ??
+      c.req.header("user-agent") ??
+      "unknown"
+    ).slice(0, 200);
     const ip = clientIp(c);
     if (row.revokedAt) {
       await db
