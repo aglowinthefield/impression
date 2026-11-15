@@ -212,6 +212,8 @@ It finds the repo's sessions (including ones run in subdirectories and `.worktre
 
 A dream run groups one person's memories in a project into concepts, given the concepts from the last run. Practices and other people's private memories are left out. Run it with `POST /api/dream?project=<key>`, or from the API package with `pnpm db:dream <project key or name> <owner>`, which prints the concepts. `GET /api/dream?project=<key>` lists them, and `GET /api/memories?concept=<id>` (or `none`) filters by one. In the web UI the Memories tab lists them on the left, with a Regroup button. A rerun keeps a concept's id when most of its memories stay the same, and its name too when they barely change.
 
+The API also dreams on its own. Every 10 minutes it looks for people whose memories in a project changed: 20 changes since their last run (`DREAM_EVERY`), or any change once a day has passed. It skips anyone with fewer than 8 memories and runs each person and project at most once an hour. Every run is logged in `dream_runs` with what it changed and what it cost, and the sidebar says when the concepts were last grouped. Set `DREAM_SCHEDULE=off` to stop it.
+
 ## Web UI
 
 `packages/web` is a React single-page app. `pnpm build` produces `packages/web/dist`, and the API serves it at `/` when that directory exists (or set `WEB_DIR`). Sign in with an API token; the project switcher lists every project on the server. For hot reload run the API on :3000 and `pnpm --filter @impression/web dev`.

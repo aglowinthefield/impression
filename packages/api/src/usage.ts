@@ -10,6 +10,8 @@ export interface UsageContext {
   userId: string | null;
   principal: string | null;
   operation: string;
+  /** Collects this context's model calls, so a job can report its own cost. */
+  tally?: ModelUsage[];
 }
 
 const storage = new AsyncLocalStorage<UsageContext>();
@@ -108,6 +110,8 @@ export class UsageRecorder {
       principal: null,
       operation: "job",
     };
+    const { tally, ...who } = ctx;
+    tally?.push(u);
     const cost = costMicros(u);
     const labels = {
       kind: u.kind,
@@ -140,7 +144,7 @@ export class UsageRecorder {
     // Never fail or slow the model call over bookkeeping.
     const p = this.db
       .insert(usageEvents)
-      .values({ ...ctx, ...u, costMicros: cost })
+      .values({ ...who, ...u, costMicros: cost })
       .then(
         () => undefined,
         (err) => console.error("recording usage failed:", err),

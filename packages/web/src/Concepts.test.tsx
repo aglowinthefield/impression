@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { MemoriesPage } from "./Concepts";
+import { ago, MemoriesPage } from "./Concepts";
 
 const concept = (o = {}) => ({
   id: "c1",
@@ -15,8 +15,10 @@ const concept = (o = {}) => ({
 });
 let calls: { url: string; method: string }[] = [];
 let concepts: unknown[] = [];
+let lastRun: unknown = null;
 beforeEach(() => {
   calls = [];
+  lastRun = null;
   localStorage.setItem("impression.token", "t");
   vi.stubGlobal(
     "fetch",
@@ -26,7 +28,7 @@ beforeEach(() => {
       const body = url.startsWith("/api/dream")
         ? method === "POST"
           ? {}
-          : { items: concepts }
+          : { items: concepts, lastRun }
         : { items: [] };
       return new Response(JSON.stringify(body), { status: 200 });
     }),
@@ -84,4 +86,25 @@ test("offers to group a project that has no concepts", async () => {
     ),
   ).toBe(true);
   expect(screen.queryByRole("button", { name: "Uncategorized" })).toBeNull();
+});
+
+test("says when the concepts were last grouped", async () => {
+  concepts = [concept()];
+  lastRun = {
+    finishedAt: new Date(Date.now() - 2 * 3_600_000).toISOString(),
+    trigger: "daily",
+    error: null,
+  };
+  render(<MemoriesPage project="a/x" />);
+  expect(await screen.findByText("Grouped 2 hours ago")).toBeTruthy();
+});
+
+test("ago", () => {
+  const now = Date.parse("2026-01-02T00:00:00Z");
+  const at = (min: number) => new Date(now - min * 60_000).toISOString();
+  expect(ago(at(0), now)).toBe("just now");
+  expect(ago(at(1), now)).toBe("1 minute ago");
+  expect(ago(at(59), now)).toBe("59 minutes ago");
+  expect(ago(at(60), now)).toBe("1 hour ago");
+  expect(ago(at(60 * 24 * 3), now)).toBe("3 days ago");
 });
