@@ -15,6 +15,7 @@
     "eval:extract": "tsx src/eval/extraction-cli.ts",
     "eval:latency": "tsx src/eval/latency-cli.ts",
     "eval:sessions": "tsx src/eval/sessions-cli.ts",
+    "eval:session-start": "tsx src/eval/session-start-cli.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate-cli.ts",
     "db:reembed": "tsx src/reembed-cli.ts",

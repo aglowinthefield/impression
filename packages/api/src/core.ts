@@ -22,6 +22,48 @@ const query = z.object({
 /** Rough token count: about four characters each. */
 export const estimateTokens = (s: string) => Math.ceil(s.length / 4);
 
+export interface CoreItem {
+  id: string;
+  content: string;
+  pinned: boolean;
+  tags: string[];
+}
+
+/** Picks the core set from the memories matching `where`, in core order, until the budget runs out. */
+export async function coreSet(
+  db: Db,
+  where: SQL[],
+  budget: number,
+): Promise<{ items: CoreItem[]; tokens: number }> {
+  const rows = await db
+    .select()
+    .from(memories)
+    .where(and(...where))
+    .orderBy(
+      // Practices go first: they apply to whatever the session is about.
+      sql`(${PRACTICE_TAG} = ANY(${memories.tags})) desc`,
+      desc(memories.pinned),
+      sql`coalesce(${memories.confidence}, 0.5) desc`,
+      desc(memories.createdAt),
+      desc(memories.id),
+    )
+    .limit(200);
+  const items: CoreItem[] = [];
+  let used = 0;
+  for (const m of rows) {
+    const cost = estimateTokens(m.content) + 2;
+    if (used + cost > budget) continue;
+    used += cost;
+    items.push({
+      id: m.id,
+      content: m.content,
+      pinned: m.pinned,
+      tags: m.tags,
+    });
+  }
+  return { items, tokens: used };
+}
+
 /**
  * The small set worth showing at session start: pinned first, then by
  * confidence (unrated counts as middling), then newest. Flagged-stale and
@@ -64,38 +106,7 @@ export function coreRoutes(db: Db) {
       );
     }
 
-    const rows = await db
-      .select()
-      .from(memories)
-      .where(and(...where))
-      .orderBy(
-        // Practices go first: they apply to whatever the session is about.
-        sql`(${PRACTICE_TAG} = ANY(${memories.tags})) desc`,
-        desc(memories.pinned),
-        sql`coalesce(${memories.confidence}, 0.5) desc`,
-        desc(memories.createdAt),
-        desc(memories.id),
-      )
-      .limit(200);
-
-    const items: {
-      id: string;
-      content: string;
-      pinned: boolean;
-      tags: string[];
-    }[] = [];
-    let used = 0;
-    for (const m of rows) {
-      const cost = estimateTokens(m.content) + 2;
-      if (used + cost > q.budget) continue;
-      used += cost;
-      items.push({
-        id: m.id,
-        content: m.content,
-        pinned: m.pinned,
-        tags: m.tags,
-      });
-    }
+    const { items, tokens: used } = await coreSet(db, where, q.budget);
     await logServes(
       db,
       items.map((i) => i.id),
