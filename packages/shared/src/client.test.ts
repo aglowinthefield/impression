@@ -1,5 +1,6 @@
+import { hostname } from "node:os";
 import { describe, expect, test } from "vitest";
-import { createClient } from "./client.js";
+import { clientName, createClient } from "./client.js";
 
 describe("createClient", () => {
   test("sends the bearer token and surfaces API errors", async () => {
@@ -14,8 +15,20 @@ describe("createClient", () => {
     );
     expect(seen?.url).toBe("http://h:3000/api/memories");
     expect(seen?.headers.get("authorization")).toBe("Bearer imp_x");
+    expect(seen?.headers.get("x-impression-client")).toBe(
+      `cli/dev (${hostname()})`,
+    );
     await expect(c.get("/core")).rejects.toThrow("422");
     expect(seen?.method).toBe("GET");
     expect(seen?.url).toBe("http://h:3000/api/core");
   });
+});
+
+test("clientName takes the machine from IMPRESSION_MACHINE when set", () => {
+  expect(clientName("pi", { IMPRESSION_MACHINE: "ci-runner" })).toBe(
+    "pi/dev (ci-runner)",
+  );
+  expect(clientName("mcp", { IMPRESSION_MACHINE: " " })).toBe(
+    `mcp/dev (${hostname()})`,
+  );
 });

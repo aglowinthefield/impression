@@ -10,7 +10,7 @@ if (!token) {
   process.exit(1);
 }
 const server = createServer({
-  client: createClient(url, token),
+  client: createClient(url, token, fetch, "mcp"),
   cwd: process.cwd(),
 });
 await server.connect(new StdioServerTransport());

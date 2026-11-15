@@ -1,3 +1,5 @@
+import { hostname } from "node:os";
+
 export interface ApiClient {
   get(path: string): Promise<unknown>;
   post(path: string, body: unknown): Promise<unknown>;
@@ -10,19 +12,35 @@ export interface FullApiClient extends ApiClient {
   delete(path: string): Promise<unknown>;
 }
 
-/** Minimal HTTP client for the Impression API. */
+declare const __IMPRESSION_VERSION__: string | undefined;
+
+/**
+ * Names the client and machine behind a request, e.g. `pi/0.3.0 (tom-mini)`, so a
+ * token's owner can see where it is used. `IMPRESSION_MACHINE` overrides the hostname.
+ */
+export function clientName(name: string, env = process.env): string {
+  const version =
+    typeof __IMPRESSION_VERSION__ === "string" ? __IMPRESSION_VERSION__ : "dev";
+  const machine = env.IMPRESSION_MACHINE?.trim() || hostname();
+  return `${name}/${version} (${machine})`;
+}
+
+/** Minimal HTTP client for the Impression API. `client` names the caller, see `clientName`. */
 export function createClient(
   baseUrl: string,
   token: string,
   fetchImpl: typeof fetch = fetch,
+  client = "cli",
 ): FullApiClient {
   const root = baseUrl.replace(/\/+$/, "");
+  const from = clientName(client);
   const send = async (method: string, path: string, body?: unknown) => {
     const res = await fetchImpl(`${root}/api${path}`, {
       method,
       headers: {
         authorization: `Bearer ${token}`,
         "content-type": "application/json",
+        "x-impression-client": from,
       },
       body: body === undefined ? undefined : JSON.stringify(body),
     });

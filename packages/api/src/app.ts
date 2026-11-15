@@ -18,6 +18,7 @@ import { RequestLog } from "./request-log.js";
 import { searchRoutes } from "./search.js";
 import { sessionRoutes } from "./sessions.js";
 import { settingsRoutes } from "./settings.js";
+import { tokenRoutes } from "./tokens.js";
 import { usageContext } from "./usage.js";
 
 export function createApp(
@@ -69,6 +70,7 @@ export function createApp(
   api.route("/evals", evalRoutes(db));
   api.route("/dream", dreamRoutes(db, providers));
   api.route("/settings", settingsRoutes(db));
+  api.route("/tokens", tokenRoutes(db));
   api.get("/whoami", (c) => c.json({ name: c.get("principal") }));
   app.route("/api", api);
 
