@@ -4,7 +4,8 @@ import type { ConceptStart } from "../session-start.js";
 
 /** One line the agent would see at session start. */
 export interface PayloadLine {
-  kind: "memory" | "concept";
+  /** Practices are the same in both versions, so the ship rule leaves them out. */
+  kind: "practice" | "memory" | "concept";
   text: string;
 }
 
@@ -32,11 +33,15 @@ const mem = (i: CoreItem): PayloadLine => ({
   kind: "memory",
   text: i.content,
 });
+const practice = (i: CoreItem): PayloadLine => ({
+  kind: "practice",
+  text: i.content,
+});
 
 /** Today's top-N set, rendered as the hook renders it. */
 export function renderTopN(project: string, items: CoreItem[]): Payload {
   return render([
-    { header: PRACTICES, lines: items.filter(isPractice).map(mem) },
+    { header: PRACTICES, lines: items.filter(isPractice).map(practice) },
     {
       header: `Saved memories for ${project} (from Impression; use the impression search tool for more):`,
       lines: items.filter((i) => !isPractice(i)).map(mem),
@@ -47,7 +52,7 @@ export function renderTopN(project: string, items: CoreItem[]): Payload {
 /** The concept version: practices, the concept map, then pinned and top memories. */
 export function renderConcepts(project: string, s: ConceptStart): Payload {
   return render([
-    { header: PRACTICES, lines: s.base.filter(isPractice).map(mem) },
+    { header: PRACTICES, lines: s.base.filter(isPractice).map(practice) },
     {
       header: `What Impression knows about ${project}, by topic (use the impression search tool for any of them):`,
       lines: s.map.map((c) => ({
@@ -120,6 +125,7 @@ export function countLabels(
   labels: { n: number; label: Label }[],
 ): Record<PayloadLine["kind"], SideCounts> {
   const out = {
+    practice: { helped: 0, irrelevant: 0, misleading: 0 },
     memory: { helped: 0, irrelevant: 0, misleading: 0 },
     concept: { helped: 0, irrelevant: 0, misleading: 0 },
   };
@@ -143,10 +149,11 @@ export interface Summary {
   conceptWins: number;
   ties: number;
   topNWins: number;
-  /** Share of memory lines judged helpful, over all sessions. */
+  /** Share of lines judged helpful, practices left out, over all sessions. */
   topNHelpful: number;
   conceptHelpful: number;
-  /** Share of topic lines judged helpful, concept version only. */
+  /** The concept version's split: its memory lines and its topic lines. */
+  conceptMemoryHelpful: number;
   topicHelpful: number;
   topNMisleading: number;
   conceptMisleading: number;
@@ -155,32 +162,31 @@ export interface Summary {
 
 const share = (n: number, d: number) => (d === 0 ? 0 : n / d);
 const total = (c: SideCounts) => c.helped + c.irrelevant + c.misleading;
+const add = (x: SideCounts, y: SideCounts): SideCounts => ({
+  helped: x.helped + y.helped,
+  irrelevant: x.irrelevant + y.irrelevant,
+  misleading: x.misleading + y.misleading,
+});
+const ZERO: SideCounts = { helped: 0, irrelevant: 0, misleading: 0 };
 
 /**
  * The ship rule: the concept version wins or ties at least half the sessions,
- * and its share of helpful memories is no lower than top-N's.
+ * and its share of helpful lines is no lower than top-N's. Practices are the
+ * same in both, so they are left out; topic lines count.
  */
 export function summarize(results: SessionResult[]): Summary {
   let conceptWins = 0;
   let ties = 0;
-  const sum = (pick: (r: SessionResult) => SideCounts) =>
-    results.reduce(
-      (acc, r) => {
-        const c = pick(r);
-        acc.helped += c.helped;
-        acc.irrelevant += c.irrelevant;
-        acc.misleading += c.misleading;
-        return acc;
-      },
-      { helped: 0, irrelevant: 0, misleading: 0 },
-    );
   for (const r of results) {
     if (r.verdict.better === "tie") ties++;
     else if (r.verdict.better === r.conceptsWere) conceptWins++;
   }
-  const t = sum((r) => r.topN.memory);
-  const c = sum((r) => r.concepts.memory);
+  const sum = (pick: (r: SessionResult) => SideCounts) =>
+    results.reduce((acc, r) => add(acc, pick(r)), ZERO);
+  const t = sum((r) => add(r.topN.memory, r.topN.concept));
+  const cm = sum((r) => r.concepts.memory);
   const topics = sum((r) => r.concepts.concept);
+  const c = add(cm, topics);
   const topNHelpful = share(t.helped, total(t));
   const conceptHelpful = share(c.helped, total(c));
   return {
@@ -190,6 +196,7 @@ export function summarize(results: SessionResult[]): Summary {
     topNWins: results.length - conceptWins - ties,
     topNHelpful,
     conceptHelpful,
+    conceptMemoryHelpful: share(cm.helped, total(cm)),
     topicHelpful: share(topics.helped, total(topics)),
     topNMisleading: share(t.misleading, total(t)),
     conceptMisleading: share(c.misleading, total(c)),

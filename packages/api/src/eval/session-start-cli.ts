@@ -318,7 +318,7 @@ writeFileSync(out, JSON.stringify({ summary: sum, results }, null, 2));
 const pct = (x: number) => `${Math.round(x * 100)}%`;
 console.log(`
 sessions ${sum.sessions}: concepts won ${sum.conceptWins}, tied ${sum.ties}, top-N won ${sum.topNWins}
-helpful memories: top-N ${pct(sum.topNHelpful)}, concepts ${pct(sum.conceptHelpful)}; topic lines helpful ${pct(sum.topicHelpful)}
-misleading memories: top-N ${pct(sum.topNMisleading)}, concepts ${pct(sum.conceptMisleading)}
+helpful lines, practices left out: top-N ${pct(sum.topNHelpful)}, concepts ${pct(sum.conceptHelpful)} (memories ${pct(sum.conceptMemoryHelpful)}, topics ${pct(sum.topicHelpful)})
+misleading lines: top-N ${pct(sum.topNMisleading)}, concepts ${pct(sum.conceptMisleading)}
 ${sum.pass ? "PASS" : "FAIL"}: concepts must win or tie half and help no less. Cost $${(spent / 1e6).toFixed(2)}. Results in ${out}`);
 await src.close();

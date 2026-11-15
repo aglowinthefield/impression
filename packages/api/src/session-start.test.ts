@@ -143,7 +143,7 @@ describe("session-start eval", () => {
       tokens: 0,
     });
     expect(p.lines.map((l) => l.kind)).toEqual([
-      "memory",
+      "practice",
       "concept",
       "concept",
       "memory",
@@ -158,11 +158,17 @@ describe("session-start eval", () => {
     expect(v?.better).toBe("A");
     expect(parseVerdict('{"a":[],"b":[],"better":"C"}')).toBeNull();
     const counts = countLabels(renderTopN("b", items), v?.a ?? []);
-    expect(counts.memory).toEqual({ helped: 1, irrelevant: 1, misleading: 0 });
+    expect(counts.practice).toEqual({
+      helped: 1,
+      irrelevant: 0,
+      misleading: 0,
+    });
+    expect(counts.memory).toEqual({ helped: 0, irrelevant: 1, misleading: 0 });
   });
 
   test("passes when concepts win or tie half and help no less", () => {
     const c = (helped: number, irrelevant: number) => ({
+      practice: { helped: 0, irrelevant: 9, misleading: 0 },
       memory: { helped, irrelevant, misleading: 0 },
       concept: { helped: 0, irrelevant: 0, misleading: 0 },
     });
@@ -175,5 +181,9 @@ describe("session-start eval", () => {
     expect(summarize([r("A", 1), r("B", 1)]).pass).toBe(true);
     expect(summarize([r("A", 0), r("tie", 1)]).pass).toBe(false);
     expect(summarize([r("B", 2), r("B", 2), r("tie", 2)]).pass).toBe(false);
+    // Topic lines count toward the concept version's share.
+    const withTopics = r("A", 0);
+    withTopics.concepts.concept = { helped: 2, irrelevant: 0, misleading: 0 };
+    expect(summarize([withTopics, r("tie", 1)]).pass).toBe(true);
   });
 });
