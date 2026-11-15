@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { ago, MemoriesPage } from "./Concepts";
+import { MemoriesPage } from "./Concepts";
+import { ago } from "./time";
 
 const concept = (o = {}) => ({
   id: "c1",

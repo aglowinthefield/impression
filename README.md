@@ -17,7 +17,7 @@ Each agent installs Impression with its own plugin command, and updates and remo
 
 `impression setup` finds Claude Code, pi and Codex, prints the install commands below, adds the pi package, and removes the hooks and MCP entries earlier versions of setup wrote, so nothing runs twice. It backs up each file it changes (`<file>.impression-backup-<timestamp>`) and is safe to rerun. `--dry-run` prints the changes without writing them; `--only claude|pi|codex` limits it to one.
 
-Every client reads `IMPRESSION_URL` (default `https://impression.quest`) and `IMPRESSION_TOKEN`, and falls back to the file `impression login` writes.
+Every client reads `IMPRESSION_URL` (default `https://impression.quest`) and `IMPRESSION_TOKEN`, and falls back to the file `impression login` writes. Each request names its client and machine, like `pi/0.3.0 (tom-mini)`, so Settings can show where every token was last used, including attempts with a revoked one. Set `IMPRESSION_MACHINE` where the hostname says nothing, as in containers and CI.
 
 ### Claude Code
 

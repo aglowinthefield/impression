@@ -34,7 +34,7 @@ async function loadLib() {
     const cli = await import(pathToFileURL(path).href);
     const { url, token } = cli.loadConfig();
     if (!token) return null;
-    return { cli, client: cli.createClient(url, token) };
+    return { cli, client: cli.createClient(url, token, fetch, "pi") };
   } catch {
     return null;
   }

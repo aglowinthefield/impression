@@ -3,7 +3,14 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { createApp } from "./app.js";
 import { createToken } from "./auth.js";
 import type { GithubConfig } from "./config.js";
-import { memories, sessions, users } from "./db/schema.js";
+import {
+  concepts,
+  dreamRuns,
+  memories,
+  projects,
+  sessions,
+  users,
+} from "./db/schema.js";
 import { GithubAuthError, type GithubClient } from "./github.js";
 import { renameOwner } from "./owner-rename.js";
 import { RepoAccess } from "./repo-access.js";
@@ -401,5 +408,27 @@ describe("owner:rename", () => {
       .where(eq(memories.owner, "newname"));
     expect(rows.every((r) => r.author === "newname")).toBe(true);
     expect(rows.map((r) => r.content)).toContain("mine");
+  });
+
+  test("drops the old name's concepts and dream runs", async () => {
+    const [p] = await t.db
+      .insert(projects)
+      .values({ key: "github.com/acme/rename", name: "rename" })
+      .returning();
+    const projectId = p?.id as string;
+    await t.db
+      .insert(concepts)
+      .values({ projectId, owner: "gone", name: "Old", summary: "s" });
+    await t.db
+      .insert(dreamRuns)
+      .values({ projectId, owner: "gone", trigger: "manual", model: "x" });
+    const moved = await renameOwner(t.db, "gone", "kept");
+    expect(moved.concepts).toBe(1);
+    expect(
+      await t.db.select().from(concepts).where(eq(concepts.owner, "gone")),
+    ).toEqual([]);
+    expect(
+      await t.db.select().from(dreamRuns).where(eq(dreamRuns.owner, "gone")),
+    ).toEqual([]);
   });
 });

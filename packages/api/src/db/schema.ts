@@ -232,6 +232,14 @@ export const apiTokens = pgTable("api_tokens", {
   source: text().notNull().default("manual"),
   createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   revokedAt: timestamp({ withTimezone: true }),
+  /** Where the token was last used: client and machine (`pi/0.3.0 (tom-mini)`) and IP. */
+  lastUsedAt: timestamp({ withTimezone: true }),
+  lastClient: text(),
+  lastIp: text(),
+  /** The last request that used this token after it was revoked. */
+  lastRejectedAt: timestamp({ withTimezone: true }),
+  lastRejectedClient: text(),
+  lastRejectedIp: text(),
 });
 
 /**

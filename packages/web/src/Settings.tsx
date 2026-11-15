@@ -1,5 +1,6 @@
 import { type FormEvent, useEffect, useState } from "react";
 import { api } from "./api";
+import { Tokens } from "./Tokens";
 
 interface UserSettings {
   extractionFloor: number;
@@ -62,6 +63,7 @@ export function Settings() {
         </small>
       </p>
       {error && <p role="alert">{error}</p>}
+      <Tokens />
     </section>
   );
 }

@@ -1,5 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
-import { and, eq, isNull } from "drizzle-orm";
+import { getConnInfo } from "@hono/node-server/conninfo";
+import { eq, sql } from "drizzle-orm";
+import type { Context } from "hono";
 import { createMiddleware } from "hono/factory";
 import { Access, ADMIN_ACCESS } from "./access.js";
 import type { Db } from "./db/client.js";
@@ -28,7 +30,23 @@ export async function createToken(
   return token;
 }
 
-export type AuthEnv = { Variables: { principal: string; access: Access } };
+export type AuthEnv = {
+  Variables: { principal: string; access: Access; tokenId: string };
+};
+
+/** Record a token's last use at most this often, unless its client or IP changed. */
+const USAGE_EVERY_MS = 60_000;
+
+/** Fly's view of the caller's IP, else the socket's. */
+function clientIp(c: Context): string | null {
+  const fly = c.req.header("fly-client-ip");
+  if (fly) return fly;
+  try {
+    return getConnInfo(c).remote.address ?? null;
+  } catch {
+    return null;
+  }
+}
 
 /** Requires `Authorization: Bearer <token>` matching an unrevoked token. Sets `principal` to its name. */
 export function requireAuth(db: Db, repoAccess?: RepoAccess) {
@@ -37,17 +55,48 @@ export function requireAuth(db: Db, repoAccess?: RepoAccess) {
     const match = header.match(/^Bearer\s+(\S+)$/i);
     if (!match) return c.json({ error: "missing bearer token" }, 401);
     const [row] = await db
-      .select({ name: apiTokens.name, userId: apiTokens.userId })
+      .select({
+        id: apiTokens.id,
+        name: apiTokens.name,
+        userId: apiTokens.userId,
+        revokedAt: apiTokens.revokedAt,
+        lastUsedAt: apiTokens.lastUsedAt,
+        lastClient: apiTokens.lastClient,
+        lastIp: apiTokens.lastIp,
+      })
       .from(apiTokens)
-      .where(
-        and(
-          eq(apiTokens.tokenHash, hashToken(match[1] as string)),
-          isNull(apiTokens.revokedAt),
-        ),
-      )
+      .where(eq(apiTokens.tokenHash, hashToken(match[1] as string)))
       .limit(1);
     if (!row) return c.json({ error: "invalid token" }, 401);
+    const client = (c.req.header("x-impression-client") ?? "unknown").slice(
+      0,
+      200,
+    );
+    const ip = clientIp(c);
+    if (row.revokedAt) {
+      await db
+        .update(apiTokens)
+        .set({
+          lastRejectedAt: sql`now()`,
+          lastRejectedClient: client,
+          lastRejectedIp: ip,
+        })
+        .where(eq(apiTokens.id, row.id));
+      return c.json({ error: "invalid token" }, 401);
+    }
+    if (
+      !row.lastUsedAt ||
+      Date.now() - row.lastUsedAt.getTime() > USAGE_EVERY_MS ||
+      row.lastClient !== client ||
+      row.lastIp !== ip
+    ) {
+      await db
+        .update(apiTokens)
+        .set({ lastUsedAt: sql`now()`, lastClient: client, lastIp: ip })
+        .where(eq(apiTokens.id, row.id));
+    }
     c.set("principal", row.name);
+    c.set("tokenId", row.id);
     if (!row.userId) {
       c.set("access", ADMIN_ACCESS());
     } else {

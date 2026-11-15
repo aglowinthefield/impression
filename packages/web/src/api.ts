@@ -30,6 +30,7 @@ export async function api<T>(
   const res = await fetch(`/api${path}`, {
     method: init.method ?? (init.body === undefined ? "GET" : "POST"),
     headers: {
+      "x-impression-client": "web",
       ...(token ? { authorization: `Bearer ${token}` } : {}),
       ...(init.body === undefined
         ? {}

@@ -21,6 +21,7 @@ beforeEach(() => {
         method: init.method ?? "GET",
         body: init.body as string | undefined,
       });
+      if (url.startsWith("/api/tokens")) return new Response('{"items":[]}');
       return new Response(
         init.method === "PUT"
           ? (init.body as string)

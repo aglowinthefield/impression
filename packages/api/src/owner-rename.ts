@@ -13,9 +13,13 @@ export async function renameOwner(db: Db, from: string, to: string) {
     await tx.execute(
       sql`DELETE FROM memory_ratings r WHERE r.owner = ${from} AND EXISTS (SELECT 1 FROM memory_ratings x WHERE x.memory_id = r.memory_id AND x.owner = ${to})`,
     );
+    // The old owner's concepts and dream runs go. Moved memories count as
+    // changed, so the schedule regroups them into the new owner's concepts.
+    const concepts = await n(sql`DELETE FROM concepts WHERE owner = ${from}`);
+    await tx.execute(sql`DELETE FROM dream_runs WHERE owner = ${from}`);
     return {
       memories: await n(
-        sql`UPDATE memories SET owner = ${to} WHERE owner = ${from}`,
+        sql`UPDATE memories SET owner = ${to}, updated_at = now() WHERE owner = ${from}`,
       ),
       authored: await n(
         sql`UPDATE memories SET author = ${to} WHERE author = ${from}`,
@@ -29,6 +33,7 @@ export async function renameOwner(db: Db, from: string, to: string) {
       ratings: await n(
         sql`UPDATE memory_ratings SET owner = ${to} WHERE owner = ${from}`,
       ),
+      concepts,
     };
   });
 }
