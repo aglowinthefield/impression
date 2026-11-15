@@ -518,9 +518,75 @@ export async function dream(
   });
 }
 
-/** `POST /api/dream?project=<key>` runs one dream over the caller's memories there. */
+export interface ConceptDto {
+  id: string;
+  parentId: string | null;
+  name: string;
+  summary: string;
+  /** Members still active or possibly stale. */
+  count: number;
+  related: string[];
+  updatedAt: string;
+}
+
+/** The caller's concepts in a project, by name, with live member counts. */
+export async function listConcepts(
+  db: Db,
+  projectId: string,
+  owner: string,
+): Promise<ConceptDto[]> {
+  const rows = await db
+    .select({
+      c: concepts,
+      count: sql<number>`count(${memories.id})::int`,
+    })
+    .from(concepts)
+    .leftJoin(conceptMemories, eq(conceptMemories.conceptId, concepts.id))
+    .leftJoin(
+      memories,
+      and(
+        eq(memories.id, conceptMemories.memoryId),
+        inArray(memories.status, ["active", "possibly_stale"]),
+      ),
+    )
+    .where(and(eq(concepts.projectId, projectId), eq(concepts.owner, owner)))
+    .groupBy(concepts.id)
+    .orderBy(concepts.name);
+  const ids = rows.map((r) => r.c.id);
+  const links = ids.length
+    ? await db
+        .select()
+        .from(conceptLinks)
+        .where(
+          or(inArray(conceptLinks.aId, ids), inArray(conceptLinks.bId, ids)),
+        )
+    : [];
+  return rows.map(({ c, count }) => ({
+    id: c.id,
+    parentId: c.parentId,
+    name: c.name,
+    summary: c.summary,
+    count,
+    related: links.flatMap((l) =>
+      l.aId === c.id ? [l.bId] : l.bId === c.id ? [l.aId] : [],
+    ),
+    updatedAt: c.updatedAt.toISOString(),
+  }));
+}
+
+/**
+ * `GET /api/dream?project=<key>` lists the caller's concepts there.
+ * `POST` runs one dream over the caller's memories there.
+ */
 export function dreamRoutes(db: Db, providers: Providers) {
   const app = new Hono<AuthEnv>();
+  app.get("/", async (c) => {
+    const key = c.req.query("project");
+    if (!key) return c.json({ error: "project is required" }, 400);
+    const p = await findProject(db, c.get("access"), key);
+    if (!p) return c.json({ error: "project not found" }, 404);
+    return c.json({ items: await listConcepts(db, p.id, c.get("principal")) });
+  });
   app.post("/", async (c) => {
     const key = c.req.query("project");
     if (!key) return c.json({ error: "project is required" }, 400);

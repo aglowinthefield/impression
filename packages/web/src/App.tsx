@@ -7,9 +7,9 @@ import {
   setToken,
   takeTokenFromHash,
 } from "./api";
+import { MemoriesPage } from "./Concepts";
 import { Debug } from "./Debug";
 import { Evals } from "./Evals";
-import { Memories } from "./Memories";
 import { Review } from "./Review";
 import { Settings } from "./Settings";
 
@@ -196,7 +196,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
       </header>
       <main>
         {tab === "Memories" ? (
-          <Memories project={project} />
+          <MemoriesPage project={project} />
         ) : tab === "Settings" ? (
           <Settings />
         ) : tab === "Evals" ? (

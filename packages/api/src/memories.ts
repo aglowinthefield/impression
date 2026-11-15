@@ -3,6 +3,7 @@ import {
   desc,
   eq,
   inArray,
+  isNotNull,
   isNull,
   ne,
   or,
@@ -19,7 +20,13 @@ import {
 } from "./access.js";
 import type { AuthEnv } from "./auth.js";
 import type { Db, Queryer } from "./db/client.js";
-import { anchors, memories, projects } from "./db/schema.js";
+import {
+  anchors,
+  conceptMemories,
+  concepts,
+  memories,
+  projects,
+} from "./db/schema.js";
 import type { Providers } from "./providers/index.js";
 import { decide, findCandidates, markSuperseded } from "./reconcile.js";
 import { isEmptyAfterScrub, scrub } from "./scrub.js";
@@ -99,6 +106,8 @@ const listQuery = z.object({
   status: z.enum(statuses).optional(),
   pinned: z.enum(["true", "false"]).optional(),
   tag: tagSchema.optional(),
+  /** A concept of yours (its subtopics included), or "none" for project memories in none of yours. */
+  concept: z.union([z.uuid(), z.literal("none")]).optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),
   offset: z.coerce.number().int().min(0).default(0),
 });
@@ -441,6 +450,16 @@ export function memoryRoutes(db: Db, providers: Providers) {
       );
     if (q.pinned) where.push(eq(memories.pinned, q.pinned === "true"));
     if (q.tag) where.push(sql`${q.tag} = ANY(${memories.tags})`);
+    if (q.concept === "none") {
+      where.push(
+        isNotNull(memories.projectId),
+        sql`not exists (select 1 from ${conceptMemories} cm join ${concepts} c on c.id = cm.concept_id where cm.memory_id = ${memories.id} and c.owner = ${principal} and c.project_id = ${memories.projectId})`,
+      );
+    } else if (q.concept) {
+      where.push(
+        sql`exists (select 1 from ${conceptMemories} cm join ${concepts} c on c.id = cm.concept_id where cm.memory_id = ${memories.id} and c.owner = ${principal} and (c.id = ${q.concept} or c.parent_id = ${q.concept}))`,
+      );
+    }
     if (q.project) {
       const p = await findProject(db, c.get("access"), q.project);
       // Your user-scoped memories (practices) belong to no project and apply in all of them.

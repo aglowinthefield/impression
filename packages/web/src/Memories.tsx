@@ -258,7 +258,17 @@ function Row({
   );
 }
 
-export function Memories({ project }: { project: string }) {
+/**
+ * `concept` narrows the list: a concept id, "none" for memories in no concept,
+ * or "practices". Search ignores it and looks across every memory.
+ */
+export function Memories({
+  project,
+  concept = "",
+}: {
+  project: string;
+  concept?: string;
+}) {
   const [tag, setTag] = useState("");
   const [knownTags, setKnownTags] = useState<string[]>(["practice"]);
   const [query, setQuery] = useState("");
@@ -276,6 +286,10 @@ export function Memories({ project }: { project: string }) {
       if (scope) q.set("scope", scope);
       if (status) q.set("status", status);
       if (tag) q.set("tag", tag);
+      if (concept === "practices") {
+        q.set("scope", "user");
+        q.set("tag", "practice");
+      } else if (concept) q.set("concept", concept);
       const r = query.trim()
         ? await api<{ results: Memory[] }>("/search", {
             body: {
@@ -298,7 +312,7 @@ export function Memories({ project }: { project: string }) {
     } finally {
       setLoading(false);
     }
-  }, [project, scope, status, tag, query]);
+  }, [project, scope, status, tag, query, concept]);
 
   useEffect(() => {
     const t = setTimeout(load, query ? 250 : 0);

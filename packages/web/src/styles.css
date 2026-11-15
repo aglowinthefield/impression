@@ -140,7 +140,13 @@
     @apply flex-1;
   }
   main {
-    @apply mx-auto max-w-4xl p-4;
+    @apply mx-auto max-w-6xl p-4;
+  }
+  .library {
+    @apply grid items-start gap-6 md:grid-cols-[14rem_1fr];
+  }
+  .library > nav {
+    @apply md:sticky md:top-4;
   }
   .filters {
     @apply mb-4 flex gap-2;

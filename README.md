@@ -209,7 +209,7 @@ It finds the repo's sessions (including ones run in subdirectories and `.worktre
 
 ## Dreaming
 
-A dream run groups one person's memories in a project into concepts, given the concepts from the last run. Practices and other people's private memories are left out. Run it with `POST /api/dream?project=<key>`, or from the API package with `pnpm db:dream <project key or name> <owner>`, which prints the concepts. A rerun keeps a concept's id when most of its memories stay the same, and its name too when they barely change.
+A dream run groups one person's memories in a project into concepts, given the concepts from the last run. Practices and other people's private memories are left out. Run it with `POST /api/dream?project=<key>`, or from the API package with `pnpm db:dream <project key or name> <owner>`, which prints the concepts. `GET /api/dream?project=<key>` lists them, and `GET /api/memories?concept=<id>` (or `none`) filters by one. In the web UI the Memories tab lists them on the left, with a Regroup button. A rerun keeps a concept's id when most of its memories stay the same, and its name too when they barely change.
 
 ## Web UI
 

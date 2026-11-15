@@ -368,6 +368,37 @@ describe("POST /api/dream", () => {
     expect(await t.db.select().from(conceptLinks)).toHaveLength(0);
   });
 
+  test("lists the caller's concepts and filters memories by them", async () => {
+    const get = async (path: string, token = alice) => {
+      const res = await app.request(path, {
+        headers: { authorization: `Bearer ${token}` },
+      });
+      return res.json();
+    };
+    const { items } = await get(
+      `/api/dream?project=${encodeURIComponent(project.key)}`,
+    );
+    expect(items).toMatchObject([{ name: "Auth", count: 2, parentId: null }]);
+    const inAuth = await get(
+      `/api/memories?project=${encodeURIComponent(project.key)}&concept=${items[0].id}`,
+    );
+    expect(inAuth.items.map((m: { id: string }) => m.id).sort()).toEqual(
+      [ids.login, ids.tokens].sort(),
+    );
+    const none = await get(
+      `/api/memories?project=${encodeURIComponent(project.key)}&concept=none`,
+    );
+    expect(none.items.map((m: { id: string }) => m.id).sort()).toEqual(
+      [ids.hooks, ids.team].sort(),
+    );
+    // Someone else's concept filters to nothing.
+    const asBob = await get(
+      `/api/memories?project=${encodeURIComponent(project.key)}&concept=${items[0].id}`,
+      bob,
+    );
+    expect(asBob.items).toEqual([]);
+  });
+
   test("bob's run leaves alice's concepts alone", async () => {
     reply = (p) =>
       JSON.stringify({
