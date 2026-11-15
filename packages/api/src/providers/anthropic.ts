@@ -16,7 +16,7 @@ export interface AnthropicOptions {
 }
 
 export function anthropicLlm(opts: AnthropicOptions): LlmProvider {
-  const model = opts.model ?? "claude-haiku-4-5";
+  const model = opts.model ?? "claude-haiku-5-5";
   const fetchFn = opts.fetch ?? fetch;
   const baseUrl = opts.baseUrl ?? "https://api.anthropic.com";
   return {

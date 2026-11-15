@@ -43,7 +43,7 @@ try {
     const started = Date.now();
     const r = await withUsageContext(
       { userId: null, principal: owner, operation: "dream" },
-      () => dream(db, providers.llm, p.id, owner),
+      () => dream(db, providers.dreamLlm, p.id, owner),
     );
     console.log(
       `${p.key}: ${r.memories} memories into ${r.concepts} concepts (${r.created} new, ${r.kept} kept, ${r.removed} removed), ${r.uncategorized} uncategorized, ${((Date.now() - started) / 1000).toFixed(0)}s`,

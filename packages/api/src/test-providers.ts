@@ -28,5 +28,6 @@ export function fakeProviders(
       },
     },
     llm: { model: "fake", complete: async () => "" },
+    dreamLlm: { model: "fake", complete: async () => "" },
   };
 }

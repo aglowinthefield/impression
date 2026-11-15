@@ -600,7 +600,7 @@ export function dreamRoutes(db: Db, providers: Providers) {
           principal,
           operation: "dream",
         },
-        () => dream(db, providers.llm, p.id, principal),
+        () => dream(db, providers.dreamLlm, p.id, principal),
       );
       return c.json(result);
     } catch (err) {

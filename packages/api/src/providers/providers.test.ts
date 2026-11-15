@@ -78,7 +78,7 @@ describe("anthropicLlm", () => {
     expect(h.get("x-api-key")).toBe("k");
     expect(h.get("anthropic-version")).toBe("2023-06-01");
     expect(f.body()).toEqual({
-      model: "claude-haiku-4-5",
+      model: "claude-haiku-5-5",
       max_tokens: 50,
       system: "s",
       messages: [{ role: "user", content: "p" }],
@@ -145,7 +145,7 @@ describe("usage reporting", () => {
       {
         kind: "completion",
         provider: "anthropic",
-        model: "claude-haiku-4-5",
+        model: "claude-haiku-5-5",
         inputTokens: 11,
         outputTokens: 3,
       },
@@ -181,7 +181,8 @@ describe("createProviders", () => {
       model: "text-embedding-3-small",
       dimensions: EMBEDDING_DIM,
     });
-    expect(p.llm.model).toBe("claude-haiku-4-5");
+    expect(p.llm.model).toBe("claude-haiku-5-5");
+    expect(p.dreamLlm.model).toBe("claude-sonnet-5-5");
   });
 
   test("names the missing key", () => {
@@ -204,7 +205,11 @@ describe("createProviders", () => {
       LLM_PROVIDER: "ollama",
       LLM_MODEL: "qwen",
     });
-    expect([p.embeddings.model, p.llm.model]).toEqual(["big-embed", "qwen"]);
+    expect([p.embeddings.model, p.llm.model, p.dreamLlm.model]).toEqual([
+      "big-embed",
+      "qwen",
+      "qwen",
+    ]);
   });
 
   test("rejects an embedding model whose size doesn't match the column", () => {

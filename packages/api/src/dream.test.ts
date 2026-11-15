@@ -194,7 +194,7 @@ describe("POST /api/dream", () => {
     t = await createTestDb();
     usage = new UsageRecorder(t.db);
     const providers = fakeProviders();
-    providers.llm = {
+    providers.dreamLlm = {
       model: "fake",
       async complete(req) {
         prompts.push(req.prompt);

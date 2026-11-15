@@ -86,7 +86,8 @@ TypeScript monorepo (pnpm workspaces, Node 22+). Packages: `shared`, `api`, `cli
 | `PORT`                               | `3000`                                       |                                                                             |
 | `EMBEDDING_PROVIDER`                 | `openai`                                     | or `ollama`. Needs `OPENAI_API_KEY` for openai.                             |
 | `LLM_PROVIDER`                       | `anthropic`                                  | or `ollama`. Needs `ANTHROPIC_API_KEY` for anthropic.                       |
-| `EMBEDDING_MODEL`, `LLM_MODEL`       | `text-embedding-3-small`, `claude-haiku-4-5` | Required for ollama.                                                        |
+| `EMBEDDING_MODEL`, `LLM_MODEL`       | `text-embedding-3-small`, `claude-haiku-5-5` | Required for ollama.                                                        |
+| `DREAM_MODEL`                        | `claude-sonnet-5-5`                          | Model for dreaming. With ollama, defaults to `LLM_MODEL`.                   |
 | `EMBEDDING_DIMENSIONS`, `OLLAMA_URL` |                                              | Ollama only. The dimension must be 768 to match the column.                 |
 | `EMBEDDING_MIN_SIMILARITY`           | `0.3` openai, `0.45` ollama                  | Search floor. Cosine scores differ between models, so retune with the eval. |
 

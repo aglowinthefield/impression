@@ -40,6 +40,9 @@ const PRICES: Record<string, [number, number]> = {
   "openai/text-embedding-3-large": [0.13, 0],
   "anthropic/claude-haiku-4-5": [1, 5],
   "anthropic/claude-sonnet-4-5": [3, 15],
+  // Haiku 5.5 costs 5x more on prompts over 100k tokens; none of ours get close.
+  "anthropic/claude-haiku-5-5": [0.1, 0.5],
+  "anthropic/claude-sonnet-5-5": [2, 10],
 };
 
 /** Estimated cost in millionths of a dollar. 0 for local Ollama models, null for unknown ones. */
