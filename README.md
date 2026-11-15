@@ -207,6 +207,10 @@ pnpm --filter @impression/cli seed -- --repo ~/code/my-repo --token imp_...
 
 It finds the repo's sessions (including ones run in subdirectories and `.worktrees/*`) under `~/.pi/agent/sessions`, `~/.claude/projects` and `~/.codex/sessions`, oldest first, splits each into pieces of about 55,000 characters of conversation, and uploads each piece with extraction, three at a time. Each piece prints one line, and the run ends with totals. `--dry-run` lists sessions and piece counts without sending anything. Other flags: `--agents pi,claude,codex`, `--since 2026-10-01`, `--limit <sessions>`, `--concurrency 3`, `--timeout <seconds per request>`. The URL and token come from `--url`/`--token`, then `IMPRESSION_URL`/`IMPRESSION_TOKEN`, then the saved config, and it refuses any host other than localhost unless you pass `--allow-remote`. The server keeps one copy of a piece sent twice within a day and doesn't extract it again, so a rerun soon after a partial run only extracts the new pieces. `IMPRESSION_SEED_PI_DIR`, `IMPRESSION_SEED_CLAUDE_DIR` and `IMPRESSION_SEED_CODEX_DIR` point it at other transcript folders.
 
+## Dreaming
+
+A dream run groups one person's memories in a project into concepts, given the concepts from the last run. Practices and other people's private memories are left out. Run it with `POST /api/dream?project=<key>`, or from the API package with `pnpm db:dream <project key or name> <owner>`, which prints the concepts. A rerun keeps a concept's id when most of its memories stay the same, and its name too when they barely change.
+
 ## Web UI
 
 `packages/web` is a React single-page app. `pnpm build` produces `packages/web/dist`, and the API serves it at `/` when that directory exists (or set `WEB_DIR`). Sign in with an API token; the project switcher lists every project on the server. For hot reload run the API on :3000 and `pnpm --filter @impression/web dev`.
