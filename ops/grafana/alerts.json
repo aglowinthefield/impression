@@ -1,0 +1,121 @@
+{
+  "contactPoint": "impression-email",
+  "rules": [
+    {
+      "uid": "dream-failed",
+      "title": "Dream run failed",
+      "folderUID": "impression",
+      "ruleGroup": "dreams",
+      "condition": "C",
+      "for": "0s",
+      "noDataState": "OK",
+      "execErrState": "Error",
+      "labels": {
+        "severity": "critical"
+      },
+      "annotations": {
+        "summary": "A dream run failed in the last hour. The Latest runs table has the error.",
+        "__dashboardUid__": "impression-dreams",
+        "__panelId__": "2"
+      },
+      "data": [
+        {
+          "refId": "A",
+          "relativeTimeRange": {
+            "from": 3600,
+            "to": 0
+          },
+          "datasourceUid": "impression-pg",
+          "model": {
+            "refId": "A",
+            "format": "table",
+            "rawQuery": true,
+            "editorMode": "code",
+            "rawSql": "select count(*)::float as value from dream_runs where error is not null and started_at > now() - interval '1 hour'"
+          }
+        },
+        {
+          "refId": "C",
+          "relativeTimeRange": {
+            "from": 0,
+            "to": 0
+          },
+          "datasourceUid": "__expr__",
+          "model": {
+            "refId": "C",
+            "type": "threshold",
+            "expression": "A",
+            "conditions": [
+              {
+                "evaluator": {
+                  "type": "gt",
+                  "params": [
+                    0
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "uid": "dream-stalled",
+      "title": "No dream run in 3 days",
+      "folderUID": "impression",
+      "ruleGroup": "dreams",
+      "condition": "C",
+      "for": "0s",
+      "noDataState": "OK",
+      "execErrState": "Error",
+      "labels": {
+        "severity": "warning"
+      },
+      "annotations": {
+        "summary": "No dream run anywhere for 3 days. Either nobody added memories or the schedule stopped.",
+        "__dashboardUid__": "impression-dreams",
+        "__panelId__": "4"
+      },
+      "data": [
+        {
+          "refId": "A",
+          "relativeTimeRange": {
+            "from": 3600,
+            "to": 0
+          },
+          "datasourceUid": "impression-pg",
+          "model": {
+            "refId": "A",
+            "format": "table",
+            "rawQuery": true,
+            "editorMode": "code",
+            "rawSql": "select case when max(started_at) < now() - interval '3 days' then 1.0 else 0.0 end as value from dream_runs"
+          }
+        },
+        {
+          "refId": "C",
+          "relativeTimeRange": {
+            "from": 0,
+            "to": 0
+          },
+          "datasourceUid": "__expr__",
+          "model": {
+            "refId": "C",
+            "type": "threshold",
+            "expression": "A",
+            "conditions": [
+              {
+                "evaluator": {
+                  "type": "gt",
+                  "params": [
+                    0
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
