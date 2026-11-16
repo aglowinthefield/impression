@@ -4,9 +4,7 @@ pnpm monorepo: `packages/api` (Hono, Drizzle, Postgres), `packages/web` (React),
 
 ## Specs and decisions
 
-Work is spec-driven. Specs and the running decision log live in the Obsidian dev vault, not in this repo (`$DEV_VAULT/Impression/`, default `~/Documents/somewhere.garden/Impression/`).
+Work is spec-driven, following Unconscious Development: each domain has a Persona in `docs/personas/<domain>.md`, and a change that needs a design choice gets a spec and plan in `docs/specs/<domain>/`, merged before any code. Use the `spec` skill (or `issue` to start from an issue id).
 
-- Before building a feature that changes behaviour, write a spec from `Spec template.md` into `Specs/`, and get it reviewed before code.
-- Keep the spec's `status` and `pr` frontmatter current. Move resolved open questions into Decisions.
-- Record decisions that outlive one spec in `Decisions.md`.
-- The repo keeps only what contributors need: this file and the README.
+- Specs written before 2026-11-16 and the running decision log live in the Obsidian dev vault (`$DEV_VAULT/Impression/`, default `~/Documents/somewhere.garden/Impression/`). Leave them there; new specs go in the repo.
+- Record decisions that outlive one spec in the vault's `Decisions.md`.
