@@ -42,7 +42,4 @@ Web: an Activity tab replaces Review and Evals; `/review` and `/evals` paths res
 
 ## Tasks
 
-- [ ] t1: Event log and the Activity list. Migration; every change site (extraction create, merge and supersede, staleness check, person edit and retire) writes its event in the same transaction; `GET /activity` with source filter, cursor paging and dream runs merged in; the Activity tab listing entries with their reasons and before/after text; Review and Evals tabs removed with their old paths opening Activity; Evals moved under Debug. Criteria: AC1, AC2, AC3, AC4, AC5, AC10, AC12, AC13
-- [ ] t2: Undo. `POST /activity/:eventId/undo` with the reverse change per kind, the later-change check and the permission rule; the undo button, the undone mark and the refusal message. Criteria: AC6, AC7, AC8, AC9. after: t1
-- [ ] t3: Four-week summary. `GET /activity/summary` and the weekly row above the list. Criteria: AC11. after: t1
-- [ ] t4: Flagged memories after Review goes, as AC14 decides. Criteria: AC14. after: t1
+- [ ] t1: The Activity page. Migration; every change site (extraction create, merge and supersede, staleness check, person edit and retire) writes its event in the same transaction; `GET /activity` with source filter, cursor paging and dream runs merged in; `GET /activity/summary`; `POST /activity/:eventId/undo` with the reverse change per kind, the later-change check and the permission rule; the Activity tab with entries, before/after text, undo, the undone mark and the weekly summary; flagged memories as AC14 decides; Review and Evals tabs removed with their old paths opening Activity; Evals moved under Debug. Criteria: AC1, AC2, AC3, AC4, AC5, AC6, AC7, AC8, AC9, AC10, AC11, AC12, AC13, AC14
