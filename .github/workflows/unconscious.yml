@@ -1,0 +1,69 @@
+# From aglowinthefield/unconscious-development (workflows/unconscious.yml).
+#
+# check-spec    on a PR touching specs or Personas: refuses a malformed spec or plan, a missing
+#               invariant, an uncovered criterion, or an open [NEEDS CLARIFICATION] marker, and
+#               explains a failure in a comment on the PR.
+# on-merge      on a push to main touching specs: each approved spec flips its plan's issue to
+#               ready-for-agent and runs spec-to-tasks.
+# spec-to-tasks when you label an issue ready-for-agent by hand (the trivial tier).
+#
+# Tasks go to the runner. With no runner reachable from Actions, the session runner prints each
+# task to the log for a person to start. To create Bakery cards instead, run this on a runner that
+# can reach the board and set UD_RUNNER: bakery plus BAKERY_URL.
+name: unconscious
+
+on:
+  pull_request:
+    paths: ["docs/specs/**", "docs/personas/**"]
+  push:
+    branches: [main]
+    paths: ["docs/specs/**"]
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+env:
+  UD_REF: main
+  UD_RUNNER: session
+
+jobs:
+  check-spec:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with: { repository: aglowinthefield/unconscious-development, ref: "${{ env.UD_REF }}", path: .ud }
+      - uses: actions/setup-node@v4
+        with: { node-version: 24 }
+      - run: .ud/bin/unconscious check-spec --pr "${{ github.event.pull_request.number }}" --repo "$GITHUB_REPOSITORY"
+        env: { GH_TOKEN: "${{ github.token }}" }
+
+  on-merge:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/checkout@v4
+        with: { repository: aglowinthefield/unconscious-development, ref: "${{ env.UD_REF }}", path: .ud }
+      - uses: actions/setup-node@v4
+        with: { node-version: 24 }
+      - run: .ud/bin/unconscious on-merge --base "${{ github.event.before }}" --head "${{ github.sha }}" --runner "$UD_RUNNER"
+        env: { GH_TOKEN: "${{ github.token }}" }
+
+  spec-to-tasks:
+    if: github.event_name == 'issues' && github.event.label.name == 'ready-for-agent'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with: { repository: aglowinthefield/unconscious-development, ref: "${{ env.UD_REF }}", path: .ud }
+      - uses: actions/setup-node@v4
+        with: { node-version: 24 }
+      - run: .ud/bin/unconscious spec-to-tasks "${{ github.event.issue.number }}" --runner "$UD_RUNNER"
+        env: { GH_TOKEN: "${{ github.token }}" }
