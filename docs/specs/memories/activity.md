@@ -1,6 +1,6 @@
 ---
 domain: memories
-status: draft
+status: approved
 issues:
   - https://github.com/aglowinthefield/impression/issues/89
 surfaces:
@@ -35,14 +35,12 @@ Memories change without anyone reviewing them. Extraction adds, merges and super
   A keep, a dream run and an undo have no undo.
 - AC7: After an undo the entry is marked undone and offers no second undo. The undo appears as its own entry.
 - AC8: Undo is refused, with a message saying the memory changed since, when the memory has a later entry that isn't undone.
-- AC9: Undo is offered to [NEEDS CLARIFICATION: who can undo?] and to no one else. Others see the entry without it.
-  > **Open:** today only a memory's author can retire it. Should undo on a project or team memory also be author-only, or open to anyone with access to the repo?
+- AC9: Undo is offered only to the memory's author, matching who can retire it. Others see the entry without it.
 - AC10: A filter narrows the list to one source: extraction, staleness check, dreaming, or people.
 - AC11: Above the list, the last four weeks each show the memories added, rewritten or superseded, and retired in the selected project, and the retire rate (retired over added) as a percentage.
 - AC12: An entry never reveals a memory, or its text before a change, to a viewer who can't see that memory now. Dream run entries appear only for the viewer's own runs.
 - AC13: The hand-rating eval tool from the Evals tab is reachable from Debug and works as before.
-- AC14: A memory flagged as possibly stale [NEEDS CLARIFICATION: where it shows].
-  > **Open:** the Review tab listed flagged memories with Still true, Update and Retire. With Review gone, should flagged memories show as a filter on the Memories tab, as a pinned group at the top of Activity, or nowhere special now that the staleness check decides on its own?
+- AC14: The Memories tab has a filter that lists the memories flagged as possibly stale, with the same actions as any other memory. Activity has no separate group for them.
 - AC15 (after deploy): within 7 days of the release, Activity in prod lists at least one extraction entry and one dream run entry, and the four-week summary shows a retire rate. Check by opening Activity for `aglowinthefield/impression`.
 
 ## Setup note
