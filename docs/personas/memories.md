@@ -1,7 +1,7 @@
 ---
 domain: memories
 owner: aglowinthefield
-status: draft
+status: confirmed
 ---
 
 ## Scope
