@@ -1,6 +1,7 @@
 import { relative } from "node:path";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
+import { activityRoutes } from "./activity.js";
 import { type AuthEnv, requireAuth } from "./auth.js";
 import type { GithubConfig } from "./config.js";
 import { coreRoutes } from "./core.js";
@@ -69,6 +70,7 @@ export function createApp(
   api.route("/projects", projectRoutes(db));
   api.route("/evals", evalRoutes(db));
   api.route("/dream", dreamRoutes(db, providers));
+  api.route("/activity", activityRoutes(db, providers));
   api.route("/settings", settingsRoutes(db));
   api.route("/tokens", tokenRoutes(db));
   api.get("/whoami", (c) => c.json({ name: c.get("principal") }));

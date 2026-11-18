@@ -6,7 +6,8 @@ import { z } from "zod";
 import { findProject, memoryVisible } from "./access.js";
 import type { AuthEnv } from "./auth.js";
 import type { Db, Queryer } from "./db/client.js";
-import { anchors, memories, memoryEvents, projects } from "./db/schema.js";
+import { anchors, memories, projects } from "./db/schema.js";
+import { logEvent } from "./events.js";
 import {
   type AnchorDto,
   anchorInput,
@@ -354,7 +355,7 @@ export function recheckRoutes(db: Db, providers: Providers) {
             .set({ status: "active", staleReason: null })
             .where(eq(memories.id, id))
             .returning();
-          await record(tx, id, "kept", b.reason, detail);
+          await record(tx, id, "kept", principal, b.reason, detail);
           const [memory] = await withAnchors(tx, [
             toDto(row as MemoryRow, projectKey),
           ]);
@@ -367,7 +368,7 @@ export function recheckRoutes(db: Db, providers: Providers) {
             .set({ status: "retired", updatedAt: new Date() })
             .where(eq(memories.id, id))
             .returning();
-          await record(tx, id, "retired", b.reason, {
+          await record(tx, id, "retired", principal, b.reason, {
             ...detail,
             why: verdict.why ?? null,
           });
@@ -412,7 +413,8 @@ export function recheckRoutes(db: Db, providers: Providers) {
               anchors: carried,
             },
             undefined,
-            { embedding: vector },
+            // The rewrite's own entry, on the memory it replaces, covers the new one.
+            { embedding: vector, event: false },
           ),
         );
         const newId = r.status === 201 ? r.body.id : undefined;
@@ -424,8 +426,10 @@ export function recheckRoutes(db: Db, providers: Providers) {
             .where(eq(memories.id, newId));
         }
         await markSuperseded(tx, [id], newId);
-        await record(tx, id, "rewritten", b.reason, {
+        await record(tx, id, "rewritten", principal, b.reason, {
           ...detail,
+          before: m.content,
+          after: verdict.content,
           replacement: newId,
           content: verdict.content,
         });
@@ -487,8 +491,15 @@ function record(
   db: Queryer,
   memoryId: string,
   kind: "kept" | "rewritten" | "retired",
+  principal: string,
   reason: string,
   detail: Record<string, unknown>,
 ) {
-  return db.insert(memoryEvents).values({ memoryId, kind, reason, detail });
+  return logEvent(
+    db,
+    memoryId,
+    kind,
+    { actor: "check", principal, reason },
+    detail,
+  );
 }

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { Activity } from "./Activity";
 import {
   ApiError,
   api,
@@ -9,8 +10,6 @@ import {
 } from "./api";
 import { MemoriesPage } from "./Concepts";
 import { Debug } from "./Debug";
-import { Evals } from "./Evals";
-import { Review } from "./Review";
 import { Settings } from "./Settings";
 
 function Login({ onDone }: { onDone: () => void }) {
@@ -74,8 +73,11 @@ function Login({ onDone }: { onDone: () => void }) {
   );
 }
 
-const tabs = ["Memories", "Review", "Evals", "Settings", "Debug"] as const;
+const tabs = ["Memories", "Activity", "Settings", "Debug"] as const;
 type Tab = (typeof tabs)[number];
+
+/** Tabs Activity replaced; their old links open Activity. */
+const oldTabs = ["review", "evals"];
 
 const GITHUB = "github.com/";
 
@@ -92,10 +94,14 @@ const pathFor = (t: Tab, p: string) => {
 const parsePath = (): { tab: Tab; project: string } => {
   const parts = location.pathname.split("/").filter(Boolean);
   const last = parts.length > 0 ? parts[parts.length - 1] : "";
-  const tab = tabs.find((t) => t.toLowerCase() === last) ?? "Memories";
+  const tab = oldTabs.includes(last ?? "")
+    ? "Activity"
+    : (tabs.find((t) => t.toLowerCase() === last) ?? "Memories");
   const repo = parts.length >= 2 && parts.length <= 3 ? parts.slice(0, 2) : [];
   const fromPath =
-    repo.length === 2 && !tabs.some((t) => t.toLowerCase() === repo[0])
+    repo.length === 2 &&
+    !tabs.some((t) => t.toLowerCase() === repo[0]) &&
+    !oldTabs.includes(repo[0] ?? "")
       ? `${GITHUB}${repo.join("/")}`
       : "";
   return {
@@ -199,12 +205,10 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
           <MemoriesPage project={project} />
         ) : tab === "Settings" ? (
           <Settings />
-        ) : tab === "Evals" ? (
-          <Evals project={project} />
         ) : tab === "Debug" ? (
-          <Debug />
+          <Debug project={project} />
         ) : (
-          <Review project={project} />
+          <Activity project={project} />
         )}
       </main>
     </div>

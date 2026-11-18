@@ -90,7 +90,21 @@ test("tab and project live in the URL", async () => {
   render(<App />);
   const select = (await screen.findByLabelText("Project")) as HTMLSelectElement;
   await waitFor(() => expect(select.value).toBe("github.com/a/z"));
-  expect(location.pathname).toBe("/a/z/review");
+  // Review and Evals were folded into Activity; old links land there.
+  await waitFor(() => expect(location.pathname).toBe("/a/z/activity"));
+  expect(screen.getByText("Activity").getAttribute("aria-current")).toBe(
+    "true",
+  );
+  expect(screen.queryByText("Review")).toBeNull();
+  expect(screen.queryByText("Evals")).toBeNull();
+  cleanup();
+  history.replaceState(null, "", "/evals?project=github.com%2Fa%2Fx");
+  render(<App />);
+  await waitFor(() => expect(location.pathname).toBe("/a/x/activity"));
+  cleanup();
+  history.replaceState(null, "", "/a/z/activity");
+  render(<App />);
+  await screen.findByLabelText("Project");
   history.pushState(null, "", "/a/x/debug");
   history.back();
   history.back();

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
+import { Evals } from "./Evals";
 
 interface Entry {
   at: string;
@@ -22,8 +23,33 @@ export function shortClient(ua: string): string {
   return ua.split(" ")[0]?.split("/")[0] || "unknown";
 }
 
+const views = ["Requests", "Evals"] as const;
+
+/** Developer tools: recent requests, and the hand-rating eval harness. */
+export function Debug({ project }: { project: string }) {
+  const [view, setView] = useState<(typeof views)[number]>("Requests");
+  return (
+    <div>
+      <div className="join mb-4">
+        {views.map((v) => (
+          <button
+            key={v}
+            type="button"
+            className={`btn btn-sm join-item ${v === view ? "btn-active" : ""}`}
+            aria-pressed={v === view}
+            onClick={() => setView(v)}
+          >
+            {v}
+          </button>
+        ))}
+      </div>
+      {view === "Requests" ? <Requests /> : <Evals project={project} />}
+    </div>
+  );
+}
+
 /** Recent API requests from your token, to check whether an agent is reaching the server. */
-export function Debug() {
+function Requests() {
   const [items, setItems] = useState<Entry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const load = useCallback(async () => {
