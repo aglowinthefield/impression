@@ -8,7 +8,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { createClient, resolveProject } from "@impression/shared";
+import { createClient } from "@impression/shared";
 import { loadConfig } from "./config.js";
 import { promptContext, sessionStartContext } from "./hook.js";
 import {
@@ -22,7 +22,7 @@ import {
   parseHookInput,
   sessionAgent,
 } from "./hook-io.js";
-import { claimRecheck, recheckProject } from "./recheck.js";
+import { recheckProject, startRecheck } from "./recheck.js";
 import { sendSession } from "./session-end.js";
 
 /** Stdin as text. Gives up after `ms`, and reads nothing from a terminal. */
@@ -150,31 +150,6 @@ export function cwdArg(args: string[]): string | undefined {
   const i = args.indexOf("--cwd");
   const v = i >= 0 ? args[i + 1] : undefined;
   return v && !v.startsWith("--") ? v : undefined;
-}
-
-/**
- * The staleness check reads files and waits on the model, too slow for session
- * start, so it runs in a detached child, at most once an hour per project.
- */
-function startRecheck(cwd: string, agent: Agent): void {
-  try {
-    if (!claimRecheck(resolveProject(cwd).key)) return;
-    const child = spawn(
-      process.execPath,
-      [
-        process.argv[1] as string,
-        "hook",
-        "recheck",
-        "--agent",
-        agent,
-        "--cwd",
-        cwd,
-      ],
-      { detached: true, stdio: "ignore", cwd },
-    );
-    child.on("error", () => {});
-    child.unref();
-  } catch {}
 }
 
 /** The detached half: sends the copied transcript, then removes the copy. */

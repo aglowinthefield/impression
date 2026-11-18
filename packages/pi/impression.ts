@@ -144,6 +144,11 @@ export default function (pi: ExtensionAPI) {
     seen.clear();
     sent = ctx.sessionManager.getEntries().length;
     lib = await loadLib();
+    // The staleness check runs in a detached CLI process, at most once an hour per project.
+    if (lib && SCRIPT)
+      try {
+        lib.cli.startRecheck?.(ctx.cwd, "pi", { script: SCRIPT });
+      } catch {}
     context = lib
       ? ((await lib.cli.sessionStartContext(lib.client, ctx.cwd, {
           session: sessionId(ctx),

@@ -4,6 +4,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   rmSync,
   symlinkSync,
   utimesSync,
@@ -11,9 +12,9 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { cwdArg } from "./hook-run.js";
-import { claimRecheck, recheckProject } from "./recheck.js";
+import { claimRecheck, recheckProject, startRecheck } from "./recheck.js";
 
 describe("claimRecheck", () => {
   const env = () => ({
@@ -291,5 +292,45 @@ describe("hook recheck", () => {
     expect(cwdArg(["--agent", "claude"])).toBeUndefined();
     expect(cwdArg(["--cwd"])).toBeUndefined();
     expect(cwdArg(["--cwd", "--agent", "claude"])).toBeUndefined();
+  });
+});
+
+describe("startRecheck", () => {
+  /** A stand-in CLI that writes the arguments it was started with. */
+  function fakeCli() {
+    const dir = mkdtempSync(join(tmpdir(), "imp-start-"));
+    const out = join(dir, "argv.json");
+    const script = join(dir, "cli.mjs");
+    writeFileSync(
+      script,
+      `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(out)}, JSON.stringify(process.argv.slice(2)));\n`,
+    );
+    const env = { ...process.env, XDG_CONFIG_HOME: join(dir, "config") };
+    return { script, out, env };
+  }
+
+  test("starts hook recheck in the background once an hour per project", async () => {
+    const { dir } = repo();
+    const { script, out, env } = fakeCli();
+    expect(startRecheck(dir, "pi", { script, env })).toBe(true);
+    await vi.waitFor(() => expect(existsSync(out)).toBe(true), {
+      timeout: 5000,
+    });
+    expect(JSON.parse(readFileSync(out, "utf8"))).toEqual([
+      "hook",
+      "recheck",
+      "--agent",
+      "pi",
+      "--cwd",
+      dir,
+    ]);
+    expect(startRecheck(dir, "pi", { script, env })).toBe(false);
+  });
+
+  test("starts nothing outside a git checkout", () => {
+    const dir = mkdtempSync(join(tmpdir(), "imp-nogit-"));
+    const { script, env } = fakeCli();
+    expect(startRecheck(dir, "pi", { script, env })).toBe(false);
+    expect(existsSync(env.XDG_CONFIG_HOME)).toBe(false);
   });
 });
