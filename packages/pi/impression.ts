@@ -23,15 +23,24 @@ function local(...paths: string[]) {
     .find((p) => existsSync(p));
 }
 
-/**
- * Loads the CLI library into this process, so the per-prompt search skips a node
- * start-up and reuses one HTTP connection. Null if it can't be found or isn't signed in.
- */
-async function loadLib() {
+/** The CLI library, loaded into this process. Null if it can't be found. */
+async function loadCli() {
   try {
     const path = local("../dist/lib.js", "../cli/dist/lib.js");
-    if (!path) return null;
-    const cli = await import(pathToFileURL(path).href);
+    return path ? await import(pathToFileURL(path).href) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A client for the per-prompt search, which then skips a node start-up and reuses one
+ * HTTP connection. Null if the library isn't loaded or isn't signed in.
+ */
+// biome-ignore lint/suspicious/noExplicitAny: the library is loaded at runtime
+function connect(cli: any) {
+  try {
+    if (!cli) return null;
     const { url, token } = cli.loadConfig();
     if (!token) return null;
     return { cli, client: cli.createClient(url, token, fetch, "pi") };
@@ -85,7 +94,7 @@ export default function (pi: ExtensionAPI) {
   let context = "";
   let injected = false;
   const seen = new Set<string>();
-  let lib: Awaited<ReturnType<typeof loadLib>> = null;
+  let lib: ReturnType<typeof connect> = null;
   let sent = 0; // entries of the session file already sent
   let sending: Promise<void> = Promise.resolve();
 
@@ -143,7 +152,14 @@ export default function (pi: ExtensionAPI) {
     injected = false;
     seen.clear();
     sent = ctx.sessionManager.getEntries().length;
-    lib = await loadLib();
+    const cli = await loadCli();
+    // After an update, show what changed, once. Checked only with a UI, so a print-mode
+    // run doesn't use up the notice.
+    if (ctx.hasUI) {
+      const note = cli?.upgradeNotice?.(cli.VERSION);
+      if (note) ctx.ui.notify(note, "info");
+    }
+    lib = connect(cli);
     // The staleness check runs in a detached CLI process, at most once an hour per project.
     if (lib && SCRIPT)
       try {

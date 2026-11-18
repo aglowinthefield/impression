@@ -8,3 +8,7 @@ Work is spec-driven, following Unconscious Development: each domain has a Person
 
 - Specs written before 2026-11-16 and the running decision log live in the Obsidian dev vault (`$DEV_VAULT/Impression/`, default `~/Documents/somewhere.garden/Impression/`). Leave them there; new specs go in the repo.
 - Record decisions that outlive one spec in the vault's `Decisions.md`.
+
+## Releasing
+
+Before bumping `packages/impression/package.json` and tagging `v<version>`, add a `## <version>` section to the top of `CHANGELOG.md`. Write it for people who use Impression, not its developers: one bullet per change they would notice, from the PRs merged since the last tag, and leave out internal work (CI, specs, tests, dev scripts). pi shows these bullets once after an update, and the release workflow fails without the section.
