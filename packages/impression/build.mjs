@@ -41,6 +41,7 @@ mkdirSync("pi", { recursive: true });
 copyFileSync("../pi/impression.ts", "pi/impression.ts");
 copyFileSync("../../LICENSE", "LICENSE");
 copyFileSync("../../README.md", "README.md");
+copyFileSync("../../CHANGELOG.md", "CHANGELOG.md");
 
 // Plugin files for Claude Code and Codex. Both install this npm package as the plugin
 // root and only fetch a new copy when the manifest version changes, so the version

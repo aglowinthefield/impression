@@ -30,6 +30,8 @@ jobs:
       - run: pnpm test
       - name: Tag matches package version
         run: test "v$(node -p "require('./packages/impression/package.json').version")" = "$GITHUB_REF_NAME"
+      - name: Changelog has this version
+        run: grep -q "^## \[\?${GITHUB_REF_NAME#v}\b" CHANGELOG.md
       # Trusted publishing (OIDC) needs npm 11.5.1 or later. No token: npm
       # exchanges the workflow's id-token, and adds provenance on its own.
       - run: npm install -g npm@latest
