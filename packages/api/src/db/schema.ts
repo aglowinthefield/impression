@@ -120,11 +120,27 @@ export const memoryEventKindEnum = pgEnum("memory_event_kind", [
   "kept",
   "rewritten",
   "retired",
+  "extracted",
+  "added",
+  "merged",
+  "superseded",
+  "edited",
+  "flagged",
+  "cleared",
+  "undone",
+]);
+
+/** Who changed a memory: extraction, the staleness check, or a person. */
+export const memoryEventActorEnum = pgEnum("memory_event_actor", [
+  "extraction",
+  "check",
+  "person",
 ]);
 
 /**
- * What the automatic staleness check did to a memory, so the activity log can show
- * it and offer undo. `reason` is why the check ran, `detail` what it decided.
+ * One change to a memory's text or status, written in the same transaction as the
+ * change, so the Activity tab can show it and offer undo. `reason` is why it
+ * happened, `detail` what undo needs (text before, previous status, ids).
  */
 export const memoryEvents = pgTable(
   "memory_events",
@@ -134,8 +150,18 @@ export const memoryEvents = pgTable(
       .notNull()
       .references(() => memories.id, { onDelete: "cascade" }),
     kind: memoryEventKindEnum().notNull(),
-    reason: text().notNull(),
+    /** Events before this column were all the staleness check's. */
+    actor: memoryEventActorEnum().notNull().default("check"),
+    /** Who acted, for a person's change; the memory's owner for automation. */
+    principal: text(),
+    /** The session an extraction came from. */
+    sessionId: uuid().references(() => sessions.id, { onDelete: "set null" }),
+    reason: text().notNull().default(""),
     detail: jsonb().notNull().default({}),
+    /** For an undo, the event it reverses. */
+    undoes: uuid(),
+    /** The undo that reversed this event. */
+    undoneBy: uuid(),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [

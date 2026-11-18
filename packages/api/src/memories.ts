@@ -27,6 +27,7 @@ import {
   memories,
   projects,
 } from "./db/schema.js";
+import { type EventSource, logEvent } from "./events.js";
 import type { Providers } from "./providers/index.js";
 import { decide, findCandidates, markSuperseded } from "./reconcile.js";
 import { isEmptyAfterScrub, scrub } from "./scrub.js";
@@ -210,6 +211,11 @@ export interface CreateOptions {
   requireDedup?: boolean;
   /** A vector already computed for this exact content. Used only if scrubbing leaves the content unchanged. */
   embedding?: number[] | null;
+  /**
+   * Who the Activity entry names. Defaults to extraction for `agent: "extraction"`
+   * and to the principal otherwise. False when the caller logs its own entry.
+   */
+  event?: EventSource | false;
 }
 
 /**
@@ -255,6 +261,14 @@ export async function createMemory(
     };
   }
   const unchanged = clean.text === b.content;
+  const event: EventSource | false =
+    opts.event === undefined
+      ? {
+          actor: b.agent === "extraction" ? "extraction" : "person",
+          principal,
+          sessionId: b.sessionId ?? null,
+        }
+      : opts.event;
   b.content = clean.text;
 
   // Embed first, so similar memories can be found before anything is written.
@@ -289,28 +303,36 @@ export async function createMemory(
         verdict.merged && verdict.merged !== existing?.content
           ? verdict.merged
           : null;
-      if (merged) {
-        await db
-          .update(memories)
-          .set({ content: merged, updatedAt: new Date() })
+      const row = await db.transaction(async (tx) => {
+        if (merged) {
+          await tx
+            .update(memories)
+            .set({ content: merged, updatedAt: new Date() })
+            .where(eq(memories.id, verdict.id));
+          if (event)
+            await logEvent(tx, verdict.id, "merged", event, {
+              before: existing?.content ?? "",
+              after: merged,
+            });
+        } else {
+          await tx
+            .update(memories)
+            .set({ updatedAt: new Date() })
+            .where(eq(memories.id, verdict.id));
+        }
+        // The caller's anchors describe the same fact at a newer commit, so keep them.
+        if (b.anchors.length > 0) {
+          await tx
+            .insert(anchors)
+            .values(b.anchors.map((a) => ({ ...a, memoryId: verdict.id })));
+        }
+        const [r] = await tx
+          .select()
+          .from(memories)
           .where(eq(memories.id, verdict.id));
-        await embedMemory(db, providers, verdict.id, merged);
-      } else {
-        await db
-          .update(memories)
-          .set({ updatedAt: new Date() })
-          .where(eq(memories.id, verdict.id));
-      }
-      const [row] = await db
-        .select()
-        .from(memories)
-        .where(eq(memories.id, verdict.id));
-      // The caller's anchors describe the same fact at a newer commit, so keep them.
-      if (b.anchors.length > 0) {
-        await db
-          .insert(anchors)
-          .values(b.anchors.map((a) => ({ ...a, memoryId: verdict.id })));
-      }
+        return r;
+      });
+      if (merged) await embedMemory(db, providers, verdict.id, merged);
       const [withA] = await withAnchors(db, [
         toDto(row as MemoryRow, b.project?.key ?? null),
       ]);
@@ -326,36 +348,70 @@ export async function createMemory(
     if (verdict.action === "supersede") supersedes = verdict.ids;
   }
 
-  const [m] = await db
-    .insert(memories)
-    .values({
-      scope: b.scope,
-      projectId,
-      owner: principal,
-      content: b.content,
-      pathPrefix: b.pathPrefix ?? null,
-      pinned: b.pinned ?? false,
-      tags: [...new Set(b.tags)],
-      confidence: b.confidence,
-      author: principal,
-      agent: b.agent,
-      sessionId: b.sessionId,
-      ...(vector
-        ? {
-            embedding: vector,
-            embeddingModel: providers.embeddings.model,
-            embeddingDim: providers.embeddings.dimensions,
-          }
-        : {}),
-    })
-    .returning();
-  const created = m as MemoryRow;
-  if (b.anchors.length > 0) {
-    await db
-      .insert(anchors)
-      .values(b.anchors.map((a) => ({ ...a, memoryId: created.id })));
-  }
-  if (supersedes.length > 0) await markSuperseded(db, supersedes, created.id);
+  const created = await db.transaction(async (tx) => {
+    const [m] = await tx
+      .insert(memories)
+      .values({
+        scope: b.scope,
+        projectId,
+        owner: principal,
+        content: b.content,
+        pathPrefix: b.pathPrefix ?? null,
+        pinned: b.pinned ?? false,
+        tags: [...new Set(b.tags)],
+        confidence: b.confidence,
+        author: principal,
+        agent: b.agent,
+        sessionId: b.sessionId,
+        ...(vector
+          ? {
+              embedding: vector,
+              embeddingModel: providers.embeddings.model,
+              embeddingDim: providers.embeddings.dimensions,
+            }
+          : {}),
+      })
+      .returning();
+    const row = m as MemoryRow;
+    if (b.anchors.length > 0) {
+      await tx
+        .insert(anchors)
+        .values(b.anchors.map((a) => ({ ...a, memoryId: row.id })));
+    }
+    let replaced: { id: string; content: string; status: string }[] = [];
+    if (supersedes.length > 0) {
+      replaced = await tx
+        .select({
+          id: memories.id,
+          content: memories.content,
+          status: memories.status,
+        })
+        .from(memories)
+        .where(
+          and(
+            inArray(memories.id, supersedes),
+            inArray(memories.status, ["active", "possibly_stale"]),
+          ),
+        );
+      await markSuperseded(tx, supersedes, row.id);
+    }
+    if (event) {
+      const kind =
+        replaced.length > 0
+          ? "superseded"
+          : event.actor === "extraction"
+            ? "extracted"
+            : "added";
+      await logEvent(
+        tx,
+        row.id,
+        kind,
+        event,
+        replaced.length > 0 ? { replaced } : {},
+      );
+    }
+    return row;
+  });
   const [createdDto] = await withAnchors(db, [
     toDto(created, b.project?.key ?? null),
   ]);
@@ -572,26 +628,44 @@ export function memoryRoutes(db: Db, providers: Providers) {
       move = { scope: "project", projectId: p.id };
     }
     const { project: _p, ...fields } = b;
-    const [m] = await db
-      .update(memories)
-      .set({
-        ...fields,
-        // A path prefix is a place in one repo, meaningless once a memory applies everywhere.
-        ...(move?.scope === "user" ? { pathPrefix: null } : {}),
-        ...(move ?? {}),
-        ...(b.tags ? { tags: [...new Set(b.tags)] } : {}),
-        updatedAt: new Date(),
-        // Rewriting a flagged memory is the "update" review outcome.
-        ...(contentChanged && existing.status === "possibly_stale"
-          ? { status: "active" as const, staleReason: null }
-          : {}),
-        // The old vector describes the old text. Clear it so search never ranks on stale meaning.
-        ...(contentChanged
-          ? { embedding: null, embeddingModel: null, embeddingDim: null }
-          : {}),
-      })
-      .where(eq(memories.id, id))
-      .returning();
+    const m = await db.transaction(async (tx) => {
+      const [m] = await tx
+        .update(memories)
+        .set({
+          ...fields,
+          // A path prefix is a place in one repo, meaningless once a memory applies everywhere.
+          ...(move?.scope === "user" ? { pathPrefix: null } : {}),
+          ...(move ?? {}),
+          ...(b.tags ? { tags: [...new Set(b.tags)] } : {}),
+          updatedAt: new Date(),
+          // Rewriting a flagged memory is the "update" review outcome.
+          ...(contentChanged && existing.status === "possibly_stale"
+            ? { status: "active" as const, staleReason: null }
+            : {}),
+          // The old vector describes the old text. Clear it so search never ranks on stale meaning.
+          ...(contentChanged
+            ? { embedding: null, embeddingModel: null, embeddingDim: null }
+            : {}),
+        })
+        .where(eq(memories.id, id))
+        .returning();
+      if (contentChanged)
+        await logEvent(
+          tx,
+          id,
+          "edited",
+          { actor: "person", principal },
+          {
+            before: existing.content,
+            after: b.content,
+            previous: {
+              status: existing.status,
+              staleReason: existing.staleReason,
+            },
+          },
+        );
+      return m;
+    });
     let row = m as MemoryRow;
     if (contentChanged) {
       await embedMemory(db, providers, id, row.content);
@@ -634,19 +708,40 @@ export function memoryRoutes(db: Db, providers: Providers) {
       );
     }
     const b = parsed.data;
-    const [m] = await db
-      .update(memories)
-      .set(
-        b.stale
-          ? {
-              status: "possibly_stale",
-              staleReason: b.reason,
-              updatedAt: new Date(),
-            }
-          : { status: "active", staleReason: null, updatedAt: new Date() },
-      )
-      .where(eq(memories.id, id))
-      .returning();
+    const m = await db.transaction(async (tx) => {
+      const [m] = await tx
+        .update(memories)
+        .set(
+          b.stale
+            ? {
+                status: "possibly_stale",
+                staleReason: b.reason,
+                updatedAt: new Date(),
+              }
+            : { status: "active", staleReason: null, updatedAt: new Date() },
+        )
+        .where(eq(memories.id, id))
+        .returning();
+      const status = b.stale ? "possibly_stale" : "active";
+      if (status !== existing.status)
+        await logEvent(
+          tx,
+          id,
+          b.stale ? "flagged" : "cleared",
+          {
+            actor: "person",
+            principal: c.get("principal"),
+            reason: b.stale ? b.reason : "",
+          },
+          {
+            previous: {
+              status: existing.status,
+              staleReason: existing.staleReason,
+            },
+          },
+        );
+      return m;
+    });
     const row = m as MemoryRow;
     const [dto] = await withAnchors(db, [
       toDto(row, await projectKeyOf(row.projectId)),
@@ -668,11 +763,28 @@ export function memoryRoutes(db: Db, providers: Providers) {
       await db.delete(memories).where(eq(memories.id, id));
       return c.body(null, 204);
     }
-    const [m] = await db
-      .update(memories)
-      .set({ status: "retired", updatedAt: new Date() })
-      .where(eq(memories.id, id))
-      .returning();
+    const m = await db.transaction(async (tx) => {
+      const [m] = await tx
+        .update(memories)
+        .set({ status: "retired", updatedAt: new Date() })
+        .where(eq(memories.id, id))
+        .returning();
+      if (existing.status !== "retired")
+        await logEvent(
+          tx,
+          id,
+          "retired",
+          { actor: "person", principal: c.get("principal") },
+          {
+            previous: {
+              status: existing.status,
+              staleReason: existing.staleReason,
+              supersededBy: existing.supersededBy,
+            },
+          },
+        );
+      return m;
+    });
     return c.json(
       toDto(m as MemoryRow, await projectKeyOf((m as MemoryRow).projectId)),
     );

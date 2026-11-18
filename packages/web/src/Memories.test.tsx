@@ -202,3 +202,20 @@ test("the tag box offers known tags and lets you create a new one", async () => 
     ),
   );
 });
+
+test("the possibly stale filter lists flagged memories with the usual actions", async () => {
+  stub((url) => ({
+    items: url.includes("status=possibly_stale")
+      ? [mem({ id: "3", content: "Flagged one", status: "possibly_stale" })]
+      : [],
+  }));
+  render(<Memories project="a/x" />);
+  fireEvent.change(await screen.findByLabelText("Status"), {
+    target: { value: "possibly_stale" },
+  });
+  const row = (await screen.findByText("Flagged one")).closest(
+    "li",
+  ) as HTMLElement;
+  for (const action of ["Edit", "Pin to core", "Retire"])
+    expect(within(row).getByText(action)).toBeTruthy();
+});

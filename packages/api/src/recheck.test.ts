@@ -115,8 +115,12 @@ function gate(answer: string) {
   return { reply: () => p, open: () => open() };
 }
 
+/** The staleness check's entries for a memory; creating and flagging it log their own. */
 const events = (id: string) =>
-  t.db.select().from(memoryEvents).where(eq(memoryEvents.memoryId, id));
+  t.db
+    .select()
+    .from(memoryEvents)
+    .where(and(eq(memoryEvents.memoryId, id), eq(memoryEvents.actor, "check")));
 
 describe("recheck", () => {
   test("keep moves the anchors to the new commit and clears the stale flag", async () => {
