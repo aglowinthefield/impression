@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   closeSync,
@@ -231,5 +231,36 @@ export async function recheckProject(
     return sent;
   } catch {
     return 0;
+  }
+}
+
+/**
+ * The staleness check reads files and waits on the model, too slow for session
+ * start, so it runs as `hook recheck` in a detached child, at most once an hour
+ * per project. `script` is the CLI's entry file; the hooks run inside it, the pi
+ * extension passes its own path. Outside a git checkout nothing starts. Returns
+ * whether a check started. Never throws.
+ */
+export function startRecheck(
+  cwd: string,
+  agent: string,
+  opts: { script?: string; env?: NodeJS.ProcessEnv } = {},
+): boolean {
+  try {
+    const script = opts.script ?? process.argv[1];
+    if (!script) return false;
+    const key = resolveProject(cwd).key;
+    if (key.startsWith("path:")) return false;
+    if (!claimRecheck(key, { env: opts.env })) return false;
+    const child = spawn(
+      process.execPath,
+      [script, "hook", "recheck", "--agent", agent, "--cwd", cwd],
+      { detached: true, stdio: "ignore", cwd, env: opts.env ?? process.env },
+    );
+    child.on("error", () => {});
+    child.unref();
+    return true;
+  } catch {
+    return false;
   }
 }
