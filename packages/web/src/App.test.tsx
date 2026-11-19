@@ -43,7 +43,7 @@ test("rejects a bad token and stays on the login form", async () => {
   expect(localStorage.getItem("impression.token")).toBeNull();
 });
 
-test("signs in and opens the most recently active project", async () => {
+test("signs in to every repo, and the repo filter narrows it", async () => {
   history.replaceState(null, "", "/");
   respond({
     "/whoami": { name: "alice" },
@@ -59,17 +59,22 @@ test("signs in and opens the most recently active project", async () => {
     target: { value: "imp_ok" },
   });
   fireEvent.click(screen.getByText("Sign in"));
-  const select = (await screen.findByLabelText("Project")) as HTMLSelectElement;
-  await waitFor(() => expect(select.value).toBe("github.com/a/y"));
+  const select = (await screen.findByLabelText("Repo")) as HTMLSelectElement;
+  expect(select.value).toBe("");
+  expect(await screen.findByText("y")).toBeTruthy();
+  expect(location.pathname).toBe("/");
+  fireEvent.change(select, { target: { value: "github.com/a/y" } });
   expect(location.pathname).toBe("/a/y/memories");
-  fireEvent.change(select, { target: { value: "a/x" } });
+  fireEvent.change(screen.getByLabelText("Repo"), { target: { value: "a/x" } });
   expect(location.pathname + location.search).toBe("/memories?project=a%2Fx");
+  fireEvent.change(screen.getByLabelText("Repo"), { target: { value: "" } });
+  expect(location.pathname + location.search).toBe("/memories");
   fireEvent.click(screen.getByText("Sign out"));
   expect(localStorage.getItem("impression.token")).toBeNull();
   expect(screen.getByLabelText("API token")).toBeTruthy();
 });
 
-test("tab and project live in the URL", async () => {
+test("tab and repo live in the URL", async () => {
   history.replaceState(null, "", "/");
   localStorage.setItem("impression.token", "imp_ok");
   respond({
@@ -84,14 +89,14 @@ test("tab and project live in the URL", async () => {
   });
   render(<App />);
   fireEvent.click(await screen.findByText("Debug"));
-  expect(location.pathname).toBe("/a/x/debug");
+  expect(location.pathname).toBe("/debug");
   cleanup();
   history.replaceState(null, "", "/a/z/review");
   render(<App />);
-  const select = (await screen.findByLabelText("Project")) as HTMLSelectElement;
-  await waitFor(() => expect(select.value).toBe("github.com/a/z"));
+  const select = (await screen.findByLabelText("Repo")) as HTMLSelectElement;
+  await screen.findByText("z");
+  expect(select.value).toBe("github.com/a/z");
   // Review and Evals were folded into Activity; old links land there.
-  await waitFor(() => expect(location.pathname).toBe("/a/z/activity"));
   expect(screen.getByText("Activity").getAttribute("aria-current")).toBe(
     "true",
   );
@@ -100,15 +105,13 @@ test("tab and project live in the URL", async () => {
   cleanup();
   history.replaceState(null, "", "/evals?project=github.com%2Fa%2Fx");
   render(<App />);
-  await waitFor(() => expect(location.pathname).toBe("/a/x/activity"));
-  cleanup();
-  history.replaceState(null, "", "/a/z/activity");
-  render(<App />);
-  await screen.findByLabelText("Project");
-  history.pushState(null, "", "/a/x/debug");
-  history.back();
-  history.back();
-  await waitFor(() => expect(location.pathname).not.toBe("/debug"));
+  await screen.findByText("x");
+  expect((screen.getByLabelText("Repo") as HTMLSelectElement).value).toBe(
+    "github.com/a/x",
+  );
+  expect(screen.getByText("Activity").getAttribute("aria-current")).toBe(
+    "true",
+  );
 });
 
 test("shows the GitHub button only when the server has it on", async () => {

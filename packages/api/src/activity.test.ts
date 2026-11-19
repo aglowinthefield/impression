@@ -351,4 +351,24 @@ describe("list", () => {
     });
     expect(r.json.weeks[1]).toMatchObject({ added: 0, retireRate: null });
   });
+
+  test("without a project, lists and counts every project you can see", async () => {
+    const one = await add("All one", "github.com/acme/all-1");
+    const two = await add("All two", "github.com/acme/all-2");
+    const hidden = await add("Bob's own", "github.com/acme/all-3", bob);
+    const r = await call(alice, "GET", "/activity");
+    expect(r.status).toBe(200);
+    const ids = (r.json.items as Entry[]).map((e) => e.memory?.id);
+    expect(ids).toContain(one.id);
+    expect(ids).toContain(two.id);
+    expect(ids).not.toContain(hidden.id);
+    const one1 = await call(
+      alice,
+      "GET",
+      `/activity/summary?project=${encodeURIComponent("github.com/acme/all-1")}`,
+    );
+    const all = await call(alice, "GET", "/activity/summary");
+    expect(all.status).toBe(200);
+    expect(all.json.weeks[0].added).toBeGreaterThan(one1.json.weeks[0].added);
+  });
 });
