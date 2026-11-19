@@ -28,8 +28,7 @@ A project is a place memories live, and the dashboard lists projects so a person
 - AC5: A person uploading a session for a GitHub repo they can't reach is still refused with not found, and nothing is stored.
 - AC6: A person's sessions, listed for one project key, include the sessions uploaded before that project existed.
 - AC7: After the release, no project in prod holds only sessions. The sessions of the three that did (`/`, `somewhere.garden` and one temp folder on 2026-11-19) are kept and still listed under their project key.
-- AC8: Uploading eval turns for a project key with no project [NEEDS CLARIFICATION: creates the project?]
-  > **Open:** eval turns come from the hand-rating harness under Debug → Evals. Should they follow the session rule (no project until a memory lands), or keep creating the project as they do now?
+- AC8: Uploading eval turns for a project key with no project does not create the project until a memory lands
 - AC9 (after deploy): seven days after the release, prod has no project created after the release that holds no memory.
 
 ## Setup note
