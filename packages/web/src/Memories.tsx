@@ -28,15 +28,12 @@ function Row({
   knownTags: string[];
   onChange: () => void;
 }) {
-  const [editing, setEditing] = useState(false);
-  const [text, setText] = useState(m.content);
   const [newTag, setNewTag] = useState("");
   const [error, setError] = useState<string | null>(null);
   const act = async (fn: () => Promise<unknown>) => {
     try {
       setError(null);
       await fn();
-      setEditing(false);
       onChange();
     } catch (e) {
       setError((e as Error).message);
@@ -67,17 +64,7 @@ function Row({
   const history = m.status === "superseded" || m.status === "retired";
   return (
     <li className="memory">
-      {editing ? (
-        <textarea
-          className="textarea w-full"
-          aria-label="Edit memory"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          rows={3}
-        />
-      ) : (
-        <p>{m.content}</p>
-      )}
+      <p>{m.content}</p>
       <div className="flex flex-wrap items-center gap-1">
         {m.tags?.map((t) => (
           <span key={t} className="badge badge-info badge-sm gap-1">
@@ -173,53 +160,16 @@ function Row({
       </small>
       {!history && (
         <div className="actions">
-          {editing ? (
-            <>
-              <button
-                className="btn btn-sm btn-primary"
-                type="button"
-                onClick={() =>
-                  act(() =>
-                    api(`/memories/${m.id}`, {
-                      method: "PATCH",
-                      body: { content: text },
-                    }),
-                  )
-                }
-              >
-                Save
-              </button>
-              <button
-                className="btn btn-sm btn-outline"
-                type="button"
-                onClick={() => setEditing(false)}
-              >
-                Cancel
-              </button>
-            </>
-          ) : (
-            <>
-              <button
-                className="btn btn-sm btn-outline"
-                type="button"
-                onClick={() => setEditing(true)}
-              >
-                Edit
-              </button>
-              <button
-                className="btn btn-sm btn-error btn-outline"
-                type="button"
-                onClick={() => {
-                  if (
-                    window.confirm("Retire this memory? It stays in history.")
-                  )
-                    act(() => api(`/memories/${m.id}`, { method: "DELETE" }));
-                }}
-              >
-                Retire
-              </button>
-            </>
-          )}
+          <button
+            className="btn btn-sm btn-error btn-outline"
+            type="button"
+            onClick={() => {
+              if (window.confirm("Retire this memory? It stays in history."))
+                act(() => api(`/memories/${m.id}`, { method: "DELETE" }));
+            }}
+          >
+            Retire
+          </button>
         </div>
       )}
       {error && <p role="alert">{error}</p>}
