@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { api } from "./api";
 
 export interface Memory {
@@ -13,6 +13,7 @@ export interface Memory {
   supersededBy: string | null;
   createdAt: string;
   warning?: string | null;
+  project?: string | null;
   anchors?: { path: string; symbol: string | null }[];
 }
 
@@ -81,7 +82,7 @@ function Row({
         {m.tags?.map((t) => (
           <span key={t} className="badge badge-info badge-sm gap-1">
             {t}
-            {!history && (
+            {!history && (t !== "practice" || project) && (
               <button
                 type="button"
                 className="cursor-pointer"
@@ -161,6 +162,7 @@ function Row({
         )}
       </div>
       <small>
+        {!project && m.project ? `${m.project.split("/").pop()} · ` : ""}
         {m.scope}
         {m.pathPrefix ? ` · ${m.pathPrefix}` : ""}
         {m.pinned ? " · pinned" : ""}
@@ -265,9 +267,11 @@ function Row({
 export function Memories({
   project,
   concept = "",
+  filter,
 }: {
   project: string;
   concept?: string;
+  filter?: ReactNode;
 }) {
   const [tag, setTag] = useState("");
   const [knownTags, setKnownTags] = useState<string[]>(["practice"]);
@@ -330,6 +334,7 @@ export function Memories({
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
+        {filter}
         <select
           className="select select-sm w-auto"
           aria-label="Scope"

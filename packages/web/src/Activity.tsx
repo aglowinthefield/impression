@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { api } from "./api";
 import { ago } from "./time";
 
@@ -140,7 +140,13 @@ function Row({ e, onUndone }: { e: Entry; onUndone: () => void }) {
 }
 
 /** What happened to your memories in the project, newest first, with undo. */
-export function Activity({ project }: { project: string }) {
+export function Activity({
+  project,
+  filter,
+}: {
+  project: string;
+  filter?: ReactNode;
+}) {
   const [source, setSource] = useState("");
   const [items, setItems] = useState<Entry[] | null>(null);
   const [next, setNext] = useState<string | null>(null);
@@ -149,7 +155,7 @@ export function Activity({ project }: { project: string }) {
 
   const page = useCallback(
     (before?: string) => {
-      const q = new URLSearchParams({ project });
+      const q = new URLSearchParams(project ? { project } : {});
       if (source) q.set("source", source);
       if (before) q.set("before", before);
       return api<{ items: Entry[]; next: string | null }>(`/activity?${q}`);
@@ -158,12 +164,11 @@ export function Activity({ project }: { project: string }) {
   );
 
   const load = useCallback(async () => {
-    if (!project) return setItems([]);
     try {
       const [r, s] = await Promise.all([
         page(),
         api<{ weeks: Week[] }>(
-          `/activity/summary?project=${encodeURIComponent(project)}`,
+          `/activity/summary${project ? `?project=${encodeURIComponent(project)}` : ""}`,
         ),
       ]);
       setItems(r.items);
@@ -217,6 +222,7 @@ export function Activity({ project }: { project: string }) {
         </table>
       )}
       <div className="filters">
+        {filter}
         <select
           className="select select-sm w-auto"
           aria-label="Source"

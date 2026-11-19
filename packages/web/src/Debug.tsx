@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { api } from "./api";
 import { Evals } from "./Evals";
 
@@ -26,22 +26,31 @@ export function shortClient(ua: string): string {
 const views = ["Requests", "Evals"] as const;
 
 /** Developer tools: recent requests, and the hand-rating eval harness. */
-export function Debug({ project }: { project: string }) {
+export function Debug({
+  project,
+  filter,
+}: {
+  project: string;
+  filter?: ReactNode;
+}) {
   const [view, setView] = useState<(typeof views)[number]>("Requests");
   return (
     <div>
-      <div className="join mb-4">
-        {views.map((v) => (
-          <button
-            key={v}
-            type="button"
-            className={`btn btn-sm join-item ${v === view ? "btn-active" : ""}`}
-            aria-pressed={v === view}
-            onClick={() => setView(v)}
-          >
-            {v}
-          </button>
-        ))}
+      <div className="mb-4 flex gap-2">
+        <div className="join">
+          {views.map((v) => (
+            <button
+              key={v}
+              type="button"
+              className={`btn btn-sm join-item ${v === view ? "btn-active" : ""}`}
+              aria-pressed={v === view}
+              onClick={() => setView(v)}
+            >
+              {v}
+            </button>
+          ))}
+        </div>
+        {view === "Evals" && filter}
       </div>
       {view === "Requests" ? <Requests /> : <Evals project={project} />}
     </div>

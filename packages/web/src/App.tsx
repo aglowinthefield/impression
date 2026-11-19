@@ -10,6 +10,7 @@ import {
 } from "./api";
 import { MemoriesPage } from "./Concepts";
 import { Debug } from "./Debug";
+import { RepoFilter } from "./RepoFilter";
 import { Settings } from "./Settings";
 
 function Login({ onDone }: { onDone: () => void }) {
@@ -141,42 +142,20 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
       (w) => setWho(w.name),
       () => {},
     );
-    // The API lists the most recently active project first, so a bare URL opens
-    // on whatever you were just working in.
     api<{ items: Project[] }>("/projects").then(
-      (r) => {
-        setProjects(r.items);
-        const { tab: t, project: cur } = parsePath();
-        const next = r.items.some((p) => p.key === cur)
-          ? cur
-          : (r.items[0]?.key ?? "");
-        const url = pathFor(t, next);
-        if (url !== location.pathname + location.search) {
-          history.replaceState(null, "", url);
-          window.dispatchEvent(new PopStateEvent("popstate"));
-        }
-      },
+      (r) => setProjects(r.items),
       () => {},
     );
   }, []);
+
+  const filter = (
+    <RepoFilter projects={projects} value={project} onChange={setProject} />
+  );
 
   return (
     <div className="shell">
       <header className="navbar bg-base-100 border-base-300 min-h-0 gap-3 border-b px-4 py-2">
         <strong>Impression</strong>
-        <select
-          className="select select-sm w-auto"
-          aria-label="Project"
-          value={project}
-          onChange={(e) => setProject(e.target.value)}
-        >
-          {projects.length === 0 && <option value="">No projects yet</option>}
-          {projects.map((p) => (
-            <option key={p.key} value={p.key}>
-              {p.name}
-            </option>
-          ))}
-        </select>
         <nav className="tabs tabs-border">
           {tabs.map((t) => (
             <button
@@ -202,13 +181,13 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
       </header>
       <main>
         {tab === "Memories" ? (
-          <MemoriesPage project={project} />
+          <MemoriesPage project={project} filter={filter} />
         ) : tab === "Settings" ? (
           <Settings />
         ) : tab === "Debug" ? (
-          <Debug project={project} />
+          <Debug project={project} filter={filter} />
         ) : (
-          <Activity project={project} />
+          <Activity project={project} filter={filter} />
         )}
       </main>
     </div>
