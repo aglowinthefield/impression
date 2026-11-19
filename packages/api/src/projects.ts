@@ -6,8 +6,9 @@ import type { Db } from "./db/client.js";
 import { projects } from "./db/schema.js";
 
 /**
- * Lists the projects this request may see: every one for admin tokens, else the person's repos.
- * Most recently active first, so the web UI can open on the project you were just working in.
+ * Lists the projects this request may see that hold at least one memory: every one for
+ * admin tokens, else the person's repos. Sessions alone don't count, so a folder an agent
+ * once ran in doesn't clutter the list. Most recently active first.
  */
 // Latest memory or session upload. greatest() skips nulls, so either one alone counts.
 // Written as raw SQL because drizzle leaves columns unqualified inside a subquery,
@@ -23,7 +24,12 @@ export function projectRoutes(db: Db) {
     const rows = await db
       .select({ key: projects.key, name: projects.name, lastActive })
       .from(projects)
-      .where(and(await projectIdCond(db, c.get("access"), projects.id)))
+      .where(
+        and(
+          await projectIdCond(db, c.get("access"), projects.id),
+          sql`exists (select 1 from memories m where m.project_id = "projects"."id")`,
+        ),
+      )
       .orderBy(sql`${lastActive} desc nulls last`, asc(projects.name));
     return c.json({
       items: rows.map((r) => ({
