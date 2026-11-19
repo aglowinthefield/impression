@@ -93,7 +93,7 @@ describe("visibility", () => {
     for (const m of [mine, priv]) {
       expect((await call(bob, "GET", `/${m.id}`)).status).toBe(404);
       expect(
-        (await call(bob, "PATCH", `/${m.id}`, { pinned: true })).status,
+        (await call(bob, "PATCH", `/${m.id}`, { tags: ["x"] })).status,
       ).toBe(404);
       expect((await call(bob, "DELETE", `/${m.id}`)).status).toBe(404);
     }
@@ -114,7 +114,7 @@ describe("visibility", () => {
     expect((await call(bob, "GET", `/${priv.id}`)).status).toBe(200);
     // Visible, but only the author can change or remove it.
     expect(
-      (await call(bob, "PATCH", `/${priv.id}`, { pinned: true })).status,
+      (await call(bob, "PATCH", `/${priv.id}`, { tags: ["x"] })).status,
     ).toBe(403);
     expect(
       (await call(bob, "PATCH", `/${priv.id}`, { scope: "project" })).status,
@@ -154,14 +154,14 @@ describe("read, update, delete", () => {
       .set({ embedding: sentinel, embeddingModel: "m", embeddingDim: 768 })
       .where(eq(memories.id, m.id));
 
-    await call(alice, "PATCH", `/${m.id}`, { pinned: true });
+    await call(alice, "PATCH", `/${m.id}`, { tags: ["x"] });
     let [row] = await t.db.select().from(memories).where(eq(memories.id, m.id));
     expect(row?.embeddingModel).toBe("m");
 
     const res = await call(alice, "PATCH", `/${m.id}`, { content: "new text" });
     expect(await res.json()).toMatchObject({
       content: "new text",
-      pinned: true,
+      tags: ["x"],
       embeddingModel: "fake-bow",
     });
     [row] = await t.db.select().from(memories).where(eq(memories.id, m.id));
@@ -210,7 +210,7 @@ describe("read, update, delete", () => {
 });
 
 describe("list", () => {
-  test("filters by pinned and project, pages, and returns newest first", async () => {
+  test("filters by tag and project, pages, and returns newest first", async () => {
     const p2 = { key: "github.com/acme/other" };
     const ids: string[] = [];
     for (const c of ["one", "two", "three"]) {
@@ -219,7 +219,7 @@ describe("list", () => {
           scope: "project",
           project: p2,
           content: c,
-          pinned: c === "two",
+          tags: c === "two" ? ["x"] : [],
         })
       ).json();
       ids.push(r.id);
@@ -233,10 +233,10 @@ describe("list", () => {
       "one",
     ]);
 
-    const pinned = await (
-      await call(alice, "GET", `?scope=project&project=${p2.key}&pinned=true`)
+    const tagged = await (
+      await call(alice, "GET", `?scope=project&project=${p2.key}&tag=x`)
     ).json();
-    expect(pinned.items.map((m: { content: string }) => m.content)).toEqual([
+    expect(tagged.items.map((m: { content: string }) => m.content)).toEqual([
       "two",
     ]);
 

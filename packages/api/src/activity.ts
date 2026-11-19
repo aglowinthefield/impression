@@ -26,7 +26,8 @@ const UNDOABLE = new Set([
 const sources = ["extraction", "check", "dream", "person"] as const;
 
 const listQuery = z.object({
-  project: z.string().min(1),
+  /** Leave out for every project you can see. */
+  project: z.string().min(1).optional(),
   source: z.enum(sources).optional(),
   /** `<timestamp>|<id>` of the last entry on the previous page. */
   before: z
@@ -340,12 +341,12 @@ export function activityRoutes(db: Db, providers: Providers) {
     const q = parsed.data;
     const principal = c.get("principal");
     const access = c.get("access");
-    const p = await findProject(db, access, q.project);
+    const p = q.project ? await findProject(db, access, q.project) : null;
     const cursor = parseCursor(q.before);
 
     let events: EventRow[] = [];
     if (q.source !== "dream") {
-      const where: SQL[] = [inProject(p?.id ?? null)];
+      const where: SQL[] = [q.project ? inProject(p?.id ?? null) : sql`true`];
       if (q.source) where.push(sql`e.actor = ${q.source}`);
       if (cursor)
         where.push(
@@ -355,7 +356,7 @@ export function activityRoutes(db: Db, providers: Providers) {
     }
 
     let runs: Entry[] = [];
-    if (p && (!q.source || q.source === "dream")) {
+    if ((p || !q.project) && (!q.source || q.source === "dream")) {
       const rows = await db.execute<{
         id: string;
         at: string;
@@ -370,7 +371,7 @@ export function activityRoutes(db: Db, providers: Providers) {
         SELECT id, ${atText("finished_at")} AS at, created, kept, removed, uncategorized,
           concepts, error, trigger
         FROM dream_runs
-        WHERE owner = ${principal} AND project_id = ${p.id} AND finished_at IS NOT NULL
+        WHERE owner = ${principal} ${p ? sql`AND project_id = ${p.id}` : sql``} AND finished_at IS NOT NULL
           ${cursor ? sql`AND (finished_at, id::text) < (${cursor.at}::timestamptz, ${cursor.id})` : sql``}
         ORDER BY finished_at DESC, id DESC
         LIMIT ${PAGE + 1}`);
@@ -411,10 +412,9 @@ export function activityRoutes(db: Db, providers: Providers) {
 
   app.get("/summary", async (c) => {
     const project = c.req.query("project");
-    if (!project) return c.json({ error: "project is required" }, 400);
     const principal = c.get("principal");
     const access = c.get("access");
-    const p = await findProject(db, access, project);
+    const p = project ? await findProject(db, access, project) : null;
     const now = Date.now();
     const weeks = [0, 1, 2, 3].map((i) => ({
       week: new Date(now - (i + 1) * WEEK_MS).toISOString(),
@@ -423,13 +423,13 @@ export function activityRoutes(db: Db, providers: Providers) {
       retired: 0,
       retireRate: null as number | null,
     }));
-    if (p) {
+    if (p || !project) {
       const visible = await memoryVisible(db, access, principal, "m");
       const rows = await db.execute<{ w: number; kind: string; n: number }>(sql`
         SELECT greatest(0, floor(extract(epoch from (now() - e.created_at)) / ${WEEK_MS / 1000}))::int AS w,
           e.kind, count(*)::int AS n
         FROM memory_events e JOIN memories m ON m.id = e.memory_id
-        WHERE m.project_id = ${p.id} AND ${visible}
+        WHERE ${p ? sql`m.project_id = ${p.id}` : sql`true`} AND ${visible}
           AND e.created_at > now() - interval '28 days'
           AND e.undone_by IS NULL AND e.kind <> 'undone'
         GROUP BY 1, 2`);

@@ -176,7 +176,6 @@ describe("recheck", () => {
 
   test("rewrite supersedes the memory with a new one at the new commit", async () => {
     const id = await anchored("Settings are read from foo in src/a.ts", {
-      pinned: true,
       pathPrefix: "src",
     });
     reply = () =>
@@ -203,7 +202,6 @@ describe("recheck", () => {
       scope: "project",
       project: project.key,
       tags: ["api"],
-      pinned: true,
       pathPrefix: "src",
       owner: "alice",
     });

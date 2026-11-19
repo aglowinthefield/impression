@@ -64,3 +64,24 @@ test("GET /api/projects lists the most recently active first", async () => {
   ]);
   expect(items[0]?.lastActive).toEqual(expect.any(String));
 });
+
+test("GET /api/projects leaves out projects with no memories", async () => {
+  const upload = await app.request("/api/sessions", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      project: { key: "path:/tmp/scratch" },
+      agent: "pi",
+      transcript: "user: hi",
+    }),
+  });
+  expect(upload.status).toBe(201);
+  const res = await app.request("/api/projects", {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  const { items } = (await res.json()) as { items: { key: string }[] };
+  expect(items.map((p) => p.key)).not.toContain("path:/tmp/scratch");
+});

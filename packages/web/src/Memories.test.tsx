@@ -16,7 +16,6 @@ const mem = (o = {}) => ({
   content: "Use pnpm",
   status: "active",
   staleReason: null,
-  pinned: false,
   pathPrefix: null,
   supersededBy: null,
   createdAt: "",
@@ -79,25 +78,12 @@ test("typing searches instead of listing", async () => {
   });
 });
 
-test("edit saves with PATCH, pin toggles, delete confirms first", async () => {
+test("retire confirms first, and cards have no edit, pin or share", async () => {
   stub((_u, method) => (method === "GET" ? { items: [mem()] } : mem()));
   render(<Memories project="a/x" />);
-  fireEvent.click(await screen.findByText("Edit"));
-  fireEvent.change(screen.getByLabelText("Edit memory"), {
-    target: { value: "Use pnpm 12" },
-  });
-  fireEvent.click(screen.getByText("Save"));
-  await waitFor(() =>
-    expect(
-      calls.some(
-        (c) => c.method === "PATCH" && c.body === '{"content":"Use pnpm 12"}',
-      ),
-    ).toBe(true),
-  );
-  fireEvent.click(await screen.findByText("Pin to core"));
-  await waitFor(() =>
-    expect(calls.some((c) => c.body === '{"pinned":true}')).toBe(true),
-  );
+  await screen.findByText("Use pnpm");
+  for (const gone of ["Edit", "Pin to core", "Share with team"])
+    expect(screen.queryByText(gone)).toBeNull();
   vi.spyOn(window, "confirm").mockReturnValueOnce(false);
   fireEvent.click(screen.getByText("Retire"));
   expect(calls.some((c) => c.method === "DELETE")).toBe(false);
@@ -108,11 +94,11 @@ test("edit saves with PATCH, pin toggles, delete confirms first", async () => {
   );
 });
 
-test("history view has no edit actions", async () => {
+test("history view has no actions", async () => {
   stub(() => ({ items: [mem({ status: "superseded" })] }));
   render(<Memories project="a/x" />);
   await screen.findByText("Use pnpm");
-  expect(screen.queryByText("Edit")).toBeNull();
+  expect(screen.queryByText("Retire")).toBeNull();
 });
 
 test("the tag filter lists with that tag, and tags seen are offered", async () => {
@@ -216,6 +202,5 @@ test("the possibly stale filter lists flagged memories with the usual actions", 
   const row = (await screen.findByText("Flagged one")).closest(
     "li",
   ) as HTMLElement;
-  for (const action of ["Edit", "Pin to core", "Retire"])
-    expect(within(row).getByText(action)).toBeTruthy();
+  expect(within(row).getByText("Retire")).toBeTruthy();
 });

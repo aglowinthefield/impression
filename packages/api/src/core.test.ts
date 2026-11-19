@@ -44,21 +44,29 @@ const core = async (qs = "", tok = token) =>
   (await (
     await call("GET", `/core?project=${project.key}${qs}`, undefined, tok)
   ).json()) as {
-    items: { id: string; content: string; pinned: boolean }[];
+    items: { id: string; content: string }[];
     tokens: number;
   };
 
-test("pinned first, then confidence; stale and superseded are left out", async () => {
+test("practices first, then confidence; stale and superseded are left out", async () => {
   await add("low", { confidence: 0.2 });
   await add("high", { confidence: 0.95 });
-  await add("pinned one", { pinned: true, confidence: 0.1 });
+  await add("practice one", {
+    scope: "user",
+    tags: ["practice"],
+    confidence: 0.1,
+  });
   const stale = await add("stale one", { confidence: 0.99 });
   await call("PUT", `/memories/${stale}/staleness`, {
     stale: true,
     reason: "gone",
   });
   const r = await core();
-  expect(r.items.map((i) => i.content)).toEqual(["pinned one", "high", "low"]);
+  expect(r.items.map((i) => i.content)).toEqual([
+    "practice one",
+    "high",
+    "low",
+  ]);
 });
 
 test("respects the token budget", async () => {
@@ -88,7 +96,7 @@ test("path narrowing and user privacy", async () => {
 });
 
 test("logs one serve per item, with the session id when sent", async () => {
-  await add("served at start", { pinned: true });
+  await add("served at start");
   const r = await core("&session=sess-core-1&agent=pi");
   const rows = await t.db
     .select()

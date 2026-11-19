@@ -153,7 +153,7 @@ Terminal checks, none of which run in CI because they need a real model or your 
 
 ## Session-start hook
 
-`GET /api/core` returns a small set per project: pinned first, then by confidence and recency, within a token budget (`budget`, default 800). Flagged-stale and superseded memories are left out. It takes optional `session` and `agent` parameters, and logs each memory it returns in `memory_serves` with them. `impression hook session-start` (from `packages/cli`) prints it in the shape the agent named by `--agent` reads (`claude`, `codex`, `gemini`, `cursor`, `copilot`, or `pi` for plain text). A hook without `--agent` or running inside a different agent prints nothing, so a hook never runs twice. It exits 0 and prints nothing if the API is down. Setup is under [Wire it into your agent](#wire-it-into-your-agent).
+`GET /api/core` returns a small set per project: practices first, then by confidence and recency, within a token budget (`budget`, default 800). Flagged-stale and superseded memories are left out. It takes optional `session` and `agent` parameters, and logs each memory it returns in `memory_serves` with them. `impression hook session-start` (from `packages/cli`) prints it in the shape the agent named by `--agent` reads (`claude`, `codex`, `gemini`, `cursor`, `copilot`, or `pi` for plain text). A hook without `--agent` or running inside a different agent prints nothing, so a hook never runs twice. It exits 0 and prints nothing if the API is down. Setup is under [Wire it into your agent](#wire-it-into-your-agent).
 
 After printing, the hook starts a detached staleness check, at most once an hour per project (timestamps under `~/.config/impression/recheck/`). It runs the anchor check on your anchored memories in the checkout, and for each one whose file changed or lost its symbol it posts the files as committed at HEAD, and the HEAD SHA, to `POST /api/memories/:id/recheck`, up to 20 per run. A memory with an anchored file that has uncommitted changes waits until they are committed, and symlinks are never sent. The server asks the model whether the memory still holds: kept moves its anchors to HEAD, rewritten replaces it with a new memory (the old one is superseded), retired retires it. File contents go to the model marked as data, and it only rewrites or retires when the code contradicts the memory. A failed check changes nothing, and a check that races an edit or another check returns 409. Each outcome is recorded in `memory_events`, with what undo needs. Only the anchors this checkout verified move; the rest, such as one at a commit it doesn't have, stay as they were. The model sees at most 40,000 characters of file text per memory.
 
@@ -167,7 +167,7 @@ After printing, the hook starts a detached staleness check, at most once an hour
 
 ```sh
 impression login --token imp_... --url http://localhost:3000   # saved to ~/.config/impression/config.json (0600)
-impression add "Migrations run via db:migrate" [--user] [--pin]
+impression add "Migrations run via db:migrate" [--user]
 impression search "how do migrations run"
 impression list
 impression status

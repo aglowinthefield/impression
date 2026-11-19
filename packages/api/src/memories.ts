@@ -75,7 +75,6 @@ const createBody = z.object({
   content: z.string().trim().min(1).max(10_000),
   project: projectRef.optional(),
   pathPrefix: z.string().min(1).nullable().optional(),
-  pinned: z.boolean().optional(),
   tags: z.array(tagSchema).max(10).default([]),
   confidence: z.number().min(0).max(1).optional(),
   agent: z.string().min(1).optional(),
@@ -89,7 +88,6 @@ const patchBody = z
   .object({
     content: z.string().trim().min(1).max(10_000),
     pathPrefix: z.string().min(1).nullable(),
-    pinned: z.boolean(),
     tags: z.array(tagSchema).max(10),
     /** "team" shares the memory with everyone who can see the project. Only the author can change it. */
     scope: z.enum(["project", "team"]),
@@ -105,7 +103,6 @@ const listQuery = z.object({
   scope: z.enum(["user", "project", "team"]).optional(),
   project: z.string().min(1).optional(),
   status: z.enum(statuses).optional(),
-  pinned: z.enum(["true", "false"]).optional(),
   tag: tagSchema.optional(),
   /** A concept of yours (its subtopics included), or "none" for project memories in none of yours. */
   concept: z.union([z.uuid(), z.literal("none")]).optional(),
@@ -160,7 +157,6 @@ export function toDto(m: MemoryRow, projectKey: string | null) {
     status: m.status,
     staleReason: m.staleReason,
     confidence: m.confidence,
-    pinned: m.pinned,
     tags: m.tags,
     author: m.author,
     agent: m.agent,
@@ -357,7 +353,6 @@ export async function createMemory(
         owner: principal,
         content: b.content,
         pathPrefix: b.pathPrefix ?? null,
-        pinned: b.pinned ?? false,
         tags: [...new Set(b.tags)],
         confidence: b.confidence,
         author: principal,
@@ -504,7 +499,6 @@ export function memoryRoutes(db: Db, providers: Providers) {
         ne(memories.status, "retired"),
         ne(memories.status, "superseded"),
       );
-    if (q.pinned) where.push(eq(memories.pinned, q.pinned === "true"));
     if (q.tag) where.push(sql`${q.tag} = ANY(${memories.tags})`);
     if (q.concept === "none") {
       where.push(

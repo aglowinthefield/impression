@@ -18,7 +18,6 @@ interface Turn {
 interface MemStat {
   id: string;
   content: string;
-  pinned: boolean;
   injected: number;
   useful: number;
   irrelevant: number;

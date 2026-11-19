@@ -71,8 +71,6 @@ export const memories = pgTable(
     confidence: real(),
     /** Free-form labels. "practice" marks how the owner likes work done. */
     tags: text().array().notNull().default([]),
-    /** Pinned memories are candidates for the session-start core set. */
-    pinned: boolean().notNull().default(false),
     // Provenance: who or what wrote it, and from which session.
     author: text().notNull(),
     agent: text(),

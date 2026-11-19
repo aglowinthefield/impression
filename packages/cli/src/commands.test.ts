@@ -41,14 +41,12 @@ describe("commands", () => {
           content: "Use pnpm",
           scope: "project",
           status: "active",
-          pinned: true,
         },
         {
           id: "123456abcdef",
           content: "Fly",
           scope: "project",
           status: "possibly_stale",
-          pinned: false,
           warning: "gone",
         },
       ],
@@ -56,7 +54,7 @@ describe("commands", () => {
     }));
     const out = await search(c, repo(), "install");
     expect(out).toBe(
-      "abcdef12  project pinned  Use pnpm\n123456ab  project STALE  Fly (gone)\n(embeddings unavailable: keyword results only)",
+      "abcdef12  project  Use pnpm\n123456ab  project STALE  Fly (gone)\n(embeddings unavailable: keyword results only)",
     );
     expect(c.calls[0]?.[1]).toMatchObject({
       query: "install",
@@ -65,10 +63,9 @@ describe("commands", () => {
   });
   test("add sends project scope by default and user scope with --user", async () => {
     const c = fake(() => ({ id: "9", outcome: "created" }));
-    expect(await add(c, repo(), "x", { pin: true })).toBe("Saved: 9");
+    expect(await add(c, repo(), "x")).toBe("Saved: 9");
     expect(c.calls[0]?.[1]).toMatchObject({
       scope: "project",
-      pinned: true,
       project: { key: "github.com/acme/ex" },
     });
     await add(c, repo(), "y", { user: true });
@@ -110,7 +107,6 @@ describe("review commands", () => {
     content: "x",
     scope: "project",
     status: "active",
-    pinned: false,
   });
   const reply = (p: string) =>
     p === "/memories/review"

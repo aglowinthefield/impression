@@ -192,7 +192,6 @@ export function evalRoutes(db: Db) {
       .select({
         id: memories.id,
         content: memories.content,
-        pinned: memories.pinned,
       })
       .from(memories)
       .where(and(eq(memories.status, "active"), visible, scope));

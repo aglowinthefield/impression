@@ -9,12 +9,11 @@ interface Mem {
   content: string;
   scope: string;
   status: string;
-  pinned: boolean;
   warning?: string | null;
 }
 
 const line = (m: Mem) =>
-  `${m.id.slice(0, 8)}  ${m.scope}${m.pinned ? " pinned" : ""}${m.status === "possibly_stale" ? " STALE" : ""}  ${m.content}${m.warning ? ` (${m.warning})` : ""}`;
+  `${m.id.slice(0, 8)}  ${m.scope}${m.status === "possibly_stale" ? " STALE" : ""}  ${m.content}${m.warning ? ` (${m.warning})` : ""}`;
 
 export async function search(client: ApiClient, cwd: string, query: string) {
   const p = resolveProject(cwd);
@@ -34,7 +33,7 @@ export async function add(
   client: ApiClient,
   cwd: string,
   content: string,
-  opts: { user?: boolean; pin?: boolean } = {},
+  opts: { user?: boolean } = {},
 ) {
   const p = resolveProject(cwd);
   const user = opts.user === true;
@@ -43,7 +42,6 @@ export async function add(
     content,
     ...(user ? {} : { project: { key: p.key, name: p.name } }),
     ...(!user && p.pathPrefix ? { pathPrefix: p.pathPrefix } : {}),
-    ...(opts.pin ? { pinned: true } : {}),
     agent: "cli",
   })) as { id: string; outcome?: string };
   const note =

@@ -402,7 +402,6 @@ export function recheckRoutes(db: Db, providers: Providers) {
               content: verdict.content,
               ...(projectKey ? { project: { key: projectKey } } : {}),
               pathPrefix: m.pathPrefix,
-              pinned: m.pinned,
               tags: m.tags,
               confidence: m.confidence ?? undefined,
               agent: m.agent ?? undefined,

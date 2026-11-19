@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { api } from "./api";
+import { Markdown } from "./Markdown";
 
 export interface Memory {
   id: string;
@@ -8,11 +9,11 @@ export interface Memory {
   tags?: string[];
   status: "active" | "possibly_stale" | "superseded" | "retired";
   staleReason: string | null;
-  pinned: boolean;
   pathPrefix: string | null;
   supersededBy: string | null;
   createdAt: string;
   warning?: string | null;
+  project?: string | null;
   anchors?: { path: string; symbol: string | null }[];
 }
 
@@ -27,15 +28,12 @@ function Row({
   knownTags: string[];
   onChange: () => void;
 }) {
-  const [editing, setEditing] = useState(false);
-  const [text, setText] = useState(m.content);
   const [newTag, setNewTag] = useState("");
   const [error, setError] = useState<string | null>(null);
   const act = async (fn: () => Promise<unknown>) => {
     try {
       setError(null);
       await fn();
-      setEditing(false);
       onChange();
     } catch (e) {
       setError((e as Error).message);
@@ -66,22 +64,12 @@ function Row({
   const history = m.status === "superseded" || m.status === "retired";
   return (
     <li className="memory">
-      {editing ? (
-        <textarea
-          className="textarea w-full"
-          aria-label="Edit memory"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          rows={3}
-        />
-      ) : (
-        <p>{m.content}</p>
-      )}
+      <Markdown text={m.content} />
       <div className="flex flex-wrap items-center gap-1">
         {m.tags?.map((t) => (
           <span key={t} className="badge badge-info badge-sm gap-1">
             {t}
-            {!history && (
+            {!history && (t !== "practice" || project) && (
               <button
                 type="button"
                 className="cursor-pointer"
@@ -161,9 +149,9 @@ function Row({
         )}
       </div>
       <small>
+        {!project && m.project ? `${m.project.split("/").pop()} · ` : ""}
         {m.scope}
         {m.pathPrefix ? ` · ${m.pathPrefix}` : ""}
-        {m.pinned ? " · pinned" : ""}
         {m.status !== "active" ? ` · ${m.status.replace("_", " ")}` : ""}
         {m.staleReason ? ` (${m.staleReason})` : ""}
         {m.anchors?.length
@@ -172,85 +160,16 @@ function Row({
       </small>
       {!history && (
         <div className="actions">
-          {editing ? (
-            <>
-              <button
-                className="btn btn-sm btn-primary"
-                type="button"
-                onClick={() =>
-                  act(() =>
-                    api(`/memories/${m.id}`, {
-                      method: "PATCH",
-                      body: { content: text },
-                    }),
-                  )
-                }
-              >
-                Save
-              </button>
-              <button
-                className="btn btn-sm btn-outline"
-                type="button"
-                onClick={() => setEditing(false)}
-              >
-                Cancel
-              </button>
-            </>
-          ) : (
-            <>
-              <button
-                className="btn btn-sm btn-outline"
-                type="button"
-                onClick={() => setEditing(true)}
-              >
-                Edit
-              </button>
-              <button
-                className="btn btn-sm btn-outline"
-                type="button"
-                onClick={() =>
-                  act(() =>
-                    api(`/memories/${m.id}`, {
-                      method: "PATCH",
-                      body: { pinned: !m.pinned },
-                    }),
-                  )
-                }
-              >
-                {m.pinned ? "Unpin" : "Pin to core"}
-              </button>
-              {m.scope !== "user" && (
-                <button
-                  className="btn btn-sm btn-outline"
-                  type="button"
-                  onClick={() =>
-                    act(() =>
-                      api(`/memories/${m.id}`, {
-                        method: "PATCH",
-                        body: {
-                          scope: m.scope === "team" ? "project" : "team",
-                        },
-                      }),
-                    )
-                  }
-                >
-                  {m.scope === "team" ? "Make private" : "Share with team"}
-                </button>
-              )}
-              <button
-                className="btn btn-sm btn-error btn-outline"
-                type="button"
-                onClick={() => {
-                  if (
-                    window.confirm("Retire this memory? It stays in history.")
-                  )
-                    act(() => api(`/memories/${m.id}`, { method: "DELETE" }));
-                }}
-              >
-                Retire
-              </button>
-            </>
-          )}
+          <button
+            className="btn btn-sm btn-error btn-outline"
+            type="button"
+            onClick={() => {
+              if (window.confirm("Retire this memory? It stays in history."))
+                act(() => api(`/memories/${m.id}`, { method: "DELETE" }));
+            }}
+          >
+            Retire
+          </button>
         </div>
       )}
       {error && <p role="alert">{error}</p>}
@@ -265,9 +184,11 @@ function Row({
 export function Memories({
   project,
   concept = "",
+  filter,
 }: {
   project: string;
   concept?: string;
+  filter?: ReactNode;
 }) {
   const [tag, setTag] = useState("");
   const [knownTags, setKnownTags] = useState<string[]>(["practice"]);
@@ -330,6 +251,7 @@ export function Memories({
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
+        {filter}
         <select
           className="select select-sm w-auto"
           aria-label="Scope"

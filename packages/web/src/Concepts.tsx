@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { api } from "./api";
 import { Memories } from "./Memories";
 import { ago } from "./time";
@@ -20,7 +20,13 @@ interface LastRun {
 }
 
 /** The Memories tab: your concepts in the project on the left, their memories on the right. */
-export function MemoriesPage({ project }: { project: string }) {
+export function MemoriesPage({
+  project,
+  filter,
+}: {
+  project: string;
+  filter?: ReactNode;
+}) {
   const [concepts, setConcepts] = useState<Concept[] | null>(null);
   const [selected, setSelected] = useState("");
   const [dreaming, setDreaming] = useState(false);
@@ -100,7 +106,9 @@ export function MemoriesPage({ project }: { project: string }) {
           {item("practices", "Practices")}
         </ul>
         {concepts?.length === 0 && (
-          <p className="mt-3 text-xs opacity-70">No concepts yet.</p>
+          <p className="mt-3 text-xs opacity-70">
+            {project ? "No concepts yet." : "Pick a repo to see its concepts."}
+          </p>
         )}
         {project && concepts && (
           <button
@@ -151,7 +159,7 @@ export function MemoriesPage({ project }: { project: string }) {
             )}
           </header>
         )}
-        <Memories project={project} concept={selected} />
+        <Memories project={project} concept={selected} filter={filter} />
       </div>
     </div>
   );
