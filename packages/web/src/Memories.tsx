@@ -1,5 +1,6 @@
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { api } from "./api";
+import { Markdown } from "./Markdown";
 
 export interface Memory {
   id: string;
@@ -63,7 +64,7 @@ function Row({
   const history = m.status === "superseded" || m.status === "retired";
   return (
     <li className="memory">
-      <p>{m.content}</p>
+      <Markdown text={m.content} />
       <div className="flex flex-wrap items-center gap-1">
         {m.tags?.map((t) => (
           <span key={t} className="badge badge-info badge-sm gap-1">

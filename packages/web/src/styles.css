@@ -169,6 +169,35 @@
   .memory pre {
     @apply max-h-48 overflow-auto text-xs whitespace-pre-wrap;
   }
+  .md {
+    @apply mb-1 text-sm;
+  }
+  .md > * + * {
+    @apply mt-1;
+  }
+  .md p {
+    @apply mb-0;
+  }
+  .md ul {
+    @apply list-disc pl-5;
+  }
+  .md ol {
+    @apply list-decimal pl-5;
+  }
+  .md code {
+    @apply bg-base-200 rounded px-1 font-mono text-[0.85em];
+  }
+  .md pre {
+    @apply bg-base-200 rounded p-2;
+  }
+  .md pre code {
+    @apply bg-transparent p-0;
+  }
+  .md h1,
+  .md h2,
+  .md h3 {
+    @apply font-semibold;
+  }
   .actions {
     @apply mt-2 flex gap-2;
   }

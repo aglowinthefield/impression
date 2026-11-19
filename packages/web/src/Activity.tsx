@@ -1,5 +1,6 @@
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { api } from "./api";
+import { Markdown } from "./Markdown";
 import { ago } from "./time";
 
 export interface Entry {
@@ -104,16 +105,16 @@ function Row({ e, onUndone }: { e: Entry; onUndone: () => void }) {
         {ago(e.at)} · {describe(e)}
         {e.undone ? " · undone" : ""}
       </small>
-      {showText && <p>{e.memory?.content}</p>}
+      {showText && <Markdown text={e.memory?.content ?? ""} />}
       {e.before !== undefined && (
-        <p className="opacity-60">
-          <del>{e.before}</del>
-        </p>
+        <del className="block opacity-60">
+          <Markdown text={e.before} />
+        </del>
       )}
       {e.after !== undefined && (
-        <p>
-          <ins className="no-underline">{e.after}</ins>
-        </p>
+        <ins className="block no-underline">
+          <Markdown text={e.after} />
+        </ins>
       )}
       {(e.actor === "check" && e.reason) || e.why ? (
         <small>
