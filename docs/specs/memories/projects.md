@@ -1,6 +1,6 @@
 ---
 domain: memories
-status: draft
+status: approved
 issues:
   - https://github.com/aglowinthefield/impression/issues/95
 surfaces:
