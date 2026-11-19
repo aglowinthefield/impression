@@ -86,19 +86,17 @@ describe("conceptStart", () => {
     ]);
   });
 
-  test("keeps pinned memories and practices from the core set without repeating them", async () => {
+  test("keeps practices from the core set without repeating them", async () => {
     const core = [
       {
         id: ids.a1 ?? "",
         content: "Deploys go through CI",
-        pinned: true,
-        tags: [],
+        tags: ["practice"],
       },
-      { id: "p", content: "Be terse", pinned: false, tags: ["practice"] },
-      { id: "x", content: "Unpinned", pinned: false, tags: [] },
+      { id: "x", content: "Not a practice", tags: [] },
     ];
     const s = await conceptStart(t.db, projectId, "tom", core, 800);
-    expect(s.base.map((i) => i.id)).toEqual([ids.a1, "p"]);
+    expect(s.base.map((i) => i.id)).toEqual([ids.a1]);
     expect(s.top.map((m) => m.id)).not.toContain(ids.a1);
   });
 
@@ -122,8 +120,8 @@ test("shortSummary keeps the first sentence, cut to twelve words", () => {
 
 describe("session-start eval", () => {
   const items = [
-    { id: "1", content: "Be terse", pinned: false, tags: ["practice"] },
-    { id: "2", content: "Tests need Docker", pinned: false, tags: [] },
+    { id: "1", content: "Be terse", tags: ["practice"] },
+    { id: "2", content: "Tests need Docker", tags: [] },
   ];
 
   test("renders top-N as the hook does", () => {

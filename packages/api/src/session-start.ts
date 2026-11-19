@@ -14,7 +14,7 @@ export interface ConceptLine {
 }
 
 export interface ConceptStart {
-  /** Practices and pinned memories, as the top-N set has them. */
+  /** Practices, as the top-N set has them. */
   base: StartItem[];
   /** The project's concepts, areas first with their subtopics under them. */
   map: ConceptLine[];
@@ -36,8 +36,8 @@ export function shortSummary(summary: string): string {
 }
 
 /**
- * The concept version of the session-start set: the practices and pinned
- * memories the top-N set leads with, a map of the person's concepts in the
+ * The concept version of the session-start set: the practices the top-N
+ * set leads with, a map of the person's concepts in the
  * project with one-line summaries, then the best memory of each concept,
  * biggest first, until the budget runs out.
  */
@@ -48,7 +48,7 @@ export async function conceptStart(
   core: StartItem[],
   budget: number,
 ): Promise<ConceptStart> {
-  const base = core.filter((i) => i.pinned || i.tags.includes("practice"));
+  const base = core.filter((i) => i.tags.includes("practice"));
   let used = base.reduce((n, i) => n + estimateTokens(i.content) + 2, 0);
 
   const cs = await db
@@ -94,7 +94,7 @@ export async function conceptStart(
     }
   }
 
-  // The best memory of each mapped concept: pinned, then most confident, then newest.
+  // The best memory of each mapped concept: most confident, then newest.
   const ids = map.map((c) => c.id);
   const members = ids.length
     ? await db
@@ -102,7 +102,6 @@ export async function conceptStart(
           conceptId: conceptMemories.conceptId,
           id: memories.id,
           content: memories.content,
-          pinned: memories.pinned,
           tags: memories.tags,
         })
         .from(conceptMemories)
@@ -114,7 +113,6 @@ export async function conceptStart(
           ),
         )
         .orderBy(
-          sql`${memories.pinned} desc`,
           sql`coalesce(${memories.confidence}, 0.5) desc`,
           sql`${memories.createdAt} desc`,
         )
@@ -131,7 +129,7 @@ export async function conceptStart(
     if (used + cost > budget) continue;
     used += cost;
     seen.add(m.id);
-    top.push({ id: m.id, content: m.content, pinned: m.pinned, tags: m.tags });
+    top.push({ id: m.id, content: m.content, tags: m.tags });
   }
   return { base, map, top, tokens: used };
 }

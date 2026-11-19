@@ -9,7 +9,7 @@ export interface ServeOptions {
 }
 
 interface Core {
-  items: { content: string; pinned: boolean; tags?: string[] }[];
+  items: { content: string; tags?: string[] }[];
 }
 
 /**

@@ -88,7 +88,7 @@ test("stores a memory with provenance, anchors and an embedding, and finds it by
     .select()
     .from(memories)
     .where(eq(memories.id, near!.id));
-  expect(row).toMatchObject({ status: "active", pinned: false, agent: "pi" });
+  expect(row).toMatchObject({ status: "active", agent: "pi" });
 });
 
 test("a superseded memory keeps its row and points at its replacement", async () => {

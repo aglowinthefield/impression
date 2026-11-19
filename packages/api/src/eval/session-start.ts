@@ -49,7 +49,7 @@ export function renderTopN(project: string, items: CoreItem[]): Payload {
   ]);
 }
 
-/** The concept version: practices, the concept map, then pinned and top memories. */
+/** The concept version: practices, the concept map, then top memories. */
 export function renderConcepts(project: string, s: ConceptStart): Payload {
   return render([
     { header: PRACTICES, lines: s.base.filter(isPractice).map(practice) },

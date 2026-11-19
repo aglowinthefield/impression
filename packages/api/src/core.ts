@@ -25,7 +25,6 @@ export const estimateTokens = (s: string) => Math.ceil(s.length / 4);
 export interface CoreItem {
   id: string;
   content: string;
-  pinned: boolean;
   tags: string[];
 }
 
@@ -42,7 +41,6 @@ export async function coreSet(
     .orderBy(
       // Practices go first: they apply to whatever the session is about.
       sql`(${PRACTICE_TAG} = ANY(${memories.tags})) desc`,
-      desc(memories.pinned),
       sql`coalesce(${memories.confidence}, 0.5) desc`,
       desc(memories.createdAt),
       desc(memories.id),
@@ -57,7 +55,6 @@ export async function coreSet(
     items.push({
       id: m.id,
       content: m.content,
-      pinned: m.pinned,
       tags: m.tags,
     });
   }
@@ -65,10 +62,9 @@ export async function coreSet(
 }
 
 /**
- * The small set worth showing at session start: pinned first, then by
+ * The small set worth showing at session start: practices first, then by
  * confidence (unrated counts as middling), then newest. Flagged-stale and
- * superseded memories are left out. Stops at the budget, always keeping at
- * least one pinned memory that fits.
+ * superseded memories are left out. Stops at the budget.
  */
 export function coreRoutes(db: Db) {
   const app = new Hono<AuthEnv>();

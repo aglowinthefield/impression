@@ -8,7 +8,6 @@ export interface Memory {
   tags?: string[];
   status: "active" | "possibly_stale" | "superseded" | "retired";
   staleReason: string | null;
-  pinned: boolean;
   pathPrefix: string | null;
   supersededBy: string | null;
   createdAt: string;
