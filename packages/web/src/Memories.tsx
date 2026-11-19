@@ -165,7 +165,6 @@ function Row({
         {!project && m.project ? `${m.project.split("/").pop()} · ` : ""}
         {m.scope}
         {m.pathPrefix ? ` · ${m.pathPrefix}` : ""}
-        {m.pinned ? " · pinned" : ""}
         {m.status !== "active" ? ` · ${m.status.replace("_", " ")}` : ""}
         {m.staleReason ? ` (${m.staleReason})` : ""}
         {m.anchors?.length
@@ -207,38 +206,6 @@ function Row({
               >
                 Edit
               </button>
-              <button
-                className="btn btn-sm btn-outline"
-                type="button"
-                onClick={() =>
-                  act(() =>
-                    api(`/memories/${m.id}`, {
-                      method: "PATCH",
-                      body: { pinned: !m.pinned },
-                    }),
-                  )
-                }
-              >
-                {m.pinned ? "Unpin" : "Pin to core"}
-              </button>
-              {m.scope !== "user" && (
-                <button
-                  className="btn btn-sm btn-outline"
-                  type="button"
-                  onClick={() =>
-                    act(() =>
-                      api(`/memories/${m.id}`, {
-                        method: "PATCH",
-                        body: {
-                          scope: m.scope === "team" ? "project" : "team",
-                        },
-                      }),
-                    )
-                  }
-                >
-                  {m.scope === "team" ? "Make private" : "Share with team"}
-                </button>
-              )}
               <button
                 className="btn btn-sm btn-error btn-outline"
                 type="button"
