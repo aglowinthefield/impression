@@ -137,6 +137,37 @@ export function Start({ signedIn }: { signedIn: boolean }) {
         </ol>
 
         <h2 id="at-work">See it at work</h2>
+        <h3 id="how">How memories reach your agent</h3>
+        <ol className="list-decimal space-y-2 pl-5">
+          <li>
+            <strong>At session start,</strong> Impression picks a short set,
+            about 800 tokens: how you like to work first, then this repo's
+            memories, the ones it's most sure of first. Memories tied to one
+            folder come in only when you work in that folder. Memories flagged
+            as possibly out of date, and ones replaced by newer memories, stay
+            out.
+          </li>
+          <li>
+            <strong>With each prompt,</strong> it searches your memories for the
+            prompt's meaning and its words, and adds up to 5 that match closely.
+            It's stricter here than in a normal search, because a wrong memory
+            in your prompt costs more than a missing one. pi and oh-my-pi skip
+            very short prompts like "yes" and memories already shown in the
+            session.
+          </li>
+          <li>
+            <strong>When the agent asks,</strong> it uses the Impression search
+            tool to look up more in the middle of a task, and the add tool to
+            save something you tell it to remember.
+          </li>
+        </ol>
+        <p>
+          The memories reach the agent as a note beside your prompt, which it
+          reads but you don't see in the conversation. That's why it shows you a
+          count. Only your own memories and ones shared with your team are used,
+          and only in repos the GitHub app reaches.
+        </p>
+        <h3>Check what it did</h3>
         <p>
           Your agent shows how many memories Impression gave it: in the footer
           in pi and oh-my-pi, and as a message at session start and on matching

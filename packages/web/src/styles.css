@@ -166,6 +166,9 @@
   .start h2 {
     @apply mt-4 text-lg font-semibold;
   }
+  .start h3 {
+    @apply font-semibold;
+  }
   .start code,
   .welcome code {
     @apply bg-base-200 rounded px-1 font-mono text-[0.85em];
