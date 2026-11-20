@@ -2,6 +2,12 @@
 
 What changed in each release of `@aglowinthefield/impression`, for people who use it. pi shows the new entries once, at the first session after an update.
 
+## 0.9.0
+
+- You can see Impression at work. pi and oh-my-pi show how many memories the agent got this session in the footer. Claude Code and Codex say how many it got at session start and when a prompt matches more.
+- Each memory on the dashboard says how often it reached your agents and when it last did, or that it hasn't been used yet.
+- The Get started page has a "See it at work" section, including a question to ask your agent about what Impression knows.
+
 ## 0.8.0
 
 - impression.quest has a Get started page at /start: what Impression does, the steps to set it up, what leaves your machine, and how to remove it. The sign-in page links to it.
