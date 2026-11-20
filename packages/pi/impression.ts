@@ -200,8 +200,9 @@ export default function (pi: ExtensionAPI) {
     sent = ctx.sessionManager.getEntries().length;
     const cli = await loadCli();
     // After an update, show what changed, once. Checked only with a UI, so a print-mode
-    // run doesn't use up the notice.
-    if (ctx.hasUI) {
+    // run doesn't use up the notice. pi (1.5+) already shows the package's CHANGELOG.md
+    // under "Extension Updates", so only omp (on Bun) needs this one.
+    if (ctx.hasUI && process.versions.bun) {
       const note = cli?.upgradeNotice?.(cli.VERSION);
       if (note) ctx.ui.notify(note, "info");
     }
