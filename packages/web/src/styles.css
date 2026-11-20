@@ -92,6 +92,20 @@
     color-mix(in oklab, var(--color-primary) 28%, transparent);
 }
 
+/* Content fades in as it mounts, so a reloaded list or a new page doesn't pop in. Rows keep their keys across refreshes, so only new ones fade. */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  main > *,
+  .memories > *,
+  tbody > tr {
+    animation: fade-in 180ms ease-out;
+  }
+}
+
 @layer base {
   /* The colour sits on html, not body: a body background would paint over the image layer behind it. */
   html {
