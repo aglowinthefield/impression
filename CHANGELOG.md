@@ -2,6 +2,13 @@
 
 What changed in each release of `@aglowinthefield/impression`, for people who use it. pi shows the new entries once, at the first session after an update.
 
+## 0.6.0
+
+- `impression setup` signs you in with GitHub when you aren't signed in yet, so `npx @aglowinthefield/impression setup` is the whole install for oh-my-pi.
+- For oh-my-pi, `impression setup` also runs `omp install` for you.
+- pi no longer shows what changed in an update twice.
+- When GitHub sign-in in the CLI stops because the Impression GitHub app isn't installed, the message includes the install link.
+
 ## 0.5.0
 
 - Impression works in oh-my-pi (`omp`). Install it with `omp install npm:@aglowinthefield/impression`, then run `impression setup --only omp` to add the search and add tools.
