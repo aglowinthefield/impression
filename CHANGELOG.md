@@ -2,6 +2,11 @@
 
 What changed in each release of `@aglowinthefield/impression`, for people who use it. pi shows the new entries once, at the first session after an update.
 
+## 0.7.0
+
+- `impression setup` asks which agents should use Impression, with every agent it found selected, and installs the Claude Code and Codex plugins itself. You no longer paste their plugin commands.
+- `impression setup --agent claude,omp` picks agents without asking, and `--yes` takes every agent found. `--only` still works.
+
 ## 0.6.0
 
 - `impression setup` signs you in with GitHub when you aren't signed in yet, so `npx @aglowinthefield/impression setup` is the whole install for oh-my-pi.
