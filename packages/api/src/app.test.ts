@@ -43,7 +43,7 @@ describe("bearer auth", () => {
   test("accepts a valid token and identifies its owner", async () => {
     const res = await get("/api/whoami", `Bearer ${token}`);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ name: "alice" });
+    expect(await res.json()).toEqual({ name: "alice", admin: true });
   });
 
   test("stores only a hash, never the token", async () => {

@@ -121,6 +121,33 @@ export function formatContext(
   }
 }
 
+/**
+ * Session-start output: the context for the agent, plus a notice for the person in
+ * agents that show one (Claude Code and Codex read `systemMessage`). Null when
+ * there is nothing to say.
+ */
+export function formatSessionStart(
+  agent: Agent,
+  context: string | null,
+  notice: string | null,
+): string | null {
+  const shows = agent === "claude" || agent === "codex";
+  if (shows && notice) {
+    return JSON.stringify({
+      systemMessage: notice,
+      ...(context
+        ? {
+            hookSpecificOutput: {
+              hookEventName: "SessionStart",
+              additionalContext: context,
+            },
+          }
+        : {}),
+    });
+  }
+  return context ? formatContext(agent, "SessionStart", context) : null;
+}
+
 /** The name sessions are stored under. */
 export function sessionAgent(agent: Agent): string {
   return agent === "claude" ? "claude-code" : agent;

@@ -1,5 +1,6 @@
 import { type FormEvent, useEffect, useState } from "react";
 import { api } from "./api";
+import { CONTACT } from "./contact";
 import { Tokens } from "./Tokens";
 
 interface UserSettings {
@@ -37,7 +38,7 @@ export function Settings() {
     <section>
       <form className="flex items-end gap-2" onSubmit={save}>
         <label className="flex flex-col gap-1">
-          <span>Extraction floor</span>
+          <span>How sure a memory must be to keep</span>
           <input
             className="input input-sm w-28"
             type="number"
@@ -58,12 +59,23 @@ export function Settings() {
       </form>
       <p>
         <small>
-          Session-end extraction drops anything it is less sure of than this,
-          from 0 to 1.
+          From 0 to 1. Higher keeps fewer memories that are more often right;
+          lower keeps more, with more noise. 0.7 suits most people.
         </small>
       </p>
       {error && <p role="alert">{error}</p>}
       <Tokens />
+      <h2 className="mt-6 text-base font-semibold">Your data</h2>
+      <p className="text-sm">
+        To delete your sessions and memories from this server, email{" "}
+        <a className="link" href={`mailto:${CONTACT}`}>
+          {CONTACT}
+        </a>
+        .{" "}
+        <a className="link" href="/start#data">
+          What Impression stores
+        </a>
+      </p>
     </section>
   );
 }

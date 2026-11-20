@@ -19,6 +19,7 @@ import { RequestLog } from "./request-log.js";
 import { searchRoutes } from "./search.js";
 import { sessionRoutes } from "./sessions.js";
 import { settingsRoutes } from "./settings.js";
+import { setupStatusRoutes } from "./setup-status.js";
 import { tokenRoutes } from "./tokens.js";
 import { usageContext } from "./usage.js";
 
@@ -42,7 +43,17 @@ export function createApp(
   app.get("/health", (c) => c.json({ ok: true }));
 
   // Lets the login page decide whether to show the GitHub button.
-  app.get("/auth/config", (c) => c.json({ github: Boolean(opts.github) }));
+  // Also gives the Get started page the GitHub app's install link.
+  app.get("/auth/config", (c) =>
+    c.json({
+      github: Boolean(opts.github),
+      ...(opts.github?.appSlug
+        ? {
+            installUrl: `https://github.com/apps/${opts.github.appSlug}/installations/new`,
+          }
+        : {}),
+    }),
+  );
   const github = opts.github
     ? (opts.githubClient ?? createGithubClient(opts.github))
     : null;
@@ -73,7 +84,10 @@ export function createApp(
   api.route("/activity", activityRoutes(db, providers));
   api.route("/settings", settingsRoutes(db));
   api.route("/tokens", tokenRoutes(db));
-  api.get("/whoami", (c) => c.json({ name: c.get("principal") }));
+  api.route("/setup", setupStatusRoutes(db));
+  api.get("/whoami", (c) =>
+    c.json({ name: c.get("principal"), admin: c.get("access").admin }),
+  );
   app.route("/api", api);
 
   if (opts.webDir) {

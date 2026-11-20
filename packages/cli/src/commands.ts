@@ -64,10 +64,20 @@ export async function status(client: ApiClient, cwd: string, url: string) {
   const p = resolveProject(cwd);
   const who = (await client.get("/whoami")) as { name: string };
   const review = (await client.get("/memories/review")) as { items: unknown[] };
+  // Older servers have no /setup; leave the line out rather than fail.
+  const setup = (await client
+    .get(`/setup?project=${encodeURIComponent(p.key)}`)
+    .catch(() => null)) as { project?: { reachable: boolean } } | null;
+  const reachable = setup?.project?.reachable;
   return [
     `Server:    ${url}`,
     `Signed in: ${who.name}`,
     `Project:   ${p.key}`,
+    ...(reachable === false
+      ? [
+          `           Not reachable: sessions here aren't saved. Install the Impression GitHub app on this repo's account: ${url.replace(/\/+$/, "")}/start#repos`,
+        ]
+      : []),
     `Review:    ${review.items.length} possibly stale`,
   ].join("\n");
 }

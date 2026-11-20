@@ -212,12 +212,28 @@ export default function (pi: ExtensionAPI) {
       try {
         lib.cli.startRecheck?.(ctx.cwd, "pi", { script: SCRIPT, node: NODE });
       } catch {}
-    context = lib
-      ? ((await lib.cli.sessionStartContext(lib.client, ctx.cwd, {
-          session: sessionId(ctx),
-          agent: "pi",
-        })) ?? "")
-      : "";
+    const opts = { session: sessionId(ctx), agent: "pi" };
+    if (!lib) {
+      context = "";
+      // Installed but nobody signed in: say so, or it looks like it works.
+      if (ctx.hasUI && cli?.NOT_SIGNED_IN)
+        ctx.ui.notify(cli.NOT_SIGNED_IN, "warning");
+      return;
+    }
+    // Older bundles have only sessionStartContext.
+    if (!lib.cli.sessionStart) {
+      context =
+        (await lib.cli.sessionStartContext(lib.client, ctx.cwd, opts)) ?? "";
+      return;
+    }
+    const start = await lib.cli.sessionStart(lib.client, ctx.cwd, opts);
+    context = start?.context ?? "";
+    // One line for the person: this repo can't be saved, or memories are on their way.
+    const notice = ctx.hasUI
+      ? lib.cli.sessionStartNotice(start, lib.cli.loadConfig().url)
+      : null;
+    if (notice)
+      ctx.ui.notify(notice, start?.reachable === false ? "warning" : "info");
   });
 
   pi.on("before_agent_start", async (event, ctx) => {

@@ -103,7 +103,7 @@ describe("browser flow", () => {
     const who = await app.request("/api/whoami", {
       headers: { authorization: `Bearer ${token}` },
     });
-    expect(await who.json()).toEqual({ name: "sam" });
+    expect(await who.json()).toEqual({ name: "sam", admin: false });
   });
 
   test("a second sign-in revokes the previous browser token", async () => {
@@ -225,6 +225,7 @@ describe("config and wiring", () => {
   test("/auth/config reports whether GitHub sign-in is on", async () => {
     expect(await (await app.request("/auth/config")).json()).toEqual({
       github: true,
+      installUrl: "https://github.com/apps/impression-app/installations/new",
     });
     const off = createApp(t.db, fakeProviders());
     expect(await (await off.request("/auth/config")).json()).toEqual({

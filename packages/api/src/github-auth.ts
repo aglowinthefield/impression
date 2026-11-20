@@ -93,11 +93,23 @@ const STATE_COOKIE = "imp_oauth_state";
 const escapeHtml = (s: string) =>
   s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
+/** The sign-in card on the meadow, matching the dashboard's login page. */
+const PAGE_CSS = `
+body{margin:0;min-height:100vh;display:grid;place-items:center;padding:1rem;box-sizing:border-box;
+font-family:"IBM Plex Sans",ui-sans-serif,system-ui,sans-serif;color:#262a30;
+background:#f0efeb url(/login-bg.png) center/cover;image-rendering:pixelated}
+main{image-rendering:auto;background:#f7f6f3;border-radius:.5rem;box-shadow:0 10px 25px -5px rgb(0 0 0/.25);
+padding:1.5rem;width:100%;max-width:24rem;display:grid;gap:1rem;line-height:1.5}
+h1{font-size:1rem;font-weight:500;margin:0}p{margin:0}
+.btn{display:block;text-align:center;background:#4a685a;color:#f0efeb;border-radius:.375rem;
+padding:.4rem .75rem;font-size:.875rem;font-weight:600;text-decoration:none}
+.back{font-size:.875rem}.back a{color:#4a685a}`;
+
 function page(message: string, link?: { href: string; text: string }) {
   const a = link
-    ? `<p><a href="${escapeHtml(link.href)}">${escapeHtml(link.text)}</a></p>`
+    ? `<a class="btn" href="${escapeHtml(link.href)}">${escapeHtml(link.text)}</a>`
     : "";
-  return `<!doctype html><meta charset="utf-8"><title>Impression</title><body style="font-family:system-ui;max-width:32rem;margin:4rem auto"><h1>Impression</h1><p>${escapeHtml(message)}</p>${a}<p><a href="/">Back to sign in</a></p>`;
+  return `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="icon" type="image/png" href="/favicon.png"><title>Impression</title><style>${PAGE_CSS}</style><main><h1>Impression</h1><p>${escapeHtml(message)}</p>${a}<p class="back"><a href="/">Back to sign in</a> · <a href="/start">Get started</a></p></main>`;
 }
 
 function refusal(
@@ -106,7 +118,7 @@ function refusal(
 ): { message: string; link?: { href: string; text: string } } {
   if (r.reason === "needs_install" && cfg.appSlug) {
     return {
-      message: `Hi ${r.login}. Install the Impression GitHub app on your account, then sign in again.`,
+      message: `Hi ${r.login}. One more step: install the Impression GitHub app on your account, then sign in again. Impression works in the repos you give the app, so pick All repositories unless you want to leave some out.`,
       link: {
         href: `https://github.com/apps/${cfg.appSlug}/installations/new`,
         text: "Install the app",

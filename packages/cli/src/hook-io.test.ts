@@ -3,6 +3,7 @@ import {
   agentArg,
   foreignHost,
   formatContext,
+  formatSessionStart,
   hookCwd,
   hookSessionId,
   hookTranscript,
@@ -41,6 +42,22 @@ describe("hook io", () => {
     expect(JSON.parse(formatContext("copilot", "SessionStart", "hi"))).toEqual({
       additionalContext: "hi",
     });
+  });
+
+  test("session start adds a notice for the person in Claude Code and Codex only", () => {
+    expect(JSON.parse(formatSessionStart("claude", null, "on") ?? "")).toEqual({
+      systemMessage: "on",
+    });
+    expect(JSON.parse(formatSessionStart("codex", "ctx", "on") ?? "")).toEqual({
+      systemMessage: "on",
+      hookSpecificOutput: {
+        hookEventName: "SessionStart",
+        additionalContext: "ctx",
+      },
+    });
+    expect(formatSessionStart("pi", null, "on")).toBeNull();
+    expect(formatSessionStart("pi", "ctx", "on")).toBe("ctx");
+    expect(formatSessionStart("claude", null, null)).toBeNull();
   });
 
   test("cwd and transcript from each agent's input", () => {

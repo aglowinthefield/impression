@@ -10,18 +10,29 @@ export interface ServeOptions {
 
 interface Core {
   items: { content: string; tags?: string[] }[];
+  /** False when this request can't store sessions for the project (a repo the GitHub app doesn't reach). */
+  reachable?: boolean;
+}
+
+/** What session start found: the text to inject, and whether this repo's sessions can be saved. */
+export interface SessionStart {
+  context: string | null;
+  /** False when the server can't store sessions for this repo. Undefined from older servers. */
+  reachable?: boolean;
+  /** The project key and name the session resolves to. */
+  key: string;
+  name: string;
 }
 
 /**
- * Builds the text injected at session start, or null when there is nothing to
- * show or the API is unreachable. A hook must never break the session, so
- * every failure ends in null.
+ * Fetches the core memories for session start. Null when the API is unreachable.
+ * A hook must never break the session, so every failure ends in null.
  */
-export async function sessionStartContext(
+export async function sessionStart(
   client: ApiClient,
   cwd: string,
   opts: ServeOptions & { budget?: number } = {},
-): Promise<string | null> {
+): Promise<SessionStart | null> {
   try {
     const p = resolveProject(cwd);
     const qs = new URLSearchParams({
@@ -32,26 +43,61 @@ export async function sessionStartContext(
     if (opts.session) qs.set("session", opts.session);
     if (opts.agent) qs.set("agent", opts.agent);
     const core = (await client.get(`/core?${qs}`)) as Core;
-    if (!core.items?.length) return null;
-    const practices = core.items.filter((i) => i.tags?.includes("practice"));
-    const facts = core.items.filter((i) => !i.tags?.includes("practice"));
-    return [
-      ...(practices.length > 0
-        ? [
-            "How this user likes to work (from Impression; follow these when they apply):",
-            ...practices.map((i) => `- ${i.content}`),
-          ]
-        : []),
-      ...(facts.length > 0
-        ? [
-            `Saved memories for ${p.name} (from Impression; use the impression search tool for more):`,
-            ...facts.map((i) => `- ${i.content}`),
-          ]
-        : []),
-    ].join("\n");
+    const items = core.items ?? [];
+    const practices = items.filter((i) => i.tags?.includes("practice"));
+    const facts = items.filter((i) => !i.tags?.includes("practice"));
+    const context = items.length
+      ? [
+          ...(practices.length > 0
+            ? [
+                "How this user likes to work (from Impression; follow these when they apply):",
+                ...practices.map((i) => `- ${i.content}`),
+              ]
+            : []),
+          ...(facts.length > 0
+            ? [
+                `Saved memories for ${p.name} (from Impression; use the impression search tool for more):`,
+                ...facts.map((i) => `- ${i.content}`),
+              ]
+            : []),
+        ].join("\n")
+      : null;
+    return { context, reachable: core.reachable, key: p.key, name: p.name };
   } catch {
     return null;
   }
+}
+
+/**
+ * Builds the text injected at session start, or null when there is nothing to
+ * show or the API is unreachable.
+ */
+export async function sessionStartContext(
+  client: ApiClient,
+  cwd: string,
+  opts: ServeOptions & { budget?: number } = {},
+): Promise<string | null> {
+  return (await sessionStart(client, cwd, opts))?.context ?? null;
+}
+
+/** Session-start notice when the plugin is installed but nobody signed in. */
+export const NOT_SIGNED_IN =
+  "Impression isn't signed in, so it won't remember this session. Run: npx @aglowinthefield/impression setup";
+
+/**
+ * One line for the person (not the agent) at session start, or null when all is
+ * well. Says when this repo's sessions can't be saved, or that the first ones are.
+ */
+export function sessionStartNotice(
+  s: SessionStart | null,
+  url: string,
+): string | null {
+  if (!s) return null;
+  if (s.reachable === false)
+    return `Impression can't reach ${s.key}, so this session won't be saved. Install the Impression GitHub app on that repo's account: ${url.replace(/\/+$/, "")}/start#repos`;
+  if (!s.context)
+    return `Impression is on. Memories from this session will show at ${url.replace(/\/+$/, "")}.`;
+  return null;
 }
 
 /**

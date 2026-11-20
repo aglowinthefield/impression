@@ -118,3 +118,11 @@ export async function memoryVisible(
           )})`;
   return sql`((${col("scope")} <> 'team' AND ${col("owner")} = ${me} AND (${col("project_id")} IS NULL OR ${inProject})) OR (${col("scope")} = 'team' AND ${col("project_id")} IS NOT NULL AND ${inProject}))`;
 }
+
+/**
+ * Whether this request may store sessions and memories under `key`. A `path:` key
+ * is always yours; a GitHub repo needs the Impression app installed where you can see it.
+ */
+export function canReach(a: Access, key: string): boolean {
+  return a.admin || key.startsWith("path:") || a.repos.has(key.toLowerCase());
+}

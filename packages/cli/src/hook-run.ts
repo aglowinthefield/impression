@@ -10,12 +10,18 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createClient } from "@impression/shared";
 import { loadConfig } from "./config.js";
-import { promptContext, sessionStartContext } from "./hook.js";
+import {
+  NOT_SIGNED_IN,
+  promptContext,
+  sessionStart,
+  sessionStartNotice,
+} from "./hook.js";
 import {
   type Agent,
   agentArg,
   foreignHost,
   formatContext,
+  formatSessionStart,
   hookCwd,
   hookSessionId,
   hookTranscript,
@@ -51,18 +57,29 @@ export async function runHook(
   const agent = agentArg(args);
   if (!agent || foreignHost(agent)) return;
   const config = loadConfig();
-  if (!config.token) return;
+  if (!config.token) {
+    // The plugin is installed but nobody signed in: say so once per session.
+    if (sub === "session-start") {
+      const out = formatSessionStart(agent, null, NOT_SIGNED_IN);
+      if (out) process.stdout.write(`${out}\n`);
+    }
+    return;
+  }
   const client = () => createClient(config.url, config.token as string);
 
   if (sub === "session-start") {
     const input = parseHookInput(await readStdin(1000));
     const cwd = hookCwd(input);
-    const ctx = await sessionStartContext(client(), cwd, {
+    const start = await sessionStart(client(), cwd, {
       session: hookSessionId(input),
       agent: sessionAgent(agent),
     });
-    if (ctx)
-      process.stdout.write(`${formatContext(agent, "SessionStart", ctx)}\n`);
+    const out = formatSessionStart(
+      agent,
+      start?.context ?? null,
+      sessionStartNotice(start, config.url),
+    );
+    if (out) process.stdout.write(`${out}\n`);
     startRecheck(cwd, agent);
     return;
   }

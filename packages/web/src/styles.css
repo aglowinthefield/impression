@@ -153,6 +153,53 @@
   .spacer {
     @apply flex-1;
   }
+  .start-page {
+    @apply min-h-screen px-4 py-10;
+  }
+  .start {
+    @apply card bg-base-100 mx-auto grid max-w-2xl gap-4 p-8 shadow-lg;
+    line-height: 1.6;
+  }
+  .start h1 {
+    @apply mt-4 text-2xl font-semibold;
+  }
+  .start h2 {
+    @apply mt-4 text-lg font-semibold;
+  }
+  .start code,
+  .welcome code {
+    @apply bg-base-200 rounded px-1 font-mono text-[0.85em];
+  }
+  .steps-list {
+    @apply m-0 grid list-none gap-5 p-0;
+  }
+  .step-item {
+    @apply grid grid-cols-[2rem_1fr] items-start gap-3;
+  }
+  .step-item h3 {
+    @apply font-semibold;
+  }
+  .step-item p {
+    @apply mt-1;
+  }
+  .step-n {
+    @apply border-base-300 grid size-7 place-items-center rounded-full border text-sm font-semibold;
+  }
+  .step-item[data-done="true"] .step-n {
+    @apply bg-success text-success-content border-success;
+  }
+  .step-item[data-done="true"] h3 {
+    @apply font-normal opacity-70;
+  }
+  .command {
+    @apply bg-base-200 my-2 flex items-center gap-2 rounded px-3 py-2;
+  }
+  .command code {
+    @apply flex-1 bg-transparent p-0 font-mono text-sm;
+  }
+  .welcome {
+    @apply mx-auto grid max-w-2xl gap-5;
+  }
   main {
     @apply mx-auto max-w-6xl p-4;
   }

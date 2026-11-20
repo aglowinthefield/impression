@@ -97,6 +97,21 @@ describe("commands", () => {
       "Server:    http://h\nSigned in: me\nProject:   github.com/acme/ex\nReview:    2 possibly stale",
     );
   });
+  test("status says when the repo's sessions can't be saved", async () => {
+    const c = fake((p) =>
+      p === "/whoami"
+        ? { name: "me" }
+        : p.startsWith("/setup")
+          ? { project: { key: "github.com/acme/ex", reachable: false } }
+          : { items: [] },
+    );
+    const out = await status(c, repo(), "http://h/");
+    expect(out).toContain("Not reachable");
+    expect(out).toContain("http://h/start#repos");
+    expect(c.calls.map((x) => x[0])).toContain(
+      "/setup?project=github.com%2Facme%2Fex",
+    );
+  });
 });
 
 describe("review commands", () => {

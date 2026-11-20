@@ -3,7 +3,11 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
-import { sessionStartContext } from "./hook.js";
+import {
+  sessionStart,
+  sessionStartContext,
+  sessionStartNotice,
+} from "./hook.js";
 
 const repo = () => {
   const dir = mkdtempSync(join(tmpdir(), "imp-hook-"));
@@ -122,4 +126,37 @@ test("session and agent reach /core and /search", async () => {
   });
   expect(bodies[1]).toMatchObject({ source: "prompt" });
   expect(bodies[1]).not.toHaveProperty("session");
+});
+
+describe("sessionStartNotice", () => {
+  const client = (reply: unknown) => ({
+    get: async () => reply,
+    post: async () => null,
+  });
+
+  test("warns when the repo can't be reached", async () => {
+    const s = await sessionStart(
+      client({ items: [], reachable: false }),
+      repo(),
+    );
+    expect(sessionStartNotice(s, "https://x.test/")).toBe(
+      "Impression can't reach github.com/acme/ex, so this session won't be saved. Install the Impression GitHub app on that repo's account: https://x.test/start#repos",
+    );
+  });
+
+  test("says it's on when there's nothing to inject yet, and stays quiet otherwise", async () => {
+    const empty = await sessionStart(
+      client({ items: [], reachable: true }),
+      repo(),
+    );
+    expect(sessionStartNotice(empty, "https://x.test")).toContain(
+      "Impression is on",
+    );
+    const full = await sessionStart(
+      client({ items: [{ content: "Use pnpm" }], reachable: true }),
+      repo(),
+    );
+    expect(sessionStartNotice(full, "https://x.test")).toBeNull();
+    expect(sessionStartNotice(null, "https://x.test")).toBeNull();
+  });
 });

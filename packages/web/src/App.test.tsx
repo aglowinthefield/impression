@@ -78,7 +78,7 @@ test("tab and repo live in the URL", async () => {
   history.replaceState(null, "", "/");
   localStorage.setItem("impression.token", "imp_ok");
   respond({
-    "/whoami": { name: "alice" },
+    "/whoami": { name: "alice", admin: true },
     "/projects": {
       items: [
         { key: "github.com/a/x", name: "x" },
@@ -122,6 +122,10 @@ test("shows the GitHub button only when the server has it on", async () => {
   render(<App />);
   const link = await screen.findByText("Sign in with GitHub");
   expect(link.getAttribute("href")).toBe("/auth/github");
+  // The token field waits behind a link when GitHub sign-in is on.
+  expect(screen.queryByLabelText("API token")).toBeNull();
+  fireEvent.click(screen.getByText("Use an API token"));
+  expect(screen.getByLabelText("API token")).toBeTruthy();
   cleanup();
   vi.stubGlobal(
     "fetch",
@@ -139,4 +143,66 @@ test("saves the token from the GitHub redirect and clears the fragment", async (
   expect(localStorage.getItem("impression.token")).toBe("imp_ok");
   expect(location.hash).toBe("");
   expect(await screen.findByText("sam")).toBeTruthy();
+});
+
+test("hides Debug from people who aren't admins", async () => {
+  history.replaceState(null, "", "/");
+  localStorage.setItem("impression.token", "imp_ok");
+  respond({
+    "/whoami": { name: "sam", admin: false },
+    "/projects": { items: [] },
+  });
+  render(<App />);
+  await screen.findByText("sam");
+  expect(screen.queryByText("Debug")).toBeNull();
+  expect(screen.getByText("Help").getAttribute("href")).toBe("/start");
+});
+
+test("shows the setup steps until the first memory, ticking off what's done", async () => {
+  history.replaceState(null, "", "/");
+  localStorage.setItem("impression.token", "imp_ok");
+  respond({
+    "/whoami": { name: "sam" },
+    "/projects": { items: [] },
+    "/setup": {
+      name: "sam",
+      admin: false,
+      repos: 3,
+      cliSignedIn: true,
+      sessions: 0,
+      memories: 0,
+    },
+  });
+  render(<App />);
+  expect(await screen.findByText("Welcome, sam")).toBeTruthy();
+  expect(screen.getByText("The GitHub app reaches 3 repos")).toBeTruthy();
+  expect(screen.getByText("A machine is set up")).toBeTruthy();
+  expect(
+    screen.getByText("Start a session in one of those repos"),
+  ).toBeTruthy();
+});
+
+test("serves the Get started page at /start, signed in or not", async () => {
+  history.replaceState(null, "", "/start");
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      async () =>
+        new Response(
+          '{"github":true,"installUrl":"https://github.com/apps/x/installations/new"}',
+        ),
+    ),
+  );
+  render(<App />);
+  expect(screen.getByText("Get started")).toBeTruthy();
+  expect(
+    screen.getByText("npx @aglowinthefield/impression setup"),
+  ).toBeTruthy();
+  expect(
+    (await screen.findByText("Install or change the app's repos")).getAttribute(
+      "href",
+    ),
+  ).toBe("https://github.com/apps/x/installations/new");
+  expect(screen.getByText("Sign in").getAttribute("href")).toBe("/");
+  history.replaceState(null, "", "/");
 });

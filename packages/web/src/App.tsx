@@ -9,14 +9,19 @@ import {
   takeTokenFromHash,
 } from "./api";
 import { MemoriesPage } from "./Concepts";
+import { CONTACT } from "./contact";
 import { Debug } from "./Debug";
 import { RepoFilter } from "./RepoFilter";
 import { Settings } from "./Settings";
+import { Start } from "./Start";
+import { type SetupStatus, Welcome } from "./Welcome";
 
 function Login({ onDone }: { onDone: () => void }) {
   const [token, setTok] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [github, setGithub] = useState(false);
+  // With GitHub sign-in on, the token field is for operators, so it waits behind a link.
+  const [useToken, setUseToken] = useState(false);
   useEffect(() => {
     fetch("/auth/config")
       .then((r) => r.json())
@@ -43,32 +48,51 @@ function Login({ onDone }: { onDone: () => void }) {
         }}
       >
         <h1>Impression</h1>
+        <p className="text-sm opacity-80">
+          Memory for your coding agents. It keeps what they learn about your
+          repos and hands it back in the next session.
+        </p>
         {github && (
+          <a className="btn btn-sm btn-primary" href="/auth/github">
+            Sign in with GitHub
+          </a>
+        )}
+        <p className="flex justify-between text-sm">
+          <a className="link" href="/start">
+            Get started
+          </a>
+          {github && !useToken && (
+            <button
+              type="button"
+              className="link opacity-70"
+              onClick={() => setUseToken(true)}
+            >
+              Use an API token
+            </button>
+          )}
+        </p>
+        {(!github || useToken) && (
           <>
-            <a className="btn btn-sm btn-primary" href="/auth/github">
-              Sign in with GitHub
-            </a>
-            <p>Or use an API token:</p>
+            <label>
+              API token
+              <input
+                className="input input-sm"
+                type="password"
+                value={token}
+                onChange={(e) => setTok(e.target.value)}
+                placeholder="imp_..."
+              />
+            </label>
+            {error && <p role="alert">{error}</p>}
+            <button
+              className="btn btn-sm btn-primary"
+              type="submit"
+              disabled={!token.trim()}
+            >
+              Sign in
+            </button>
           </>
         )}
-        <label>
-          API token
-          <input
-            className="input input-sm"
-            type="password"
-            value={token}
-            onChange={(e) => setTok(e.target.value)}
-            placeholder="imp_..."
-          />
-        </label>
-        {error && <p role="alert">{error}</p>}
-        <button
-          className="btn btn-sm btn-primary"
-          type="submit"
-          disabled={!token.trim()}
-        >
-          Sign in
-        </button>
       </form>
     </div>
   );
@@ -133,13 +157,18 @@ function useLocation(): [Tab, string, (t: Tab, p: string) => void] {
 
 function Shell({ onSignOut }: { onSignOut: () => void }) {
   const [who, setWho] = useState("");
+  const [admin, setAdmin] = useState(false);
+  const [setup, setSetup] = useState<SetupStatus | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [tab, project, go] = useLocation();
   const setProject = (p: string) => go(tab, p);
 
   useEffect(() => {
-    api<{ name: string }>("/whoami").then(
-      (w) => setWho(w.name),
+    api<{ name: string; admin?: boolean }>("/whoami").then(
+      (w) => {
+        setWho(w.name);
+        setAdmin(w.admin === true);
+      },
       () => {},
     );
     api<{ items: Project[] }>("/projects").then(
@@ -147,6 +176,28 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
       () => {},
     );
   }, []);
+
+  // Until the first memory lands, check setup progress every 10 seconds so the
+  // welcome steps tick off on their own. Stops once there are memories, or if
+  // the server has no /setup.
+  const [polling, setPolling] = useState(true);
+  useEffect(() => {
+    if (!polling) return;
+    const load = () =>
+      api<SetupStatus>("/setup").then(
+        (s) => {
+          setSetup(s);
+          if (s.memories > 0) setPolling(false);
+        },
+        () => setPolling(false),
+      );
+    void load();
+    const t = setInterval(load, 10_000);
+    return () => clearInterval(t);
+  }, [polling]);
+  const firstRun = setup !== null && setup.memories === 0;
+
+  const visibleTabs = tabs.filter((t) => t !== "Debug" || admin);
 
   const filter = (
     <RepoFilter projects={projects} value={project} onChange={setProject} />
@@ -157,7 +208,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
       <header className="navbar bg-base-100 border-base-300 min-h-0 gap-3 border-b px-4 py-2">
         <strong>Impression</strong>
         <nav className="tabs tabs-border">
-          {tabs.map((t) => (
+          {visibleTabs.map((t) => (
             <button
               className={t === tab ? "tab tab-active font-semibold" : "tab"}
               type="button"
@@ -170,6 +221,12 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
           ))}
         </nav>
         <span className="spacer" />
+        <a className="btn btn-sm btn-ghost" href="/start">
+          Help
+        </a>
+        <a className="btn btn-sm btn-ghost" href={`mailto:${CONTACT}`}>
+          Feedback
+        </a>
         <span>{who}</span>
         <button
           className="btn btn-sm btn-ghost"
@@ -180,7 +237,9 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
         </button>
       </header>
       <main>
-        {tab === "Memories" ? (
+        {tab === "Memories" && firstRun && setup ? (
+          <Welcome status={setup} />
+        ) : tab === "Memories" ? (
           <MemoriesPage project={project} filter={filter} />
         ) : tab === "Settings" ? (
           <Settings />
@@ -205,6 +264,7 @@ export function App() {
     window.addEventListener("focus", check);
     return () => window.removeEventListener("focus", check);
   }, [check]);
+  if (location.pathname === "/start") return <Start signedIn={signedIn} />;
   return signedIn ? (
     <Shell
       onSignOut={() => {

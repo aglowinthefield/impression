@@ -1,7 +1,7 @@
 import { and, desc, eq, isNull, or, type SQL, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
-import { findProject, memoryVisible } from "./access.js";
+import { canReach, findProject, memoryVisible } from "./access.js";
 import type { AuthEnv } from "./auth.js";
 import type { Db } from "./db/client.js";
 import { memories } from "./db/schema.js";
@@ -115,7 +115,13 @@ export function coreRoutes(db: Db) {
         agent: q.agent,
       },
     );
-    return c.json({ items, tokens: used, budget: q.budget });
+    return c.json({
+      items,
+      tokens: used,
+      budget: q.budget,
+      // Lets session start tell the person when this repo's sessions can't be saved.
+      ...(q.project ? { reachable: canReach(c.get("access"), q.project) } : {}),
+    });
   });
 
   return app;

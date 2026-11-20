@@ -33,10 +33,12 @@ export class RequestLog {
     if (this.entries.length > this.size) this.entries.shift();
   }
 
-  /** Newest first. Shows `principal`'s own requests and failed-auth ones. */
-  list(principal: string) {
+  /** Newest first. Shows `principal`'s own requests, and to admins the failed-auth ones too. */
+  list(principal: string, admin = true) {
     return this.entries
-      .filter((e) => e.principal === principal || e.principal === null)
+      .filter(
+        (e) => e.principal === principal || (admin && e.principal === null),
+      )
       .reverse();
   }
 
@@ -74,7 +76,9 @@ export class RequestLog {
   routes() {
     const app = new Hono<AuthEnv>();
     app.get("/requests", (c) =>
-      c.json({ items: this.list(c.get("principal")) }),
+      c.json({
+        items: this.list(c.get("principal"), c.get("access").admin),
+      }),
     );
     return app;
   }
