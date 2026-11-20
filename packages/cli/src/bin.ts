@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
-import { homedir } from "node:os";
 import { createClient, resolveProject } from "@impression/shared";
 import { dashboardUrl, openUrl } from "./browser.js";
 import { add, edit, keep, list, retire, search, status } from "./commands.js";
@@ -8,13 +7,8 @@ import { loadConfig, saveConfig } from "./config.js";
 import { pushEvalTurns } from "./eval-push.js";
 import { githubDeviceLogin } from "./github-login.js";
 import { runHook } from "./hook-run.js";
-import {
-  formatSetup,
-  HARNESSES,
-  type Harness,
-  oldHookFiles,
-  setup,
-} from "./setup.js";
+import { oldHookFiles } from "./setup.js";
+import { runSetup } from "./setup-cli.js";
 import { checkForUpdate, PACKAGE, VERSION } from "./update-check.js";
 
 const [cmd, sub] = process.argv.slice(2);
@@ -44,52 +38,7 @@ if (cmd === "hook") {
     process.exit(1);
   }
 } else if (cmd === "setup") {
-  const rest = process.argv.slice(3);
-  const i = rest.indexOf("--only");
-  const only = i >= 0 ? rest[i + 1] : undefined;
-  if (i >= 0 && !HARNESSES.includes(only as Harness)) {
-    console.error(
-      `usage: impression setup [--dry-run] [--only ${HARNESSES.join("|")}]`,
-    );
-    process.exit(2);
-  }
-  const dryRun = rest.includes("--dry-run");
-  // Sign in first, so a refusal (not on the allowlist, app not installed) comes
-  // before anything is installed. Only at a terminal: the device flow needs a person.
-  if (!token && !dryRun && process.stdin.isTTY) {
-    try {
-      const { token: t } = await githubDeviceLogin(url, { open: openUrl });
-      const who = (await createClient(url, t).get("/whoami")) as {
-        name: string;
-      };
-      saveConfig({ url, token: t });
-      console.log(`Signed in to ${url} as ${who.name}\n`);
-    } catch (e) {
-      console.error((e as Error).message);
-      process.exit(1);
-    }
-  }
-  try {
-    const result = setup({
-      home: homedir(),
-      only: only as Harness | undefined,
-      dryRun,
-      install: (command, args) => {
-        try {
-          execFileSync(command, args, { stdio: "inherit" });
-          return true;
-        } catch {
-          return false;
-        }
-      },
-    });
-    console.log(formatSetup(result, dryRun));
-    if (!loadConfig().token)
-      console.log("Not signed in yet. Run: impression login --github");
-  } catch (e) {
-    console.error((e as Error).message);
-    process.exit(1);
-  }
+  await runSetup(process.argv.slice(3), { token, url });
 } else if (cmd === "login") {
   const rest = process.argv.slice(3);
   const flag = (n: string) => {
@@ -190,7 +139,7 @@ if (cmd === "hook") {
   }
 } else {
   console.error(
-    "usage: impression --version | setup [--dry-run] [--only claude|pi|codex|omp] | update\n       impression login [--github] | search <q> | add <text> [--user] | list | status | dashboard\n       impression retire <id> | edit <id> <text> | keep <id>\n       impression hook session-start | prompt | session-end [--extract] --agent claude|codex|gemini|cursor|copilot|pi\n       impression eval push [path-substring]",
+    "usage: impression --version | setup [--agent claude,pi,codex,omp] [--yes] [--dry-run] | update\n       impression login [--github] | search <q> | add <text> [--user] | list | status | dashboard\n       impression retire <id> | edit <id> <text> | keep <id>\n       impression hook session-start | prompt | session-end [--extract] --agent claude|codex|gemini|cursor|copilot|pi\n       impression eval push [path-substring]",
   );
   process.exit(2);
 }

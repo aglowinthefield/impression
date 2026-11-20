@@ -1,0 +1,125 @@
+import { spawnSync } from "node:child_process";
+import { homedir } from "node:os";
+import * as p from "@clack/prompts";
+import { createClient } from "@impression/shared";
+import { openUrl } from "./browser.js";
+import { loadConfig, saveConfig } from "./config.js";
+import { githubDeviceLogin } from "./github-login.js";
+import {
+  detect,
+  formatSetup,
+  HARNESS_NAMES,
+  HARNESSES,
+  type Harness,
+  setup,
+} from "./setup.js";
+
+const USAGE = `usage: impression setup [--agent ${HARNESSES.join(",")}] [--yes] [--dry-run]`;
+
+/** Parses `--agent a,b` (or the older `--only a`). Undefined when neither is given. */
+export function parseAgents(argv: string[]): Harness[] | undefined | "bad" {
+  const i = argv.findIndex((a) => a === "--agent" || a === "--only");
+  if (i < 0) return undefined;
+  const list = (argv[i + 1] ?? "").split(",").filter(Boolean);
+  if (!list.length || list.some((a) => !HARNESSES.includes(a as Harness)))
+    return "bad";
+  return list as Harness[];
+}
+
+/**
+ * `impression setup`: signs in if needed, asks which agents to wire up (the ones found
+ * are preselected), then installs Impression into each. `--yes`, `--agent` or no
+ * terminal skips the question.
+ */
+export async function runSetup(
+  argv: string[],
+  config: { token?: string; url: string },
+) {
+  const picked = parseAgents(argv);
+  if (picked === "bad") {
+    console.error(USAGE);
+    process.exit(2);
+  }
+  const dryRun = argv.includes("--dry-run");
+  const interactive =
+    process.stdin.isTTY && !argv.includes("--yes") && !argv.includes("-y");
+  const home = homedir();
+
+  p.intro("Impression setup");
+
+  // Sign in first, so a refusal (not on the allowlist, app not installed) comes
+  // before anything is installed. Only at a terminal: the device flow needs a person.
+  if (!config.token && !dryRun && process.stdin.isTTY) {
+    try {
+      const { token } = await githubDeviceLogin(config.url, { open: openUrl });
+      const who = (await createClient(config.url, token).get("/whoami")) as {
+        name: string;
+      };
+      saveConfig({ url: config.url, token });
+      p.log.success(`Signed in to ${config.url} as ${who.name}`);
+    } catch (e) {
+      p.cancel((e as Error).message);
+      process.exit(1);
+    }
+  }
+
+  const found = detect(home);
+  const present = HARNESSES.filter((h) => found[h]);
+  let agents = picked;
+  if (!agents) {
+    if (!present.length) {
+      p.outro(
+        "No supported agent found. Install Claude Code, Codex, pi or oh-my-pi, then run this again.",
+      );
+      return;
+    }
+    if (interactive) {
+      const choice = await p.multiselect({
+        message: "Which agents should use Impression?",
+        options: present.map((h) => ({ value: h, label: HARNESS_NAMES[h] })),
+        initialValues: present,
+        required: true,
+      });
+      if (p.isCancel(choice)) {
+        p.cancel("Nothing changed.");
+        return;
+      }
+      agents = choice;
+    } else agents = present;
+  }
+
+  try {
+    const result = setup({
+      home,
+      agents,
+      dryRun,
+      install: (command, args) => {
+        const s = p.spinner();
+        const line = [command, ...args].join(" ");
+        s.start(line);
+        const r = spawnSync(command, args, {
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"],
+          timeout: 180_000,
+        });
+        const ok = r.status === 0;
+        if (ok) s.stop(line);
+        else s.error(line);
+        if (!ok) {
+          const why = r.error?.message ?? (r.stderr || r.stdout).trim();
+          if (why) p.log.error(why.split("\n").slice(-5).join("\n"));
+        }
+        return ok;
+      },
+    });
+    p.log.info(formatSetup(result, dryRun));
+    p.outro(
+      loadConfig().token
+        ? "Done. Start a session in any repo the Impression GitHub app can reach."
+        : "Not signed in yet. Run: impression login --github",
+    );
+  } catch (e) {
+    p.cancel((e as Error).message);
+    process.exit(1);
+  }
+}

@@ -10,8 +10,9 @@ import { dirname, join } from "node:path";
 
 /**
  * `impression setup`: finds installed agent harnesses and wires Impression into each.
- * pi gets the package entry; Claude Code and Codex get their plugin install commands,
- * and lose the hooks and MCP entries earlier setups wrote. Idempotent, keeps unrelated
+ * pi gets the package entry; Claude Code, Codex and omp get their plugins installed
+ * through their own CLIs (or the commands printed, when that fails), and lose the
+ * hooks and MCP entries earlier setups wrote. Idempotent, keeps unrelated
  * settings, and backs up each file before changing it.
  *
  * oh-my-pi (omp) loads the pi package, but its extensions can't register an MCP
@@ -29,6 +30,8 @@ export interface SetupOptions {
   home: string;
   dryRun?: boolean;
   only?: Harness;
+  /** The harnesses to set up, as picked by the person. Overrides `only`. */
+  agents?: Harness[];
   /** Suffix for backup files. Defaults to a timestamp. */
   stamp?: string;
   /**
@@ -177,18 +180,68 @@ export function oldHookFiles(home: string = homedir()): string[] {
   });
 }
 
+/** "" when the file is missing or unreadable. */
+function readText(file: string): string {
+  try {
+    return readFileSync(file, "utf8");
+  } catch {
+    return "";
+  }
+}
+
+/** Which harnesses have a config directory on this machine. */
+export function detect(home: string): Record<Harness, boolean> {
+  return {
+    claude: existsSync(join(home, ".claude")),
+    pi: existsSync(join(home, ".pi", "agent")),
+    codex: existsSync(join(home, ".codex")),
+    omp: existsSync(join(home, ".omp")),
+  };
+}
+
+export const HARNESS_NAMES: Record<Harness, string> = {
+  claude: "Claude Code",
+  pi: "pi",
+  codex: "Codex",
+  omp: "oh-my-pi",
+};
+
 export function setup(opts: SetupOptions): SetupResult {
   const { home } = opts;
   const w = new Writer(opts);
   const changes: Change[] = [];
   const notes: string[] = [];
   const missing: Harness[] = [];
-  const want = (h: Harness) => !opts.only || opts.only === h;
-  const found = {
-    claude: existsSync(join(home, ".claude")),
-    pi: existsSync(join(home, ".pi", "agent")),
-    codex: existsSync(join(home, ".codex")),
-    omp: existsSync(join(home, ".omp")),
+  const want = (h: Harness) =>
+    opts.agents ? opts.agents.includes(h) : !opts.only || opts.only === h;
+  const found = detect(home);
+
+  /**
+   * Installs a plugin with its agent's own CLI, unless `done` says it's there. Records
+   * the outcome, or prints the commands when they can't run or fail.
+   */
+  const plugin = (
+    harness: Harness,
+    file: string,
+    commands: string[],
+    done: boolean,
+  ) => {
+    const status = done ? "unchanged" : "added";
+    if (done || opts.dryRun) {
+      changes.push({ harness, file, what: "plugin", status });
+      return;
+    }
+    const ok =
+      opts.install !== undefined &&
+      commands.every((c) => {
+        const [cmd, ...args] = c.split(" ");
+        return opts.install?.(cmd as string, args) ?? false;
+      });
+    if (ok) changes.push({ harness, file, what: "plugin", status });
+    else
+      notes.push(
+        `${harness}: install the plugin with\n  ${commands.join("\n  ")}`,
+      );
   };
 
   // omp is newer and rarer, so it is only reported missing when asked for by name.
@@ -222,8 +275,17 @@ export function setup(opts: SetupOptions): SetupResult {
             status: "removed",
           });
       });
-    notes.push(
-      `claude: install the plugin with\n  ${CLAUDE_INSTALL.join("\n  ")}`,
+    const installed = join(
+      home,
+      ".claude",
+      "plugins",
+      "installed_plugins.json",
+    );
+    plugin(
+      "claude",
+      installed,
+      CLAUDE_INSTALL,
+      readText(installed).includes('"impression@impression"'),
     );
   }
 
@@ -317,9 +379,10 @@ export function setup(opts: SetupOptions): SetupResult {
         });
       }
     }
-    notes.push(
-      `codex: install the plugin with\n  ${CODEX_INSTALL.join("\n  ")}`,
-    );
+    const done = readText(toml).includes('[plugins."impression@impression"]');
+    plugin("codex", toml, CODEX_INSTALL, done);
+    if (!done)
+      notes.push("codex: trust the Impression hooks in /hooks to turn them on");
   }
 
   if (want("omp") && found.omp) {
@@ -346,23 +409,12 @@ export function setup(opts: SetupOptions): SetupResult {
         status: cur ? "unchanged" : "added",
       });
     });
-    const installed = existsSync(join(home, ...OMP_MCP_SCRIPT));
-    const file = join(home, ".omp", "plugins");
-    if (installed)
-      changes.push({
-        harness: "omp",
-        file,
-        what: "package",
-        status: "unchanged",
-      });
-    else if (!opts.dryRun && opts.install?.("omp", ["install", PI_PACKAGE]))
-      changes.push({ harness: "omp", file, what: "package", status: "added" });
-    else if (opts.dryRun)
-      changes.push({ harness: "omp", file, what: "package", status: "added" });
-    else
-      notes.push(
-        `omp: install the package with\n  ${OMP_INSTALL.join("\n  ")}`,
-      );
+    plugin(
+      "omp",
+      join(home, ".omp", "plugins"),
+      OMP_INSTALL,
+      existsSync(join(home, ...OMP_MCP_SCRIPT)),
+    );
   }
 
   return { changes, notes, missing, backups: w.backups };

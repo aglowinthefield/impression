@@ -16,6 +16,7 @@
     "seed": "tsx src/seed-cli.ts"
   },
   "dependencies": {
+    "@clack/prompts": "^1.9.0",
     "@impression/shared": "workspace:*"
   }
 }

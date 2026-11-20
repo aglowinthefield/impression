@@ -12,7 +12,7 @@ To use the hosted server at impression.quest, run:
 npx @aglowinthefield/impression setup
 ```
 
-It signs you in with GitHub, then wires Impression into every agent it finds. For oh-my-pi that is everything. For Claude Code and Codex it prints the plugin commands to run. Your GitHub account must be on the server's allowlist, and the Impression GitHub app must be installed on the repos you work in.
+It signs you in with GitHub, asks which of the agents it found should use Impression, and installs the plugin into each. Your GitHub account must be on the server's allowlist, and the Impression GitHub app must be installed on the repos you work in.
 
 To run your own server:
 
@@ -25,7 +25,7 @@ To run your own server:
 
 Each agent installs Impression with its own plugin command, and updates and removes it the same way. The plugins run the CLI and MCP server bundled in the npm package with `node` from your PATH, so they don't need the global install. Run `impression login` first: the plugins read the saved sign-in, so no token goes in agent config.
 
-`impression setup` signs you in if you aren't yet, finds Claude Code, pi, Codex and oh-my-pi, prints the install commands below, adds the pi package, installs the oh-my-pi package and its MCP server, and removes the hooks and MCP entries earlier versions of setup wrote, so nothing runs twice. It backs up each file it changes (`<file>.impression-backup-<timestamp>`) and is safe to rerun. `--dry-run` prints the changes without writing them; `--only claude|pi|codex|omp` limits it to one.
+`impression setup` signs you in if you aren't yet, then asks which of the agents it found (Claude Code, pi, Codex and oh-my-pi) should use Impression, with all of them selected. It installs each one's plugin with that agent's own CLI (the commands below), adds the pi package, adds oh-my-pi's MCP server, and removes the hooks and MCP entries earlier versions of setup wrote, so nothing runs twice. If an agent's CLI fails, setup prints its commands to run by hand. It backs up each file it changes (`<file>.impression-backup-<timestamp>`) and is safe to rerun. `--agent claude,omp` picks agents without asking, `--yes` takes every agent found, and `--dry-run` prints the changes without writing them.
 
 Every client reads `IMPRESSION_URL` (default `https://impression.quest`) and `IMPRESSION_TOKEN`, and falls back to the file `impression login` writes. Each request names its client and machine, like `pi/0.3.0 (tom-mini)`, so Settings can show where every token was last used, including attempts with a revoked one. Set `IMPRESSION_MACHINE` where the hostname says nothing, as in containers and CI.
 
@@ -58,10 +58,10 @@ pi installs and updates the package itself (`pi update --extensions`), so it doe
 ### oh-my-pi
 
 ```sh
-npx @aglowinthefield/impression setup --only omp
+npx @aglowinthefield/impression setup --agent omp
 ```
 
-oh-my-pi (`omp`) loads the same package as pi, with the same session-start, per-prompt and session-end behaviour. Setup signs you in if you aren't yet, runs `omp install npm:@aglowinthefield/impression`, and adds the MCP server to `~/.omp/agent/mcp.json`, since omp extensions can't add one themselves. The server runs from the installed package with `node`.
+oh-my-pi (`omp`) loads the same package as pi, with the same session-start, per-prompt and session-end behaviour. Setup runs `omp install npm:@aglowinthefield/impression` and adds the MCP server to `~/.omp/agent/mcp.json`, since omp extensions can't add one themselves. The server runs from the installed package with `node`.
 
 ## Troubleshooting
 

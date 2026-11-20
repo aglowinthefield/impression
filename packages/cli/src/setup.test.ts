@@ -254,7 +254,7 @@ describe("setup", () => {
     expect(ok.changes).toContainEqual(
       expect.objectContaining({
         harness: "omp",
-        what: "package",
+        what: "plugin",
         status: "added",
       }),
     );
@@ -268,8 +268,69 @@ describe("setup", () => {
       "",
     );
     calls.length = 0;
-    setup({ home, install: (c, a) => (calls.push(c), true) });
+    setup({
+      home,
+      install: (c) => {
+        calls.push(c);
+        return true;
+      },
+    });
     expect(calls).toEqual([]);
+  });
+
+  it("installs the Claude Code and Codex plugins with their CLIs, once", () => {
+    put(".claude/settings.json", "{}");
+    put(".codex/config.toml", "");
+    const calls: string[] = [];
+    const install = (c: string, a: string[]) => {
+      calls.push([c, ...a].join(" "));
+      return true;
+    };
+    const r = setup({ home, install });
+    expect(calls).toEqual([...CLAUDE_INSTALL, ...CODEX_INSTALL]);
+    expect(r.notes.join("\n")).not.toContain(CLAUDE_INSTALL[1]);
+    expect(r.notes.join("\n")).toContain("/hooks");
+
+    put(
+      ".claude/plugins/installed_plugins.json",
+      JSON.stringify({ plugins: { "impression@impression": [] } }),
+    );
+    put(
+      ".codex/config.toml",
+      '[plugins."impression@impression"]\nenabled = true\n',
+    );
+    calls.length = 0;
+    const again = setup({ home, install });
+    expect(calls).toEqual([]);
+    expect(again.changes.filter((c) => c.what === "plugin")).toEqual([
+      expect.objectContaining({ harness: "claude", status: "unchanged" }),
+      expect.objectContaining({ harness: "codex", status: "unchanged" }),
+    ]);
+  });
+
+  it("prints the plugin commands when an install fails, and stops at the first failure", () => {
+    put(".claude/settings.json", "{}");
+    const calls: string[] = [];
+    const r = setup({
+      home,
+      install: (c, a) => {
+        calls.push([c, ...a].join(" "));
+        return false;
+      },
+    });
+    expect(calls).toEqual([CLAUDE_INSTALL[0]]);
+    expect(r.notes.join("\n")).toContain(CLAUDE_INSTALL[1]);
+  });
+
+  it("sets up only the picked agents", () => {
+    put(".claude/settings.json", "{}");
+    put(".pi/agent/settings.json", "{}");
+    put(".omp/agent/mcp.json", "{}");
+    const r = setup({ home, agents: ["pi", "omp"] });
+    expect(new Set(r.changes.map((c) => c.harness))).toEqual(
+      new Set(["pi", "omp"]),
+    );
+    expect(r.notes.join("\n")).not.toContain("claude");
   });
 
   it("keeps an omp impression MCP entry someone pointed elsewhere", () => {
@@ -316,5 +377,16 @@ describe("oldHookFiles", () => {
     expect(oldHookFiles(home)).toEqual([
       join(home, ".claude", "settings.json"),
     ]);
+  });
+});
+
+describe("parseAgents", () => {
+  it("reads --agent lists and the older --only", async () => {
+    const { parseAgents } = await import("./setup-cli.js");
+    expect(parseAgents([])).toBeUndefined();
+    expect(parseAgents(["--agent", "claude,omp"])).toEqual(["claude", "omp"]);
+    expect(parseAgents(["--only", "pi"])).toEqual(["pi"]);
+    expect(parseAgents(["--agent", "cursor"])).toBe("bad");
+    expect(parseAgents(["--agent"])).toBe("bad");
   });
 });
