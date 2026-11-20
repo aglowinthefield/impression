@@ -2,6 +2,15 @@
 
 What changed in each release of `@aglowinthefield/impression`, for people who use it. pi shows the new entries once, at the first session after an update.
 
+## 0.8.0
+
+- impression.quest has a Get started page at /start: what Impression does, the steps to set it up, what leaves your machine, and how to remove it. The sign-in page links to it.
+- Until your first memory arrives, the dashboard shows your setup steps and ticks them off as they happen.
+- At session start, your agent tells you when Impression is on but has nothing for this repo yet, when it can't reach the repo (so the session won't be saved), or when it isn't signed in. pi and oh-my-pi show it as a notice; Claude Code and Codex as a message.
+- `impression status` warns when the current repo's sessions can't be saved.
+- The dashboard header has Help and Feedback links. Settings explains the extraction threshold in plain words and says how to delete your data.
+- The GitHub sign-in pages match the dashboard, and the Debug tab is only shown to server admins.
+
 ## 0.7.0
 
 - `impression setup` asks which agents should use Impression, with every agent it found selected, and installs the Claude Code and Codex plugins itself. You no longer paste their plugin commands.
