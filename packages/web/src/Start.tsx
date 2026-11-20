@@ -127,17 +127,34 @@ export function Start({ signedIn }: { signedIn: boolean }) {
               Until a repo has memories, your agent shows{" "}
               <em>Impression is on</em> at session start. Memories reach the
               dashboard a minute or so after a session sends: when it ends, and
-              in pi and oh-my-pi also every few thousand characters.
+              in pi and oh-my-pi also every few thousand characters. After that,
+              your agent says how many memories it got.{" "}
+              <a className="link" href="#at-work">
+                See it at work
+              </a>
             </p>
           </Step>
         </ol>
 
-        <h2>Check it's working</h2>
-        <Command text="npx @aglowinthefield/impression status" />
+        <h2 id="at-work">See it at work</h2>
         <p>
-          Run it in a repo. It shows who you're signed in as and warns when the
-          repo's sessions can't be saved.
+          Your agent shows how many memories Impression gave it: in the footer
+          in pi and oh-my-pi, and as a message at session start and on matching
+          prompts in Claude Code and Codex.
         </p>
+        <p>Ask your agent what Impression knows. Try:</p>
+        <Command text="What does Impression know about this repo?" />
+        <p>
+          It searches your memories with the Impression tool and answers from
+          them. Ask about anything you've told it before: how you deploy, which
+          commands to run, what to avoid.
+        </p>
+        <p>
+          On the dashboard, each memory says how often it reached your agents.
+          Retire anything wrong. A memory that's never used is probably noise.
+        </p>
+        <p>To check that a repo is set up, run this in it:</p>
+        <Command text="npx @aglowinthefield/impression status" />
 
         <h2 id="data">What leaves your machine</h2>
         <p>

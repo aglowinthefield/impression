@@ -144,7 +144,7 @@ describe("sessionStartNotice", () => {
     );
   });
 
-  test("says it's on when there's nothing to inject yet, and stays quiet otherwise", async () => {
+  test("says it's on when there's nothing yet, and how many memories went in otherwise", async () => {
     const empty = await sessionStart(
       client({ items: [], reachable: true }),
       repo(),
@@ -153,10 +153,16 @@ describe("sessionStartNotice", () => {
       "Impression is on",
     );
     const full = await sessionStart(
-      client({ items: [{ content: "Use pnpm" }], reachable: true }),
+      client({
+        items: [{ content: "Use pnpm" }, { content: "No ORMs" }],
+        reachable: true,
+      }),
       repo(),
     );
-    expect(sessionStartNotice(full, "https://x.test")).toBeNull();
+    expect(full?.count).toBe(2);
+    expect(sessionStartNotice(full, "https://x.test")).toBe(
+      "Impression gave the agent 2 memories for ex.",
+    );
     expect(sessionStartNotice(null, "https://x.test")).toBeNull();
   });
 });

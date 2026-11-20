@@ -1,10 +1,12 @@
 import {
   and,
+  count,
   desc,
   eq,
   inArray,
   isNotNull,
   isNull,
+  max,
   ne,
   or,
   type SQL,
@@ -25,6 +27,7 @@ import {
   conceptMemories,
   concepts,
   memories,
+  memoryServes,
   projects,
 } from "./db/schema.js";
 import { type EventSource, logEvent } from "./events.js";
@@ -117,6 +120,44 @@ export type AnchorDto = {
   symbol: string | null;
   commitSha: string;
 };
+
+/**
+ * Adds how often each memory reached one of `principal`'s agents, and when it last
+ * did, in one query. This is what tells a person their memories are being used.
+ */
+export async function withUse<T extends { id: string }>(
+  db: Queryer,
+  items: T[],
+  principal: string,
+): Promise<(T & { uses: number; lastUsedAt: string | null })[]> {
+  if (items.length === 0) return [];
+  const rows = await db
+    .select({
+      memoryId: memoryServes.memoryId,
+      uses: count(),
+      last: max(memoryServes.createdAt),
+    })
+    .from(memoryServes)
+    .where(
+      and(
+        inArray(
+          memoryServes.memoryId,
+          items.map((i) => i.id),
+        ),
+        eq(memoryServes.principal, principal),
+      ),
+    )
+    .groupBy(memoryServes.memoryId);
+  const by = new Map(rows.map((r) => [r.memoryId, r]));
+  return items.map((i) => {
+    const r = by.get(i.id);
+    return {
+      ...i,
+      uses: r?.uses ?? 0,
+      lastUsedAt: r?.last ? new Date(r.last).toISOString() : null,
+    };
+  });
+}
 
 /** Adds each memory's anchors in one query. */
 export async function withAnchors<T extends { id: string }>(
@@ -535,9 +576,13 @@ export function memoryRoutes(db: Db, providers: Providers) {
       .limit(q.limit)
       .offset(q.offset);
     return c.json({
-      items: await withAnchors(
+      items: await withUse(
         db,
-        rows.map((r) => toDto(r.m, r.projectKey)),
+        await withAnchors(
+          db,
+          rows.map((r) => toDto(r.m, r.projectKey)),
+        ),
+        principal,
       ),
       limit: q.limit,
       offset: q.offset,

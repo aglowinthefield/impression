@@ -8,7 +8,7 @@ import {
   within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { Memories } from "./Memories";
+import { Memories, usage } from "./Memories";
 
 const mem = (o = {}) => ({
   id: "1",
@@ -203,4 +203,19 @@ test("the possibly stale filter lists flagged memories with the usual actions", 
     "li",
   ) as HTMLElement;
   expect(within(row).getByText("Retire")).toBeTruthy();
+});
+
+test("usage says how often a memory reached your agents", () => {
+  const now = Date.now();
+  expect(usage({})).toBeNull();
+  expect(usage({ uses: 0, lastUsedAt: null })).toBe("Not used yet");
+  expect(
+    usage({ uses: 1, lastUsedAt: new Date(now - 3 * 3_600_000).toISOString() }),
+  ).toBe("Used once, last 3 hours ago");
+  expect(
+    usage({
+      uses: 12,
+      lastUsedAt: new Date(now - 2 * 86_400_000).toISOString(),
+    }),
+  ).toBe("Used 12 times, last 2 days ago");
 });

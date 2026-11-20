@@ -1,6 +1,7 @@
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { api } from "./api";
 import { Markdown } from "./Markdown";
+import { ago } from "./time";
 
 export interface Memory {
   id: string;
@@ -15,6 +16,16 @@ export interface Memory {
   warning?: string | null;
   project?: string | null;
   anchors?: { path: string; symbol: string | null }[];
+  /** How often it reached your agents. Absent from search results. */
+  uses?: number;
+  lastUsedAt?: string | null;
+}
+
+/** "Used 3 times, last 2 days ago", or "Not used yet". */
+export function usage(m: Pick<Memory, "uses" | "lastUsedAt">): string | null {
+  if (m.uses === undefined) return null;
+  if (!m.uses || !m.lastUsedAt) return "Not used yet";
+  return `Used ${m.uses === 1 ? "once" : `${m.uses} times`}, last ${ago(m.lastUsedAt)}`;
 }
 
 function Row({
@@ -157,6 +168,7 @@ function Row({
         {m.anchors?.length
           ? ` · ${m.anchors.map((a) => (a.symbol ? `${a.path}#${a.symbol}` : a.path)).join(", ")}`
           : ""}
+        {!history && usage(m) ? ` · ${usage(m)}` : ""}
       </small>
       {!history && (
         <div className="actions">

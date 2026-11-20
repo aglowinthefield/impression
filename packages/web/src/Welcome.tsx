@@ -89,6 +89,8 @@ export function Welcome({ status }: { status: SetupStatus }) {
           <p className="text-sm opacity-80">
             Your agent shows <em>Impression is on</em> at session start. Work as
             usual; memories show up here a minute or so after the session sends.
+            Later, ask your agent{" "}
+            <em>"What does Impression know about this repo?"</em>
           </p>
         </Step>
       </ol>

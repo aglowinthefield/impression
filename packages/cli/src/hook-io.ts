@@ -148,6 +148,21 @@ export function formatSessionStart(
   return context ? formatContext(agent, "SessionStart", context) : null;
 }
 
+/**
+ * Prompt output: the matching memories for the agent, plus a line for the person
+ * in agents that show one, so they see when Impression helped.
+ */
+export function formatPrompt(
+  agent: Agent,
+  context: string,
+  notice: string,
+): string {
+  const out = formatContext(agent, "UserPromptSubmit", context);
+  return agent === "claude" || agent === "codex"
+    ? JSON.stringify({ systemMessage: notice, ...JSON.parse(out) })
+    : out;
+}
+
 /** The name sessions are stored under. */
 export function sessionAgent(agent: Agent): string {
   return agent === "claude" ? "claude-code" : agent;

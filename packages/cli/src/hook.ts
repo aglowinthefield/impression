@@ -22,6 +22,8 @@ export interface SessionStart {
   /** The project key and name the session resolves to. */
   key: string;
   name: string;
+  /** How many memories the context holds. */
+  count: number;
 }
 
 /**
@@ -62,7 +64,13 @@ export async function sessionStart(
             : []),
         ].join("\n")
       : null;
-    return { context, reachable: core.reachable, key: p.key, name: p.name };
+    return {
+      context,
+      reachable: core.reachable,
+      key: p.key,
+      name: p.name,
+      count: items.length,
+    };
   } catch {
     return null;
   }
@@ -84,9 +92,14 @@ export async function sessionStartContext(
 export const NOT_SIGNED_IN =
   "Impression isn't signed in, so it won't remember this session. Run: npx @aglowinthefield/impression setup";
 
+/** "1 memory", "4 memories". */
+export const memoriesCount = (n: number) =>
+  `${n} ${n === 1 ? "memory" : "memories"}`;
+
 /**
- * One line for the person (not the agent) at session start, or null when all is
- * well. Says when this repo's sessions can't be saved, or that the first ones are.
+ * One line for the person (not the agent) at session start, so they can see
+ * Impression at work: how many memories it gave the agent, that the first ones are
+ * on their way, or that this repo's sessions can't be saved.
  */
 export function sessionStartNotice(
   s: SessionStart | null,
@@ -97,8 +110,12 @@ export function sessionStartNotice(
     return `Impression can't reach ${s.key}, so this session won't be saved. Install the Impression GitHub app on that repo's account: ${url.replace(/\/+$/, "")}/start#repos`;
   if (!s.context)
     return `Impression is on. Memories from this session will show at ${url.replace(/\/+$/, "")}.`;
-  return null;
+  return `Impression gave the agent ${memoriesCount(s.count)} for ${s.name}.`;
 }
+
+/** How many memories a prompt context holds (its "- " lines). */
+export const promptCount = (context: string) =>
+  context.split("\n").filter((l) => l.startsWith("- ")).length;
 
 /**
  * Memories relevant to one prompt, or null when none match or the API is

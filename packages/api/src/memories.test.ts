@@ -526,3 +526,32 @@ describe("the practice tag", () => {
     expect(down).toMatchObject({ scope: "project", project: project.key });
   });
 });
+
+describe("use", () => {
+  test("the list says how often each memory reached your agents, and when", async () => {
+    const key = "github.com/acme/used";
+    const created = (await (
+      await call(alice, "POST", "", {
+        scope: "project",
+        project: { key },
+        content: "Deploys go through make ship",
+      })
+    ).json()) as { id: string };
+    const listed = async () =>
+      (
+        (await (
+          await call(alice, "GET", `?project=${encodeURIComponent(key)}`)
+        ).json()) as {
+          items: { id: string; uses: number; lastUsedAt: string | null }[];
+        }
+      ).items.find((m) => m.id === created.id);
+    expect(await listed()).toMatchObject({ uses: 0, lastUsedAt: null });
+    for (let i = 0; i < 2; i++)
+      await app.request(`/api/core?project=${encodeURIComponent(key)}`, {
+        headers: { authorization: `Bearer ${alice}` },
+      });
+    const used = await listed();
+    expect(used?.uses).toBe(2);
+    expect(Date.parse(used?.lastUsedAt ?? "")).toBeGreaterThan(0);
+  });
+});

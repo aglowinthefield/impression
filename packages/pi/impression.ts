@@ -125,6 +125,18 @@ export default function (pi: ExtensionAPI) {
     });
 
   let context = "";
+  /** Memories given to the agent this session, shown in the footer so the person sees Impression at work. */
+  let given = 0;
+  const showGiven = (ctx: {
+    hasUI: boolean;
+    ui: { setStatus?(key: string, text: string | undefined): void };
+  }) => {
+    if (ctx.hasUI && given > 0)
+      ctx.ui.setStatus?.(
+        "impression",
+        `Impression: ${given} ${given === 1 ? "memory" : "memories"} in this session`,
+      );
+  };
   let injected = false;
   const seen = new Set<string>();
   let lib: ReturnType<typeof connect> = null;
@@ -197,6 +209,8 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     injected = false;
     seen.clear();
+    given = 0;
+    if (ctx.hasUI) ctx.ui.setStatus?.("impression", undefined);
     sent = ctx.sessionManager.getEntries().length;
     const cli = await loadCli();
     // After an update, show what changed, once. Checked only with a UI, so a print-mode
@@ -228,7 +242,13 @@ export default function (pi: ExtensionAPI) {
     }
     const start = await lib.cli.sessionStart(lib.client, ctx.cwd, opts);
     context = start?.context ?? "";
-    // One line for the person: this repo can't be saved, or memories are on their way.
+    given = start?.count ?? 0;
+    if (given > 0) {
+      // Memories went in: a footer count, updated as prompts find more.
+      showGiven(ctx);
+      return;
+    }
+    // Nothing yet: one line saying this repo can't be saved, or memories are on their way.
     const notice = ctx.hasUI
       ? lib.cli.sessionStartNotice(start, lib.cli.loadConfig().url)
       : null;
@@ -263,6 +283,8 @@ export default function (pi: ExtensionAPI) {
       .split("\n")
       .filter((l: string) => l.startsWith("- ") && !seen.has(l));
     for (const l of found) seen.add(l);
+    given += found.length;
+    if (found.length) showGiven(ctx);
     if (found.length)
       parts.push(
         `Memories from Impression that match this prompt:\n${found.join("\n")}`,

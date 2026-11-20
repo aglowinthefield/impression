@@ -3,6 +3,7 @@ import {
   agentArg,
   foreignHost,
   formatContext,
+  formatPrompt,
   formatSessionStart,
   hookCwd,
   hookSessionId,
@@ -58,6 +59,17 @@ describe("hook io", () => {
     expect(formatSessionStart("pi", null, "on")).toBeNull();
     expect(formatSessionStart("pi", "ctx", "on")).toBe("ctx");
     expect(formatSessionStart("claude", null, null)).toBeNull();
+  });
+
+  test("prompt output tells the person in Claude Code and Codex", () => {
+    expect(JSON.parse(formatPrompt("claude", "- a", "found 1"))).toEqual({
+      systemMessage: "found 1",
+      hookSpecificOutput: {
+        hookEventName: "UserPromptSubmit",
+        additionalContext: "- a",
+      },
+    });
+    expect(formatPrompt("pi", "- a", "found 1")).toBe("- a");
   });
 
   test("cwd and transcript from each agent's input", () => {

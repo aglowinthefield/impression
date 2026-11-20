@@ -11,8 +11,10 @@ import { dirname, join } from "node:path";
 import { createClient } from "@impression/shared";
 import { loadConfig } from "./config.js";
 import {
+  memoriesCount,
   NOT_SIGNED_IN,
   promptContext,
+  promptCount,
   sessionStart,
   sessionStartNotice,
 } from "./hook.js";
@@ -20,7 +22,7 @@ import {
   type Agent,
   agentArg,
   foreignHost,
-  formatContext,
+  formatPrompt,
   formatSessionStart,
   hookCwd,
   hookSessionId,
@@ -105,7 +107,7 @@ export async function runHook(
     });
     if (ctx)
       process.stdout.write(
-        `${formatContext(agent, "UserPromptSubmit", ctx)}\n`,
+        `${formatPrompt(agent, ctx, `Impression found ${memoriesCount(promptCount(ctx))} for this prompt.`)}\n`,
       );
     return;
   }
