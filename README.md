@@ -15,7 +15,7 @@ or a small team, not for consumer-facing agents.
 
 Each agent installs Impression with its own plugin command, and updates and removes it the same way. The plugins run the CLI and MCP server bundled in the npm package with `node` from your PATH, so they don't need the global install. Run `impression login` first: the plugins read the saved sign-in, so no token goes in agent config.
 
-`impression setup` finds Claude Code, pi and Codex, prints the install commands below, adds the pi package, and removes the hooks and MCP entries earlier versions of setup wrote, so nothing runs twice. It backs up each file it changes (`<file>.impression-backup-<timestamp>`) and is safe to rerun. `--dry-run` prints the changes without writing them; `--only claude|pi|codex` limits it to one.
+`impression setup` finds Claude Code, pi, Codex and oh-my-pi, prints the install commands below, adds the pi package and oh-my-pi's MCP server, and removes the hooks and MCP entries earlier versions of setup wrote, so nothing runs twice. It backs up each file it changes (`<file>.impression-backup-<timestamp>`) and is safe to rerun. `--dry-run` prints the changes without writing them; `--only claude|pi|codex|omp` limits it to one.
 
 Every client reads `IMPRESSION_URL` (default `https://impression.quest`) and `IMPRESSION_TOKEN`, and falls back to the file `impression login` writes. Each request names its client and machine, like `pi/0.3.0 (tom-mini)`, so Settings can show where every token was last used, including attempts with a revoked one. Set `IMPRESSION_MACHINE` where the hostname says nothing, as in containers and CI.
 
@@ -44,6 +44,15 @@ pi install npm:@aglowinthefield/impression
 ```
 
 pi installs and updates the package itself (`pi update --extensions`), so it doesn't need the global install. The package's extension adds the MCP tools (search and add) and runs `impression hook session-start` on session start, `hook prompt` (a search on the prompt text) before each prompt, and `hook session-end --extract` on each chunk of new conversation (after a run, once about 3000 characters have built up, and again on exit). Run `impression login` first. `impression setup` adds the same package entry to `~/.pi/agent/settings.json`, and removes the extension path and `impression` MCP entry that earlier versions of setup wrote.
+
+### oh-my-pi
+
+```sh
+omp install npm:@aglowinthefield/impression
+impression setup --only omp
+```
+
+oh-my-pi (`omp`) loads the same package as pi, with the same session-start, per-prompt and session-end behaviour. Its extensions can't add an MCP server, so `impression setup` adds one to `~/.omp/agent/mcp.json` that runs the package's bundled server with `node`. Run `impression login` first.
 
 ## Troubleshooting
 

@@ -14,6 +14,7 @@ import {
   CLAUDE_INSTALL,
   CODEX_INSTALL,
   formatSetup,
+  OMP_INSTALL,
   oldHookFiles,
   PI_PACKAGE,
   setup,
@@ -211,6 +212,49 @@ describe("setup", () => {
     expect(readFileSync(join(home, ".claude", "settings.json"), "utf8")).toBe(
       "{}",
     );
+  });
+
+  it("adds omp's MCP server and prints its install command, keeping other servers", () => {
+    put(
+      ".omp/agent/mcp.json",
+      JSON.stringify({ mcpServers: { other: { command: "x" } } }),
+    );
+    const r = setup({ home });
+    const script = join(
+      home,
+      ".omp/plugins/node_modules/@aglowinthefield/impression/dist/impression-mcp.js",
+    );
+    expect(json(".omp", "agent", "mcp.json").mcpServers).toEqual({
+      other: { command: "x" },
+      impression: { command: "node", args: [script] },
+    });
+    expect(r.changes).toContainEqual(
+      expect.objectContaining({ harness: "omp", status: "added" }),
+    );
+    expect(r.notes.join("\n")).toContain(OMP_INSTALL[0]);
+
+    const again = setup({ home });
+    expect(again.backups).toEqual([]);
+    expect(again.changes).toContainEqual(
+      expect.objectContaining({ harness: "omp", status: "unchanged" }),
+    );
+  });
+
+  it("keeps an omp impression MCP entry someone pointed elsewhere", () => {
+    const mine = { command: "impression-mcp" };
+    put(
+      ".omp/agent/mcp.json",
+      JSON.stringify({ mcpServers: { impression: mine } }),
+    );
+    setup({ home });
+    expect(json(".omp", "agent", "mcp.json").mcpServers.impression).toEqual(
+      mine,
+    );
+  });
+
+  it("reports omp missing only when asked for by name", () => {
+    expect(setup({ home }).missing).not.toContain("omp");
+    expect(setup({ home, only: "omp" }).missing).toEqual(["omp"]);
   });
 
   it("refuses to touch a file that isn't valid JSON", () => {

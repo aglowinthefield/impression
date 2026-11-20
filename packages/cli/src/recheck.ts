@@ -244,7 +244,7 @@ export async function recheckProject(
 export function startRecheck(
   cwd: string,
   agent: string,
-  opts: { script?: string; env?: NodeJS.ProcessEnv } = {},
+  opts: { script?: string; env?: NodeJS.ProcessEnv; node?: string } = {},
 ): boolean {
   try {
     const script = opts.script ?? process.argv[1];
@@ -253,7 +253,7 @@ export function startRecheck(
     if (key.startsWith("path:")) return false;
     if (!claimRecheck(key, { env: opts.env })) return false;
     const child = spawn(
-      process.execPath,
+      opts.node ?? process.execPath,
       [script, "hook", "recheck", "--agent", agent, "--cwd", cwd],
       { detached: true, stdio: "ignore", cwd, env: opts.env ?? process.env },
     );

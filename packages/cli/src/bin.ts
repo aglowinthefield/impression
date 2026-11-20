@@ -167,7 +167,7 @@ if (cmd === "hook") {
   }
 } else {
   console.error(
-    "usage: impression --version | setup [--dry-run] [--only claude|pi|codex] | update\n       impression login [--github] | search <q> | add <text> [--user] | list | status | dashboard\n       impression retire <id> | edit <id> <text> | keep <id>\n       impression hook session-start | prompt | session-end [--extract] --agent claude|codex|gemini|cursor|copilot|pi\n       impression eval push [path-substring]",
+    "usage: impression --version | setup [--dry-run] [--only claude|pi|codex|omp] | update\n       impression login [--github] | search <q> | add <text> [--user] | list | status | dashboard\n       impression retire <id> | edit <id> <text> | keep <id>\n       impression hook session-start | prompt | session-end [--extract] --agent claude|codex|gemini|cursor|copilot|pi\n       impression eval push [path-substring]",
   );
   process.exit(2);
 }

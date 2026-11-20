@@ -9,7 +9,10 @@
 // (`pi/impression.ts` beside `dist/`) and from a checkout (`packages/pi` beside
 // `packages/cli/dist`). Falls back to `impression` on PATH. Override the CLI location
 // with IMPRESSION_CLI.
-import { execFile } from "node:child_process";
+//
+// Also runs in oh-my-pi (omp), which loads pi packages but runs extensions in Bun and
+// differs in a few events; the comments below say where.
+import { execFile, spawn } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -53,6 +56,36 @@ const SCRIPT =
   process.env.IMPRESSION_CLI ??
   local("../dist/impression.js", "../cli/dist/bin.js");
 
+/** pi runs on node, so its own binary runs the CLI. omp runs on Bun, or as a compiled binary, so it uses node from PATH. */
+const NODE = process.versions.bun ? "node" : process.execPath;
+
+/**
+ * Runs the CLI in a detached node process that outlives this one, then deletes `dir`.
+ * For the last chunk at shutdown: omp gives shutdown handlers 2 seconds, and
+ * extraction takes longer.
+ */
+const HAND_OFF = `const [cli, dir, input, ...args] = process.argv.slice(1);
+const { execFileSync } = require("node:child_process");
+try {
+  execFileSync(cli ? process.execPath : "impression", cli ? [cli, ...args] : args,
+    { input, stdio: ["pipe", "ignore", "ignore"], timeout: 35000 });
+} catch {}
+require("node:fs").rmSync(dir, { recursive: true, force: true });`;
+
+function handOff(args: string[], cwd: string, input: string, dir: string) {
+  try {
+    const child = spawn(
+      NODE,
+      ["-e", HAND_OFF, SCRIPT ?? "", dir, input, ...args],
+      { cwd, detached: true, stdio: "ignore" },
+    );
+    child.on("error", () => rmSync(dir, { recursive: true, force: true }));
+    child.unref();
+  } catch {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 function run(
   args: string[],
   cwd: string,
@@ -60,7 +93,7 @@ function run(
 ): Promise<string> {
   return new Promise((resolve) => {
     const [cmd, argv] = SCRIPT
-      ? [process.execPath, [SCRIPT, ...args]]
+      ? [NODE, [SCRIPT, ...args]]
       : ["impression", args];
     const child = execFile(
       cmd,
@@ -87,7 +120,7 @@ export default function (pi: ExtensionAPI) {
   // An "impression" entry in mcp.json takes precedence over this one.
   if (MCP_SCRIPT && typeof pi.registerMcpServer === "function")
     pi.registerMcpServer("impression", {
-      command: process.execPath,
+      command: NODE,
       args: [MCP_SCRIPT],
     });
 
@@ -103,7 +136,10 @@ export default function (pi: ExtensionAPI) {
     sessionManager: { getSessionId?(): string | undefined };
   }): string | undefined => ctx.sessionManager.getSessionId?.() || undefined;
 
-  /** Sends session entries not sent yet as their own session, and queues extraction. */
+  /**
+   * Sends session entries not sent yet as their own session, and queues extraction.
+   * At shutdown the send is handed to a detached process, so exiting doesn't cut it off.
+   */
   const flush = (
     ctx: {
       cwd: string;
@@ -113,6 +149,7 @@ export default function (pi: ExtensionAPI) {
       };
     },
     minChars: number,
+    detach = false,
   ) => {
     const entries = ctx.sessionManager.getEntries();
     const fresh = entries.slice(sent);
@@ -125,25 +162,34 @@ export default function (pi: ExtensionAPI) {
     }, 0);
     if (!fresh.length || talk < minChars) return;
     sent = entries.length;
-    sending = sending.then(async () => {
+    const args = ["hook", "session-end", "--extract", "--agent", "pi"];
+    const write = () => {
       const dir = mkdtempSync(join(tmpdir(), "impression-"));
+      const file = join(dir, "chunk.jsonl");
+      writeFileSync(file, text);
+      const input = JSON.stringify({
+        transcript_path: file,
+        cwd: ctx.cwd,
+        session_id: sessionId(ctx),
+      });
+      return { dir, input };
+    };
+    if (detach) {
       try {
-        const file = join(dir, "chunk.jsonl");
-        writeFileSync(file, text);
-        await run(
-          ["hook", "session-end", "--extract", "--agent", "pi"],
-          ctx.cwd,
-          {
-            input: JSON.stringify({
-              transcript_path: file,
-              cwd: ctx.cwd,
-              session_id: sessionId(ctx),
-            }),
-            timeout: 35_000,
-          },
-        );
+        const { dir, input } = write();
+        handOff(args, ctx.cwd, input, dir);
+      } catch {}
+      return;
+    }
+    sending = sending.then(async () => {
+      let dir: string | undefined;
+      try {
+        const w = write();
+        dir = w.dir;
+        await run(args, ctx.cwd, { input: w.input, timeout: 35_000 });
+      } catch {
       } finally {
-        rmSync(dir, { recursive: true, force: true });
+        if (dir) rmSync(dir, { recursive: true, force: true });
       }
     });
   };
@@ -163,7 +209,7 @@ export default function (pi: ExtensionAPI) {
     // The staleness check runs in a detached CLI process, at most once an hour per project.
     if (lib && SCRIPT)
       try {
-        lib.cli.startRecheck?.(ctx.cwd, "pi", { script: SCRIPT });
+        lib.cli.startRecheck?.(ctx.cwd, "pi", { script: SCRIPT, node: NODE });
       } catch {}
     context = lib
       ? ((await lib.cli.sessionStartContext(lib.client, ctx.cwd, {
@@ -174,7 +220,11 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("before_agent_start", async (event, ctx) => {
-    if (event.messageType !== "user") return;
+    // pi marks the kind of message; omp has no `messageType`, and its only
+    // non-prompt start is a revived subagent.
+    const e = event as { messageType?: string; reason?: string };
+    if (e.messageType !== undefined && e.messageType !== "user") return;
+    if (e.reason === "revive") return;
     const parts: string[] = [];
     if (!injected && context) {
       injected = true;
@@ -211,11 +261,13 @@ export default function (pi: ExtensionAPI) {
   });
 
   // Mid-conversation: after each settled run, send what's new once enough has built up.
+  // omp has no `agent_settled`, so `agent_end` covers it there. In pi both fire, and
+  // the second finds nothing new to send.
   pi.on("agent_settled", async (_event, ctx) => flush(ctx, CHUNK_CHARS));
+  pi.on("agent_end", async (_event, ctx) => flush(ctx, CHUNK_CHARS));
 
   pi.on("session_shutdown", async (event, ctx) => {
-    if (event.reason === "reload") return;
-    flush(ctx, 1);
-    await sending;
+    if ((event as { reason?: string }).reason === "reload") return;
+    flush(ctx, 1, true);
   });
 }

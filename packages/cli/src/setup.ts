@@ -14,11 +14,14 @@ import { dirname, join } from "node:path";
  * and lose the hooks and MCP entries earlier setups wrote. Idempotent, keeps unrelated
  * settings, and backs up each file before changing it.
  *
+ * oh-my-pi (omp) loads the pi package, but its extensions can't register an MCP
+ * server, so setup adds one to omp's mcp.json that runs the package's bundled server.
+ *
  * Opencode is left out: its config is JSONC and its hooks are plugins, neither of which
  * this writes safely.
  */
 
-export const HARNESSES = ["claude", "pi", "codex"] as const;
+export const HARNESSES = ["claude", "pi", "codex", "omp"] as const;
 export type Harness = (typeof HARNESSES)[number];
 
 export interface SetupOptions {
@@ -55,6 +58,18 @@ export const CODEX_INSTALL = [
 const MCP = "impression-mcp";
 /** pi installs this package itself, extension and MCP server included. */
 export const PI_PACKAGE = "npm:@aglowinthefield/impression";
+export const OMP_INSTALL = [`omp install ${PI_PACKAGE}`];
+
+/** Where `omp install` puts the package's MCP server, under the home directory. */
+const OMP_MCP_SCRIPT = [
+  ".omp",
+  "plugins",
+  "node_modules",
+  "@aglowinthefield",
+  "impression",
+  "dist",
+  "impression-mcp.js",
+];
 
 type Json = Record<string, unknown>;
 interface HookGroup {
@@ -167,9 +182,13 @@ export function setup(opts: SetupOptions): SetupResult {
     claude: existsSync(join(home, ".claude")),
     pi: existsSync(join(home, ".pi", "agent")),
     codex: existsSync(join(home, ".codex")),
+    omp: existsSync(join(home, ".omp")),
   };
 
-  for (const h of HARNESSES) if (want(h) && !found[h]) missing.push(h);
+  // omp is newer and rarer, so it is only reported missing when asked for by name.
+  for (const h of HARNESSES)
+    if (want(h) && !found[h] && (h !== "omp" || opts.only === "omp"))
+      missing.push(h);
 
   if (want("claude") && found.claude) {
     // Claude Code installs the plugin, which brings the hooks and MCP server.
@@ -295,6 +314,33 @@ export function setup(opts: SetupOptions): SetupResult {
     notes.push(
       `codex: install the plugin with\n  ${CODEX_INSTALL.join("\n  ")}`,
     );
+  }
+
+  if (want("omp") && found.omp) {
+    const mcpFile = join(home, ".omp", "agent", "mcp.json");
+    w.edit(mcpFile, (cfg) => {
+      const servers = obj(cfg, "mcpServers");
+      const cur = servers.impression as Json | undefined;
+      const entry = { command: "node", args: [join(home, ...OMP_MCP_SCRIPT)] };
+      // An entry someone pointed elsewhere stays.
+      if (cur && JSON.stringify(cur) !== JSON.stringify(entry)) {
+        changes.push({
+          harness: "omp",
+          file: mcpFile,
+          what: "MCP server (kept your own)",
+          status: "unchanged",
+        });
+        return;
+      }
+      servers.impression = entry;
+      changes.push({
+        harness: "omp",
+        file: mcpFile,
+        what: "MCP server",
+        status: cur ? "unchanged" : "added",
+      });
+    });
+    notes.push(`omp: install the package with\n  ${OMP_INSTALL.join("\n  ")}`);
   }
 
   return { changes, notes, missing, backups: w.backups };
