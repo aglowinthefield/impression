@@ -2,6 +2,12 @@
 
 What changed in each release of `@aglowinthefield/impression`, for people who use it. pi shows the new entries once, at the first session after an update.
 
+## 0.5.0
+
+- Impression works in oh-my-pi (`omp`). Install it with `omp install npm:@aglowinthefield/impression`, then run `impression setup --only omp` to add the search and add tools.
+- pi sends the last part of a session in the background when you exit, so quitting no longer waits on it.
+- Dashboard pages fade in as they load.
+
 ## 0.4.0
 
 - The dashboard shows all your repos by default. Each page has a repo filter in place of the project dropdown, and repos with no memories are left out.
