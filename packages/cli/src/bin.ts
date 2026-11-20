@@ -54,14 +54,37 @@ if (cmd === "hook") {
     process.exit(2);
   }
   const dryRun = rest.includes("--dry-run");
+  // Sign in first, so a refusal (not on the allowlist, app not installed) comes
+  // before anything is installed. Only at a terminal: the device flow needs a person.
+  if (!token && !dryRun && process.stdin.isTTY) {
+    try {
+      const { token: t } = await githubDeviceLogin(url, { open: openUrl });
+      const who = (await createClient(url, t).get("/whoami")) as {
+        name: string;
+      };
+      saveConfig({ url, token: t });
+      console.log(`Signed in to ${url} as ${who.name}\n`);
+    } catch (e) {
+      console.error((e as Error).message);
+      process.exit(1);
+    }
+  }
   try {
     const result = setup({
       home: homedir(),
       only: only as Harness | undefined,
       dryRun,
+      install: (command, args) => {
+        try {
+          execFileSync(command, args, { stdio: "inherit" });
+          return true;
+        } catch {
+          return false;
+        }
+      },
     });
     console.log(formatSetup(result, dryRun));
-    if (!token)
+    if (!loadConfig().token)
       console.log("Not signed in yet. Run: impression login --github");
   } catch (e) {
     console.error((e as Error).message);

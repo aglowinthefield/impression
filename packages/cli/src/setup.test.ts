@@ -240,6 +240,38 @@ describe("setup", () => {
     );
   });
 
+  it("runs omp install when the package isn't there, and prints it when that fails", () => {
+    put(".omp/agent/mcp.json", "{}");
+    const calls: string[] = [];
+    const ok = setup({
+      home,
+      install: (c, a) => {
+        calls.push([c, ...a].join(" "));
+        return true;
+      },
+    });
+    expect(calls).toEqual([OMP_INSTALL[0]]);
+    expect(ok.changes).toContainEqual(
+      expect.objectContaining({
+        harness: "omp",
+        what: "package",
+        status: "added",
+      }),
+    );
+    expect(ok.notes.join("\n")).not.toContain(OMP_INSTALL[0]);
+
+    const failed = setup({ home, install: () => false });
+    expect(failed.notes.join("\n")).toContain(OMP_INSTALL[0]);
+
+    put(
+      ".omp/plugins/node_modules/@aglowinthefield/impression/dist/impression-mcp.js",
+      "",
+    );
+    calls.length = 0;
+    setup({ home, install: (c, a) => (calls.push(c), true) });
+    expect(calls).toEqual([]);
+  });
+
   it("keeps an omp impression MCP entry someone pointed elsewhere", () => {
     const mine = { command: "impression-mcp" };
     put(

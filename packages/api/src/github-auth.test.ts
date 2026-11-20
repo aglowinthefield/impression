@@ -198,6 +198,15 @@ describe("device flow", () => {
     expect((await poll()).status).toBe(403);
   });
 
+  test("gives an allowlisted user with no install the install link", async () => {
+    devicePoll = { status: "ok", tokens: tokens("tok-new") };
+    const res = await poll();
+    expect(res.status).toBe(403);
+    expect(((await res.json()) as { error: string }).error).toContain(
+      "https://github.com/apps/impression-app/installations/new",
+    );
+  });
+
   test("refuses when the user denied or the code expired", async () => {
     devicePoll = { status: "denied" };
     expect((await poll()).status).toBe(403);

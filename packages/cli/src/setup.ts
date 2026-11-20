@@ -16,6 +16,7 @@ import { dirname, join } from "node:path";
  *
  * oh-my-pi (omp) loads the pi package, but its extensions can't register an MCP
  * server, so setup adds one to omp's mcp.json that runs the package's bundled server.
+ * It also runs `omp install` when the package isn't there yet.
  *
  * Opencode is left out: its config is JSONC and its hooks are plugins, neither of which
  * this writes safely.
@@ -30,6 +31,11 @@ export interface SetupOptions {
   only?: Harness;
   /** Suffix for backup files. Defaults to a timestamp. */
   stamp?: string;
+  /**
+   * Runs an install command, returning whether it succeeded. Setup uses it for
+   * agents whose own CLI installs the package (omp). Without it, setup prints the command.
+   */
+  install?: (command: string, args: string[]) => boolean;
 }
 
 export interface Change {
@@ -340,7 +346,23 @@ export function setup(opts: SetupOptions): SetupResult {
         status: cur ? "unchanged" : "added",
       });
     });
-    notes.push(`omp: install the package with\n  ${OMP_INSTALL.join("\n  ")}`);
+    const installed = existsSync(join(home, ...OMP_MCP_SCRIPT));
+    const file = join(home, ".omp", "plugins");
+    if (installed)
+      changes.push({
+        harness: "omp",
+        file,
+        what: "package",
+        status: "unchanged",
+      });
+    else if (!opts.dryRun && opts.install?.("omp", ["install", PI_PACKAGE]))
+      changes.push({ harness: "omp", file, what: "package", status: "added" });
+    else if (opts.dryRun)
+      changes.push({ harness: "omp", file, what: "package", status: "added" });
+    else
+      notes.push(
+        `omp: install the package with\n  ${OMP_INSTALL.join("\n  ")}`,
+      );
   }
 
   return { changes, notes, missing, backups: w.backups };

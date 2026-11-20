@@ -202,8 +202,12 @@ export function githubAuthRoutes(
         poll.tokens,
         "cli",
       );
-      if (!result.ok)
-        return c.json({ error: refusal(result, cfg).message }, 403);
+      if (!result.ok) {
+        // The CLI prints only the error, so the link goes in the text.
+        const r = refusal(result, cfg);
+        const error = r.link ? `${r.message} ${r.link.href}` : r.message;
+        return c.json({ error }, 403);
+      }
       return c.json({ status: "ok", token: result.token, name: result.name });
     } catch {
       return c.json({ error: "GitHub is unavailable" }, 502);
