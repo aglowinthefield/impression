@@ -57,20 +57,21 @@ export interface SeedSession {
   start: number;
 }
 
-/** True when `dir` is `repo` or somewhere under it. */
+/** True when `dir` is `repo` or somewhere under it. Either slash separates. */
 export function isUnder(dir: string, repo: string): boolean {
-  const r = repo.replace(/\/+$/, "");
-  return dir === r || dir.startsWith(`${r}/`);
+  const d = dir.replaceAll("\\", "/");
+  const r = repo.replaceAll("\\", "/").replace(/\/+$/, "");
+  return d === r || d.startsWith(`${r}/`);
 }
 
-/** pi's session dir name: `/a/b.c` becomes `--a-b.c--`. */
+/** pi's session dir name: `/a/b.c` becomes `--a-b.c--`, `C:\a` becomes `--C--a--`. */
 export function piDirName(cwd: string): string {
-  return `--${cwd.replace(/^\/+/, "").replaceAll("/", "-")}--`;
+  return `--${cwd.replace(/^[/\\]+/, "").replace(/[/\\:]/g, "-")}--`;
 }
 
-/** Claude Code's project dir name: `/a/b.c` becomes `-a-b-c`. */
+/** Claude Code's project dir name: `/a/b.c` becomes `-a-b-c`, `C:\a` becomes `C--a`. */
 export function claudeDirName(cwd: string): string {
-  return cwd.replace(/[/.]/g, "-");
+  return cwd.replace(/[/\\:.]/g, "-");
 }
 
 /** Complete JSON lines from the start of a file, up to a byte cap. */

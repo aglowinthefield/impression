@@ -11,6 +11,9 @@ import { join } from "node:path";
 import { afterAll, describe, expect, test } from "vitest";
 import { normalizeRemoteUrl, resolveProject } from "./project.js";
 
+/** Keys use forward slashes, whatever the platform. */
+const slashes = (p: string) => p.split("\\").join("/");
+
 describe("normalizeRemoteUrl", () => {
   test.each([
     ["git@github.com:acme/app.git", "github.com/acme/app"],
@@ -87,8 +90,8 @@ describe("resolveProject", () => {
     const main = repo("no-remote");
     const wt = join(base, "no-remote-feature");
     run(main, "worktree", "add", "-q", wt, "-b", "feature");
-    expect(resolveProject(main).key).toBe(`path:${main}`);
-    expect(resolveProject(wt).key).toBe(`path:${main}`);
+    expect(resolveProject(main).key).toBe(`path:${slashes(main)}`);
+    expect(resolveProject(wt).key).toBe(`path:${slashes(main)}`);
   });
 
   test("uses a non-origin remote when there is no origin", () => {
@@ -113,7 +116,7 @@ describe("resolveProject", () => {
     const dir = join(base, "plain");
     mkdirSync(dir);
     expect(resolveProject(dir)).toEqual({
-      key: `path:${dir}`,
+      key: `path:${slashes(dir)}`,
       name: "plain",
       pathPrefix: null,
     });

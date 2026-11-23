@@ -68,9 +68,10 @@ export function resolveProject(cwd: string): ProjectIdentity {
   const start = realpath(resolve(cwd));
   const toplevel = git(start, "rev-parse", "--show-toplevel");
   if (!toplevel) {
+    const dir = forwardSlashes(start);
     return {
-      key: `path:${start}`,
-      name: start.split("/").pop() || start,
+      key: `path:${dir}`,
+      name: dir.split("/").pop() || dir,
       pathPrefix: null,
     };
   }
@@ -97,12 +98,20 @@ export function resolveProject(cwd: string): ProjectIdentity {
     "--path-format=absolute",
     "--git-common-dir",
   );
-  const root = common ? dirname(common) : toplevel;
+  const root = forwardSlashes(common ? dirname(common) : toplevel);
   return {
     key: `path:${root}`,
     name: root.split("/").pop() || root,
     pathPrefix,
   };
+}
+
+/**
+ * Git prints `C:/...` on Windows while Node gives `C:\...`. Keys use forward
+ * slashes so one directory always gets one key.
+ */
+function forwardSlashes(p: string): string {
+  return p.split("\\").join("/");
 }
 
 /** Git reports real paths, so a symlinked cwd (macOS /var, /tmp) must be resolved too. */

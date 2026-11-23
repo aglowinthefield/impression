@@ -151,8 +151,9 @@ const DIR_FLAG = new RegExp(
   String.raw`(?:\s-C|\s--cwd|\s--dir|\s--prefix)(?:=|\s+)${ARG}`,
   "g",
 );
-/** Absolute or home paths in free text. `//` would be a URL. */
-const ABS = /(?:^|[\s"'=(`])((?:~\/|\/(?!\/))[^\s"'`;&|()<>,]+)/g;
+/** Absolute, Windows drive (`C:\`, `C:/`) or home paths in free text. `//` would be a URL. */
+const ABS =
+  /(?:^|[\s"'=(`])((?:~\/|\/(?!\/)|[A-Za-z]:[\\/])[^\s"'`;&|()<>,]+)/g;
 const PATCH_FILE =
   /^\*\*\* (?:Update|Add|Delete) File: (.+)$|^\*\*\* Move to: (.+)$/gm;
 

@@ -164,7 +164,9 @@ describe("config", () => {
   test("saves privately and env overrides the file", () => {
     const env = { XDG_CONFIG_HOME: mkdtempSync(join(tmpdir(), "imp-cfg-")) };
     saveConfig({ url: "http://a", token: "imp_1" }, env);
-    expect(statSync(configPath(env)).mode & 0o777).toBe(0o600);
+    // Windows has no POSIX modes; the file sits in the user's own profile.
+    if (process.platform !== "win32")
+      expect(statSync(configPath(env)).mode & 0o777).toBe(0o600);
     expect(JSON.parse(readFileSync(configPath(env), "utf8")).token).toBe(
       "imp_1",
     );

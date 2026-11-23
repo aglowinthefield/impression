@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import type { ApiClient } from "@impression/shared";
 import { describe, expect, test } from "vitest";
 import {
@@ -17,7 +17,8 @@ import {
   seed,
 } from "./seed.js";
 
-const REPO = "/Users/me/code/app";
+// `C:\Users\me\code\app` on Windows, as discoverSessions resolves it.
+const REPO = resolve("/Users/me/code/app");
 
 const line = (o: unknown) => JSON.stringify(o);
 const piMsg = (role: string, text: string) =>
@@ -51,6 +52,15 @@ describe("dir names", () => {
     expect(
       claudeDirName("/Users/clearing/code/impression/.worktrees/foo"),
     ).toBe("-Users-clearing-code-impression--worktrees-foo");
+  });
+
+  test("match what pi and Claude Code write on Windows", () => {
+    expect(piDirName("C:\\Users\\tom\\code\\silk-remix")).toBe(
+      "--C--Users-tom-code-silk-remix--",
+    );
+    expect(claudeDirName("C:\\Users\\tom\\silk\\silk-remix")).toBe(
+      "C--Users-tom-silk-silk-remix",
+    );
   });
 });
 
