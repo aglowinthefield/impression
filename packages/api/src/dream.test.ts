@@ -252,6 +252,7 @@ describe("POST /api/dream", () => {
       },
       body: JSON.stringify({ scope: "team" }),
     });
+    // oxlint-disable-next-line vitest/no-standalone-expect -- setup check: the share must land before the tests read it
     expect(shared.status).toBe(200);
   });
   afterAll(() => t.drop());

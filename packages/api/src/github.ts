@@ -158,11 +158,10 @@ export function createGithubClient(
     async listInstallations(accessToken) {
       const r = await get("/user/installations?per_page=100", accessToken);
       const items = Array.isArray(r.installations) ? r.installations : [];
-      return items.flatMap(
-        (i: { id?: number; account?: { login?: string } }) =>
-          typeof i.id === "number" && i.account?.login
-            ? [{ id: i.id, account: i.account.login }]
-            : [],
+      return items.flatMap((i: { id?: number; account?: { login?: string } }) =>
+        typeof i.id === "number" && i.account?.login
+          ? [{ id: i.id, account: i.account.login }]
+          : [],
       );
     },
     async listInstallationRepos(accessToken, installationId) {

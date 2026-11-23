@@ -2,7 +2,6 @@ import { sql } from "drizzle-orm";
 import {
   type AnyPgColumn,
   bigint,
-  boolean,
   customType,
   doublePrecision,
   index,

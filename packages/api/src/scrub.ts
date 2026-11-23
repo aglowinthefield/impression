@@ -74,7 +74,7 @@ const RULES: Rule[] = [
       /\b[A-Za-z0-9_]*(?:SECRET|TOKEN|PASSWORD|PASSWD|PWD|API_?KEY|PRIVATE_?KEY|ACCESS_?KEY|CREDENTIALS?)[A-Za-z0-9_]*\s*[=:]\s*["']?([^\s"',;]{6,})["']?/gi,
     group: 1,
     verify: (m) =>
-      !/^\[REDACTED/.test(m) &&
+      !m.startsWith("[REDACTED") &&
       !/^(?:true|false|null|none|undefined|changeme|example|your[_-].*|<.*>|\$\{?.*)$/i.test(
         m,
       ),

@@ -166,6 +166,7 @@ describe("config", () => {
     saveConfig({ url: "http://a", token: "imp_1" }, env);
     // Windows has no POSIX modes; the file sits in the user's own profile.
     if (process.platform !== "win32")
+      // oxlint-disable-next-line vitest/no-conditional-expect -- Windows has no POSIX modes to check
       expect(statSync(configPath(env)).mode & 0o777).toBe(0o600);
     expect(JSON.parse(readFileSync(configPath(env), "utf8")).token).toBe(
       "imp_1",

@@ -674,7 +674,7 @@ export function memoryRoutes(db: Db, providers: Providers) {
           ...fields,
           // A path prefix is a place in one repo, meaningless once a memory applies everywhere.
           ...(move?.scope === "user" ? { pathPrefix: null } : {}),
-          ...(move ?? {}),
+          ...move,
           ...(b.tags ? { tags: [...new Set(b.tags)] } : {}),
           updatedAt: new Date(),
           // Rewriting a flagged memory is the "update" review outcome.

@@ -1,9 +1,7 @@
 {
   "uid": "impression-dreams",
   "title": "Impression \u00b7 Dreams",
-  "tags": [
-    "impression"
-  ],
+  "tags": ["impression"],
   "timezone": "browser",
   "schemaVersion": 39,
   "time": {
@@ -25,12 +23,8 @@
         "includeAll": true,
         "current": {
           "selected": true,
-          "text": [
-            "All"
-          ],
-          "value": [
-            "$__all"
-          ]
+          "text": ["All"],
+          "value": ["$__all"]
         },
         "query": "select p.name as __text, p.id::text as __value from projects p where exists (select 1 from dream_runs d where d.project_id = p.id) order by 1",
         "refresh": 1,
@@ -85,9 +79,7 @@
       },
       "options": {
         "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ]
+          "calcs": ["lastNotNull"]
         },
         "colorMode": "value",
         "graphMode": "none",
@@ -144,9 +136,7 @@
       },
       "options": {
         "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ]
+          "calcs": ["lastNotNull"]
         },
         "colorMode": "value",
         "graphMode": "none",
@@ -199,9 +189,7 @@
       },
       "options": {
         "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ]
+          "calcs": ["lastNotNull"]
         },
         "colorMode": "value",
         "graphMode": "none",
@@ -258,9 +246,7 @@
       },
       "options": {
         "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ]
+          "calcs": ["lastNotNull"]
         },
         "colorMode": "value",
         "graphMode": "none",
@@ -314,9 +300,7 @@
       },
       "options": {
         "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ]
+          "calcs": ["lastNotNull"]
         },
         "colorMode": "value",
         "graphMode": "none",
@@ -369,9 +353,7 @@
       },
       "options": {
         "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ]
+          "calcs": ["lastNotNull"]
         },
         "colorMode": "value",
         "graphMode": "none",

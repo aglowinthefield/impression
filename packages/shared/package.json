@@ -8,8 +8,7 @@
   "scripts": {
     "build": "tsrs -p tsconfig.build.json",
     "typecheck": "tsrs -p . --noEmit",
-    "test": "vitest run --passWithNoTests",
-    "lint": "biome check ."
+    "test": "vitest run --passWithNoTests"
   },
   "dependencies": {}
 }

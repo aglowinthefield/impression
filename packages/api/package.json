@@ -9,7 +9,6 @@
     "build": "tsrs -p tsconfig.build.json",
     "typecheck": "tsrs -p . --noEmit",
     "test": "vitest run --passWithNoTests",
-    "lint": "biome check .",
     "dev": "tsx watch src/index.ts",
     "eval": "tsx src/eval/cli.ts",
     "eval:extract": "tsx src/eval/extraction-cli.ts",

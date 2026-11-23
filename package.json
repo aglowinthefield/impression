@@ -10,13 +10,14 @@
     "dev": "turbo run dev --filter=@impression/api",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
-    "lint": "turbo run lint",
-    "format": "biome check --write ."
+    "lint": "oxlint && oxfmt --check",
+    "format": "oxfmt"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.6.4",
     "@types/node": "^26.6.6",
-    "tsrs": "0.20.1-ts7.1.0-beta",
+    "oxfmt": "0.79.0",
+    "oxlint": "1.94.0",
+    "tsrs": "7.1.0-beta.tsrs4",
     "tsx": "^4.23.15",
     "turbo": "^2.11.10",
     "vitest": "^5.1.0"

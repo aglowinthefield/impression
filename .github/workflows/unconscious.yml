@@ -37,7 +37,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
-        with: { repository: aglowinthefield/unconscious-development, ref: "${{ env.UD_REF }}", path: .ud }
+        with:
+          repository: aglowinthefield/unconscious-development
+          ref: "${{ env.UD_REF }}"
+          path: .ud
       - uses: actions/setup-node@v4
         with: { node-version: 24 }
       - run: .ud/bin/unconscious check-spec --pr "${{ github.event.pull_request.number }}" --repo "$GITHUB_REPOSITORY"
@@ -50,7 +53,10 @@ jobs:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
       - uses: actions/checkout@v4
-        with: { repository: aglowinthefield/unconscious-development, ref: "${{ env.UD_REF }}", path: .ud }
+        with:
+          repository: aglowinthefield/unconscious-development
+          ref: "${{ env.UD_REF }}"
+          path: .ud
       - uses: actions/setup-node@v4
         with: { node-version: 24 }
       - run: .ud/bin/unconscious on-merge --base "${{ github.event.before }}" --head "${{ github.sha }}" --runner "$UD_RUNNER"
@@ -62,7 +68,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
-        with: { repository: aglowinthefield/unconscious-development, ref: "${{ env.UD_REF }}", path: .ud }
+        with:
+          repository: aglowinthefield/unconscious-development
+          ref: "${{ env.UD_REF }}"
+          path: .ud
       - uses: actions/setup-node@v4
         with: { node-version: 24 }
       - run: .ud/bin/unconscious spec-to-tasks "${{ github.event.issue.number }}" --runner "$UD_RUNNER"

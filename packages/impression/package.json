@@ -41,8 +41,7 @@
   },
   "scripts": {
     "build": "node build.mjs",
-    "prepublishOnly": "node build.mjs",
-    "lint": "biome check ."
+    "prepublishOnly": "node build.mjs"
   },
   "devDependencies": {
     "@impression/cli": "workspace:*",
