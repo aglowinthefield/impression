@@ -5,3 +5,4 @@ export * from "./anchors.js";
 export * from "./client.js";
 export * from "./config.js";
 export * from "./pi-session.js";
+export * from "./saved-client.js";

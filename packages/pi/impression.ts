@@ -46,7 +46,11 @@ function connect(cli: any) {
     if (!cli) return null;
     const { url, token } = cli.loadConfig();
     if (!token) return null;
-    return { cli, client: cli.createClient(url, token, fetch, "pi") };
+    // The saved client picks up a re-login without a restart; older libraries lack it.
+    const client = cli.createSavedClient
+      ? cli.createSavedClient("pi", fetch)
+      : cli.createClient(url, token, fetch, "pi");
+    return { cli, client };
   } catch {
     return null;
   }

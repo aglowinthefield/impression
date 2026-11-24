@@ -1,16 +1,12 @@
 #!/usr/bin/env node
-import { createClient, loadConfig } from "@impression/shared";
+import { createSavedClient } from "@impression/shared";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { createServer } from "./server.js";
 
-// IMPRESSION_URL and IMPRESSION_TOKEN win; otherwise use what `impression login` saved.
-const { url, token } = loadConfig();
-if (!token) {
-  console.error("Not signed in. Run: impression login --github");
-  process.exit(1);
-}
+// IMPRESSION_URL and IMPRESSION_TOKEN win; otherwise use what `impression login`
+// saved. The client re-reads that after a 401, so a re-login needs no restart.
 const server = createServer({
-  client: createClient(url, token, fetch, "mcp"),
+  client: createSavedClient("mcp"),
   cwd: process.cwd(),
 });
 await server.connect(new StdioServerTransport());
