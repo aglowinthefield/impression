@@ -5,8 +5,8 @@ import { dashboardUrl, openUrl } from "./browser.js";
 import { add, edit, keep, list, retire, search, status } from "./commands.js";
 import { loadConfig, saveConfig } from "./config.js";
 import { pushEvalTurns } from "./eval-push.js";
-import { githubDeviceLogin } from "./github-login.js";
 import { runHook } from "./hook-run.js";
+import { login } from "./login.js";
 import { oldHookFiles } from "./setup.js";
 import { runSetup } from "./setup-cli.js";
 import { checkForUpdate, PACKAGE, VERSION } from "./update-check.js";
@@ -46,27 +46,18 @@ if (cmd === "hook") {
     return i >= 0 ? rest[i + 1] : undefined;
   };
   const newUrl = flag("--url") ?? url;
-  let newToken = flag("--token");
-  if (rest.includes("--github")) {
-    try {
-      newToken = (await githubDeviceLogin(newUrl, { open: openUrl })).token;
-    } catch (e) {
-      console.error((e as Error).message);
-      process.exit(1);
-    }
-  }
-  newToken ??= token;
-  if (!newToken) {
-    console.error(
-      "usage: impression login --github | --token imp_... [--url https://impression.quest]",
-    );
-    process.exit(2);
-  }
   try {
-    const who = (await createClient(newUrl, newToken).get("/whoami")) as {
-      name: string;
-    };
-    saveConfig({ url: newUrl, token: newToken });
+    const who = await login(
+      {
+        url: newUrl,
+        token: flag("--token"),
+        github: rest.includes("--github"),
+        // A saved token belongs to the saved server.
+        saved: newUrl === url ? token : undefined,
+      },
+      { open: openUrl },
+    );
+    saveConfig({ url: newUrl, token: who.token });
     console.log(`Signed in to ${newUrl} as ${who.name}`);
   } catch (e) {
     console.error((e as Error).message);

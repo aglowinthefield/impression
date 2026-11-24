@@ -24,6 +24,18 @@ describe("createClient", () => {
   });
 });
 
+test("a refused token says how to sign in again", async () => {
+  const fetchImpl = (async () =>
+    new Response('{"error":"invalid token"}', {
+      status: 401,
+    })) as unknown as typeof fetch;
+  await expect(
+    createClient("http://h", "imp_old", fetchImpl).get("/whoami"),
+  ).rejects.toThrow(
+    "Impression API 401: invalid token. Run `impression login` to sign in again.",
+  );
+});
+
 test("clientName takes the machine from IMPRESSION_MACHINE when set", () => {
   expect(clientName("pi", { IMPRESSION_MACHINE: "ci-runner" })).toBe(
     "pi/dev (ci-runner)",

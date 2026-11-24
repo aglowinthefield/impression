@@ -54,7 +54,10 @@ export function createClient(
         json && typeof json === "object" && "error" in json
           ? String((json as { error: unknown }).error)
           : text.slice(0, 200);
-      throw new Error(`Impression API ${res.status}: ${msg}`);
+      // Every client (CLI, MCP, pi) shows this, so a refused token says how to recover.
+      const fix =
+        res.status === 401 ? ". Run `impression login` to sign in again." : "";
+      throw new Error(`Impression API ${res.status}: ${msg}${fix}`);
     }
     return json;
   };
