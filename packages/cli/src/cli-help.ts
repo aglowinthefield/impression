@@ -199,5 +199,5 @@ export function suggest(cli: CliHelp, name: string): string | undefined {
 /** The message for a command the CLI doesn't know. */
 export const unknownCommand = (cli: CliHelp, name: string) => {
   const near = suggest(cli, name);
-  return `Unknown command: ${name}.${near ? ` Did you mean ${near}?` : ""} Run ${cli.bin} help to see them all.`;
+  return `${cli.bin}: Unknown command: ${name}.${near ? ` Did you mean ${near}?` : ""} Run ${cli.bin} help to see them all.`;
 };

@@ -45,7 +45,7 @@ describe("help", () => {
     expect(suggest(cli, "stauts")).toBe("status");
     expect(suggest(cli, "zzzzzzzz")).toBeUndefined();
     expect(unknownCommand(cli, "lsit")).toBe(
-      "Unknown command: lsit. Did you mean list? Run impression help to see them all.",
+      "impression: Unknown command: lsit. Did you mean list? Run impression help to see them all.",
     );
   });
 
