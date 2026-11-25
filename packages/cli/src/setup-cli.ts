@@ -5,6 +5,7 @@ import { createClient } from "@impression/shared";
 import { openUrl } from "./browser.js";
 import { loadConfig, saveConfig } from "./config.js";
 import { githubDeviceLogin } from "./github-login.js";
+import { cliOnPath, offerGlobalCli } from "./global-cli.js";
 import {
   detect,
   formatSetup,
@@ -88,31 +89,43 @@ export async function runSetup(
     } else agents = present;
   }
 
-  try {
-    const result = setup({
-      home,
-      agents,
-      dryRun,
-      install: (command, args) => {
-        const s = p.spinner();
-        const line = [command, ...args].join(" ");
-        s.start(line);
-        const r = spawnSync(command, args, {
-          encoding: "utf8",
-          stdio: ["ignore", "pipe", "pipe"],
-          timeout: 180_000,
-        });
-        const ok = r.status === 0;
-        if (ok) s.stop(line);
-        else s.error(line);
-        if (!ok) {
-          const why = r.error?.message ?? (r.stderr || r.stdout).trim();
-          if (why) p.log.error(why.split("\n").slice(-5).join("\n"));
-        }
-        return ok;
-      },
+  const install = (command: string, args: string[]) => {
+    const s = p.spinner();
+    const line = [command, ...args].join(" ");
+    s.start(line);
+    const r = spawnSync(command, args, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 180_000,
     });
+    const ok = r.status === 0;
+    if (ok) s.stop(line);
+    else s.error(line);
+    if (!ok) {
+      const why = r.error?.message ?? (r.stderr || r.stdout).trim();
+      if (why) p.log.error(why.split("\n").slice(-5).join("\n"));
+    }
+    return ok;
+  };
+
+  try {
+    const result = setup({ home, agents, dryRun, install });
     p.log.info(formatSetup(result, dryRun));
+    const cli = await offerGlobalCli({
+      onPath: cliOnPath(),
+      dryRun,
+      install,
+      ask: interactive
+        ? async () => {
+            const yes = await p.confirm({
+              message:
+                "Install the impression command too? It's for impression status, list and update; your agents don't need it.",
+            });
+            return yes === true;
+          }
+        : undefined,
+    });
+    if (cli) p.log.info(cli);
     p.outro(
       loadConfig().token
         ? "Done. Start a session in any repo the Impression GitHub app can reach."
