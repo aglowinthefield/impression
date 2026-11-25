@@ -4,8 +4,10 @@ import * as p from "@clack/prompts";
 import { createClient } from "@impression/shared";
 import { openUrl } from "./browser.js";
 import { loadConfig, saveConfig } from "./config.js";
+import { usageLine } from "./cli-help.js";
 import { githubDeviceLogin } from "./github-login.js";
 import { cliOnPath, offerGlobalCli } from "./global-cli.js";
+import { help } from "./help.js";
 import {
   detect,
   formatSetup,
@@ -14,8 +16,6 @@ import {
   type Harness,
   setup,
 } from "./setup.js";
-
-const USAGE = `usage: impression setup [--agent ${HARNESSES.join(",")}] [--yes] [--dry-run]`;
 
 /** Parses `--agent a,b` (or the older `--only a`). Undefined when neither is given. */
 export function parseAgents(argv: string[]): Harness[] | undefined | "bad" {
@@ -38,7 +38,9 @@ export async function runSetup(
 ) {
   const picked = parseAgents(argv);
   if (picked === "bad") {
-    console.error(USAGE);
+    console.error(
+      `impression: --agent takes a comma-separated list of ${HARNESSES.join(", ")}.\n${usageLine(help(), "setup")}`,
+    );
     process.exit(2);
   }
   const dryRun = argv.includes("--dry-run");
