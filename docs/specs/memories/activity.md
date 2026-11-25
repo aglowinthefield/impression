@@ -37,11 +37,11 @@ Memories change without anyone reviewing them. Extraction adds, merges and super
 - AC8: Undo is refused, with a message saying the memory changed since, when the memory has a later entry that isn't undone.
 - AC9: Undo is offered only to the memory's author, matching who can retire it. Others see the entry without it.
 - AC10: A filter narrows the list to one source: extraction, staleness check, dreaming, or people.
-- AC11: Above the list, the last four weeks each show the memories added, rewritten or superseded, and retired in the selected project, and the retire rate (retired over added) as a percentage.
+- AC11: Above the list, the last four weeks each show the memories added, rewritten or superseded, and retired in the selected project, and the retire rate: the share of that week's added memories that are retired now, as a percentage. Retiring older memories doesn't raise it, so it stays at or under 100%.
 - AC12: An entry never reveals a memory, or its text before a change, to a viewer who can't see that memory now. Dream run entries appear only for the viewer's own runs.
 - AC13: The hand-rating eval tool from the Evals tab is reachable from Debug and works as before.
 - AC14: The Memories tab has a filter that lists the memories flagged as possibly stale, with the same actions as any other memory. Activity has no separate group for them.
-- AC15 (after deploy): within 7 days of the release, Activity in prod lists at least one extraction entry and one dream run entry, and the four-week summary shows a retire rate. Check by opening Activity for `aglowinthefield/impression`.
+- AC15 (after deploy): within 7 days of the release, Activity in prod lists at least one extraction entry and one dream run entry, and the four-week summary shows a retire rate. Check by opening Activity for `github.com/aglowinthefield/impression`.
 
 ## Setup note
 
