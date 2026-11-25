@@ -2,6 +2,10 @@
 
 pnpm monorepo: `packages/api` (Hono, Drizzle, Postgres), `packages/web` (React), `packages/cli`, `packages/mcp`, `packages/pi`, `packages/shared`. Run `pnpm install` before `pnpm build`; Before reporting work done, run `pnpm lint && pnpm typecheck && pnpm test` and get all of it passing, API tests included. They start the compose Postgres themselves, so Docker must be running. Don't skip or dismiss API failures as environment noise.
 
+## Philosophy
+
+Design decisions here follow [Tom's philosophy](https://github.com/aglowinthefield/skills/blob/main/philosophy/PHILOSOPHY.md), also at `~/code/PHILOSOPHY.md` on mochi. Read it before adding a module, a seam with another project, a loop, a schema change or a test strategy. A `## Departures` section in this file lists where this repo breaks it on purpose.
+
 ## Specs and decisions
 
 Work is spec-driven, following Unconscious Development: each domain has a Persona in `docs/personas/<domain>.md`, and a change that needs a design choice gets a spec and plan in `docs/specs/<domain>/`, merged before any code. Use the `spec` skill (or `issue` to start from an issue id).
