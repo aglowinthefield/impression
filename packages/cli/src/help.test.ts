@@ -40,6 +40,17 @@ describe("help", () => {
     expect(text).not.toContain("\u001b[");
   });
 
+  it("colours headings cyan and arguments blue, leaving commands plain", () => {
+    process.env.FORCE_COLOR = "1";
+    try {
+      const text = overview(cli);
+      expect(text).toContain("\u001b[1;36mMemories\u001b[0m");
+      expect(text).toContain("  search\u001b[34m QUERY...");
+    } finally {
+      process.env.FORCE_COLOR = "0";
+    }
+  });
+
   it("suggests the nearest command for a typo", () => {
     expect(suggest(cli, "serach")).toBe("search");
     expect(suggest(cli, "stauts")).toBe("status");

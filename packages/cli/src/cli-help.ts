@@ -29,6 +29,8 @@ export interface CliHelp {
   banner?: () => string;
   /** Closing line of the overview. */
   footer?: string;
+  /** The tool's colours as ANSI codes, from its banner. Empty leaves text plain. */
+  colors: { head: string; cmd: string; arg: string };
 }
 
 type Stream = { isTTY?: boolean; columns?: number };
@@ -45,20 +47,23 @@ export const useColor = (stream: Stream = process.stdout) =>
 export const paint =
   (code: string, stream: Stream = process.stdout) =>
   (text: string) =>
-    useColor(stream) ? `\x1b[${code}m${text}\x1b[0m` : text;
+    code && useColor(stream) ? `\x1b[${code}m${text}\x1b[0m` : text;
 
 // The terminal's own 16 colours, so its theme picks shades that read on light and dark.
 export const c = {
   bold: paint("1"),
   dim: paint("2"),
-  head: paint("1;35"),
-  cmd: paint("35"),
-  arg: paint("33"),
   ok: paint("32"),
   warn: paint("33"),
   bad: paint("31"),
   info: paint("36"),
 };
+
+const theme = (cli: CliHelp) => ({
+  head: paint(cli.colors.head),
+  cmd: paint(cli.colors.cmd),
+  arg: paint(cli.colors.arg),
+});
 
 // oxlint-disable-next-line no-control-regex
 const visible = (text: string) => text.replace(/\x1b\[[\d;]*m/g, "");
@@ -80,12 +85,15 @@ export function wrap(text: string, width: number): string[] {
   return lines;
 }
 
-/** Two columns: yellow flags or names, wrapped descriptions. */
-function table(rows: [string, string][]): string[] {
+/** Two columns: flags or names, then wrapped descriptions. */
+function table(
+  arg: (text: string) => string,
+  rows: [string, string][],
+): string[] {
   const w = Math.max(...rows.map((row) => row[0].length)) + 2;
   return rows.flatMap(([a, b]) =>
     wrap(b, Math.max(30, columns() - w - 2)).map((line, i) =>
-      i ? " ".repeat(w + 2) + line : `  ${c.arg(pad(a, w))}${line}`,
+      i ? " ".repeat(w + 2) + line : `  ${arg(pad(a, w))}${line}`,
     ),
   );
 }
@@ -95,15 +103,16 @@ const signature = (cmd: CommandHelp) =>
 
 /** `tool`, `tool help`, `tool --help`: the banner, then every command by group. */
 export function overview(cli: CliHelp): string {
+  const t = theme(cli);
   const width =
     Math.max(...cli.commands.map((cmd) => signature(cmd).length)) + 2;
   const out: string[] = [];
   if (cli.banner && pretty()) out.push("", cli.banner(), "");
   out.push(
-    `${c.head("Usage")}  ${cli.bin} ${c.cmd("<command>")} ${c.arg("[options]")}`,
+    `${t.head("Usage")}  ${cli.bin} ${t.cmd("<command>")} ${t.arg("[options]")}`,
   );
   for (const group of cli.groups) {
-    out.push("", c.head(group));
+    out.push("", t.head(group));
     for (const cmd of cli.commands.filter((item) => item.group === group)) {
       const sig = signature(cmd);
       const [first, ...more] = wrap(
@@ -111,14 +120,15 @@ export function overview(cli: CliHelp): string {
         Math.max(30, columns() - width - 2),
       );
       out.push(
-        `  ${c.cmd(cmd.name)}${c.arg(pad(sig.slice(cmd.name.length), width - cmd.name.length))}${first}`,
+        `  ${t.cmd(cmd.name)}${t.arg(pad(sig.slice(cmd.name.length), width - cmd.name.length))}${first}`,
       );
       for (const line of more) out.push(" ".repeat(width + 2) + line);
     }
   }
   if (cli.options?.length)
-    out.push("", c.head("Options"), ...table(cli.options));
-  if (cli.env?.length) out.push("", c.head("Environment"), ...table(cli.env));
+    out.push("", t.head("Options"), ...table(t.arg, cli.options));
+  if (cli.env?.length)
+    out.push("", t.head("Environment"), ...table(t.arg, cli.env));
   out.push(
     "",
     `  ${cli.footer ?? `${cli.bin} help <command> for its options and examples.`}`,
@@ -128,14 +138,15 @@ export function overview(cli: CliHelp): string {
 
 /** `tool help <command>`, `tool <command> --help`. Undefined for an unknown command. */
 export function commandHelp(cli: CliHelp, name: string): string | undefined {
+  const t = theme(cli);
   const cmd = cli.commands.find((item) => item.name === name);
   if (!cmd) return undefined;
   const full = cmd.full ?? cmd.args;
   const out = [
-    `${c.cmd(`${cli.bin} ${cmd.name}`)}  ${cmd.summary}`,
+    `${paint(["1", cli.colors.cmd].filter(Boolean).join(";"))(`${cli.bin} ${cmd.name}`)}  ${cmd.summary}`,
     "",
-    c.head("Usage"),
-    `  ${cli.bin} ${cmd.name}${full ? ` ${c.arg(full)}` : ""}`,
+    t.head("Usage"),
+    `  ${cli.bin} ${cmd.name}${full ? ` ${t.arg(full)}` : ""}`,
   ];
   if (cmd.details)
     out.push(
@@ -150,12 +161,12 @@ export function commandHelp(cli: CliHelp, name: string): string | undefined {
         ]),
     );
   if (cmd.options?.length)
-    out.push("", c.head("Options"), ...table(cmd.options));
+    out.push("", t.head("Options"), ...table(t.arg, cmd.options));
   if (cmd.examples?.length) {
     const w = Math.max(...cmd.examples.map((row) => row[0].length)) + 3;
     out.push(
       "",
-      c.head("Examples"),
+      t.head("Examples"),
       ...cmd.examples.map(
         ([ex, what]) =>
           `  ${c.dim("$")} ${what ? pad(ex, w) + c.dim(`# ${what}`) : ex}`,

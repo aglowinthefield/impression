@@ -38,6 +38,8 @@ export const help = (version?: string): CliHelp => ({
   bin: "impression",
   groups: ["Memories", "Account", "Install"],
   banner: () => banner(version),
+  // Cyan like the cloud, commands plain, arguments blue.
+  colors: { head: "1;36", cmd: "", arg: "34" },
   commands: [
     {
       name: "search",
