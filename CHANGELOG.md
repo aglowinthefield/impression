@@ -2,6 +2,12 @@
 
 What changed in each release of `@aglowinthefield/impression`, for people who use it. pi shows the new entries once, at the first session after an update.
 
+## 0.9.1
+
+- `impression setup` offers to install the `impression` command, so `impression status`, `list` and `update` work after the quick start.
+- When your saved sign-in is refused, `impression login` takes you through GitHub sign-in again instead of failing.
+- After you sign in again, your agents use the new sign-in right away, without a restart.
+
 ## 0.9.0
 
 - You can see Impression at work. pi and oh-my-pi show how many memories the agent got this session in the footer. Claude Code and Codex say how many it got at session start and when a prompt matches more.
