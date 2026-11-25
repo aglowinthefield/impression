@@ -2,9 +2,16 @@
 import { execFileSync } from "node:child_process";
 import { createClient, resolveProject } from "@impression/shared";
 import { dashboardUrl, openUrl } from "./browser.js";
+import {
+  commandHelp,
+  overview,
+  unknownCommand,
+  usageLine,
+} from "./cli-help.js";
 import { add, edit, keep, list, retire, search, status } from "./commands.js";
 import { loadConfig, saveConfig } from "./config.js";
 import { pushEvalTurns } from "./eval-push.js";
+import { HIDDEN, help } from "./help.js";
 import { runHook } from "./hook-run.js";
 import { login } from "./login.js";
 import { oldHookFiles } from "./setup.js";
@@ -14,6 +21,27 @@ import { checkForUpdate, PACKAGE, VERSION } from "./update-check.js";
 const [cmd, sub] = process.argv.slice(2);
 if (cmd === "--version" || cmd === "-v" || cmd === "version") {
   console.log(VERSION ?? "dev");
+  process.exit(0);
+}
+const cli = help(VERSION);
+const wantsHelp = process.argv
+  .slice(3)
+  .some((a) => a === "--help" || a === "-h");
+if (!cmd || cmd === "help" || cmd === "--help" || cmd === "-h") {
+  const page = cmd === "help" && sub ? commandHelp(cli, sub) : overview(cli);
+  if (!page) {
+    console.error(unknownCommand(cli, sub ?? ""));
+    process.exit(2);
+  }
+  console.log(page);
+  process.exit(0);
+}
+if (!HIDDEN.includes(cmd) && !cli.commands.some((c) => c.name === cmd)) {
+  console.error(unknownCommand(cli, cmd));
+  process.exit(2);
+}
+if (wantsHelp && !HIDDEN.includes(cmd)) {
+  console.log(commandHelp(cli, cmd));
   process.exit(0);
 }
 const config = loadConfig();
@@ -98,13 +126,10 @@ if (cmd === "hook") {
     const text = restWords.join(" ");
     const cwd = process.cwd();
     if ((cmd === "search" || cmd === "add") && !words)
-      throw new Error(`usage: impression ${cmd} <text>`);
+      throw new Error(usageLine(cli, cmd));
     if (["retire", "edit", "keep"].includes(cmd) && !id)
-      throw new Error(
-        `usage: impression ${cmd} <id>${cmd === "edit" ? " <text>" : ""}`,
-      );
-    if (cmd === "edit" && !text)
-      throw new Error("usage: impression edit <id> <text>");
+      throw new Error(usageLine(cli, cmd));
+    if (cmd === "edit" && !text) throw new Error(usageLine(cli, cmd));
     const run = {
       search: () => search(client, cwd, words),
       add: () =>
@@ -129,8 +154,6 @@ if (cmd === "hook") {
     process.exit(1);
   }
 } else {
-  console.error(
-    "usage: impression --version | setup [--agent claude,pi,codex,omp] [--yes] [--dry-run] | update\n       impression login [--github] | search <q> | add <text> [--user] | list | status | dashboard\n       impression retire <id> | edit <id> <text> | keep <id>\n       impression hook session-start | prompt | session-end [--extract] --agent claude|codex|gemini|cursor|copilot|pi\n       impression eval push [path-substring]",
-  );
+  console.error("Usage: impression eval push [PATH_SUBSTRING]");
   process.exit(2);
 }
