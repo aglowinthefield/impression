@@ -352,6 +352,32 @@ describe("list", () => {
     expect(r.json.weeks[1]).toMatchObject({ added: 0, retireRate: null });
   });
 
+  test("the retire rate is the share of a week's additions retired since", async () => {
+    const key = "github.com/acme/cohort";
+    const old = await add("Added a while back", key);
+    await t.db
+      .update(memoryEvents)
+      .set({ createdAt: new Date(Date.now() - 10 * 24 * 60 * 60 * 1000) })
+      .where(eq(memoryEvents.memoryId, old.id));
+    await call(alice, "DELETE", `/memories/${old.id}`);
+    const r = await call(
+      alice,
+      "GET",
+      `/activity/summary?project=${encodeURIComponent(key)}`,
+    );
+    // Retired this week, but it was added the week before.
+    expect(r.json.weeks[0]).toMatchObject({
+      added: 0,
+      retired: 1,
+      retireRate: null,
+    });
+    expect(r.json.weeks[1]).toMatchObject({
+      added: 1,
+      retired: 0,
+      retireRate: 100,
+    });
+  });
+
   test("without a project, lists and counts every project you can see", async () => {
     const one = await add("All one", "github.com/acme/all-1");
     const two = await add("All two", "github.com/acme/all-2");

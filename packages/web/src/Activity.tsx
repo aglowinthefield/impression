@@ -206,7 +206,9 @@ export function Activity({
               <th>Added</th>
               <th>Rewritten</th>
               <th>Retired</th>
-              <th>Retire rate</th>
+              <th title="Share of this week's added memories retired since">
+                Retire rate
+              </th>
             </tr>
           </thead>
           <tbody>

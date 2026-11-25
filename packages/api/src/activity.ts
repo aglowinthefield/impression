@@ -421,13 +421,21 @@ export function activityRoutes(db: Db, providers: Providers) {
       added: 0,
       rewritten: 0,
       retired: 0,
+      /** Of this week's additions, the share retired since. */
       retireRate: null as number | null,
+      addedNowRetired: 0,
     }));
     if (p || !project) {
       const visible = await memoryVisible(db, access, principal, "m");
-      const rows = await db.execute<{ w: number; kind: string; n: number }>(sql`
+      const rows = await db.execute<{
+        w: number;
+        kind: string;
+        n: number;
+        now_retired: number;
+      }>(sql`
         SELECT greatest(0, floor(extract(epoch from (now() - e.created_at)) / ${WEEK_MS / 1000}))::int AS w,
-          e.kind, count(*)::int AS n
+          e.kind, count(*)::int AS n,
+          count(*) FILTER (WHERE m.status = 'retired')::int AS now_retired
         FROM memory_events e JOIN memories m ON m.id = e.memory_id
         WHERE ${p ? sql`m.project_id = ${p.id}` : sql`true`} AND ${visible}
           AND e.created_at > now() - interval '28 days'
@@ -436,16 +444,22 @@ export function activityRoutes(db: Db, providers: Providers) {
       for (const r of rows) {
         const w = weeks[r.w];
         if (!w) continue;
-        if (["extracted", "added", "superseded"].includes(r.kind))
+        if (["extracted", "added", "superseded"].includes(r.kind)) {
           w.added += r.n;
+          w.addedNowRetired += r.now_retired;
+        }
         if (["rewritten", "superseded", "merged"].includes(r.kind))
           w.rewritten += r.n;
         if (r.kind === "retired") w.retired += r.n;
       }
       for (const w of weeks)
-        w.retireRate = w.added ? Math.round((w.retired / w.added) * 100) : null;
+        w.retireRate = w.added
+          ? Math.round((w.addedNowRetired / w.added) * 100)
+          : null;
     }
-    return c.json({ weeks });
+    return c.json({
+      weeks: weeks.map(({ addedNowRetired: _, ...w }) => w),
+    });
   });
 
   app.post("/:id/undo", async (c) => {
