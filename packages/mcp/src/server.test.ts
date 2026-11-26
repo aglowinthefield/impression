@@ -85,6 +85,19 @@ describe("mcp tools", () => {
     expect(r.content[0]?.text).toBe("Already known, nothing added. [9]");
   });
 
+  test("add with user scope sends no project", async () => {
+    const { call, calls } = await connect(() => ({
+      id: "7",
+      outcome: "created",
+    }));
+    const r = await call("add", { content: "Prefers fish", scope: "user" });
+    expect(calls[0]).toEqual({
+      path: "/memories",
+      body: { scope: "user", content: "Prefers fish", agent: "mcp" },
+    });
+    expect(r.content[0]?.text).toBe("Saved. [7]");
+  });
+
   test("API errors come back as tool errors", async () => {
     const { call } = await connect(() => {
       throw new Error("Impression API 401: invalid token");

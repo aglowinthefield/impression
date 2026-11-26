@@ -100,12 +100,17 @@ export function createServer({ client, cwd }: Options): McpServer {
     },
     async ({ content, scope }, extra) => {
       try {
-        const p = project(extra);
+        // A user memory belongs to no project, and the API rejects one that names it.
+        const p = scope === "user" ? null : project(extra);
         const r = (await client.post("/memories", {
           scope: scope ?? "project",
           content,
-          project: { key: p.key, name: p.name },
-          ...(p.pathPrefix ? { pathPrefix: p.pathPrefix } : {}),
+          ...(p
+            ? {
+                project: { key: p.key, name: p.name },
+                ...(p.pathPrefix ? { pathPrefix: p.pathPrefix } : {}),
+              }
+            : {}),
           agent: "mcp",
         })) as { outcome?: string; id: string; redactions?: unknown[] };
         const note =
