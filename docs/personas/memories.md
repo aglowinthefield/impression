@@ -6,7 +6,7 @@ status: confirmed
 
 ## Scope
 
-What happens to a memory after an agent's session ends: extraction, dedupe and supersede, the staleness check, dreaming into concepts, retiring, and how a person sees and corrects all of that in the dashboard. Retrieval (session start, per-prompt search) reads memories but belongs to its own domain once it has one.
+What happens to a memory after an agent's session ends: extraction, dedupe and supersede, the staleness check, dreaming into concepts, retiring, and how a person sees and corrects all of that in the dashboard. Retrieval (session start, per-prompt search) reads memories but belongs to the retrieval domain, and how Impression runs inside each agent belongs to agents.
 
 ## Invariants
 
