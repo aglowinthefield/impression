@@ -29,8 +29,7 @@ One task: the budget split, the fit rule and search are one change to what reach
 - retrieval/I3: holds. User-scoped memories pass the same strict floor; AC7 checks precision.
 - retrieval/I4: holds. AC6.
 - retrieval/I5: holds. The full-text fallback sees the same widened candidate set.
-- retrieval/I6: exception: "practices go first" becomes a capped share for practices that fit the project. The budget rule stands. [NEEDS CLARIFICATION: approve exception?]
-  > **Open:** do you approve rewording I6 as written under Data model and contracts?
+- retrieval/I6: exception: "practices go first" becomes a capped share for practices that fit the project. The budget rule stands. Approved by the Self on 2026-11-26.
 - retrieval/I7: holds. Path narrowing applies to user-scoped memories as before; they carry no path.
 
 ## Tasks

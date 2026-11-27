@@ -1,6 +1,6 @@
 ---
 domain: retrieval
-status: draft
+status: approved
 issues:
   - https://github.com/aglowinthefield/impression/issues/116
 surfaces:
@@ -23,10 +23,8 @@ A practice reaches a session when it applies there, and a project's facts keep t
 
 ## Acceptance criteria
 
-- AC1: Practices take at most [NEEDS CLARIFICATION: practice share] of the session-start budget. Memories that aren't practices fill the rest first. Practices may use room the rest leaves unused.
-  > **Open:** what share of the 800 tokens should practices get at most? I'd say 25%, about two or three practices.
-- AC2: Session start serves only the practices that [NEEDS CLARIFICATION: fit rule].
-  > **Open:** which practices fit a project? I'd pick "were learned in a session in this project, or a prompt search in this project returned them before". Other options: all practices, ranked by how close they are to the project's facts; or none, leaving practices to prompt search alone.
+- AC1: Practices take at most 25% of the session-start budget. Memories that aren't practices fill the rest first. Practices may use room the rest leaves unused.
+- AC2: Session start serves only the practices that were learned in a session in this project, or that a prompt search in this project returned before.
 - AC3: A strict prompt search that names a project also returns the person's user-scoped memories. They pass the same similarity floor as project memories (retrieval/I3) and are ranked together with them. A search with `scope: "project"` still returns project memories only.
 - AC4: The MCP search tool, given a project, returns the person's user-scoped memories the same way.
 - AC5: A prompt search that carries a session id leaves out memories that session start already gave to that session.
