@@ -8,8 +8,8 @@
 # spec-to-tasks when you label an issue ready-for-agent by hand (the trivial tier).
 #
 # Tasks go to the runner. With no runner reachable from Actions, the session runner prints each
-# task to the log for a person to start. To create Bakery cards instead, run this on a runner that
-# can reach the board and set UD_RUNNER: bakery plus BAKERY_URL.
+# task to the log for a person to start. To create Alice cards instead, run this on a runner that
+# can reach the board and set UD_RUNNER: alice plus ALICE_URL.
 name: unconscious
 
 on:
