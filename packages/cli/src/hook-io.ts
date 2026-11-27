@@ -40,6 +40,18 @@ export function foreignHost(
   return undefined;
 }
 
+/**
+ * `IMPRESSION_SESSION`, for agents another tool starts: `read` gives the session
+ * memories but sends nothing back, and `off` turns every hook off. Any other value,
+ * or none, is a normal session.
+ */
+export type SessionMode = "full" | "read" | "off";
+
+export function sessionMode(env: NodeJS.ProcessEnv = process.env): SessionMode {
+  const v = env.IMPRESSION_SESSION?.trim().toLowerCase();
+  return v === "read" || v === "off" ? v : "full";
+}
+
 /** The fields hooks read from their stdin JSON, across agents. */
 export interface HookInput {
   cwd?: string;
