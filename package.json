@@ -14,6 +14,7 @@
     "format": "oxfmt"
   },
   "devDependencies": {
+    "@changesets/cli": "^3.0.3",
     "@types/node": "^26.6.6",
     "oxfmt": "0.79.0",
     "oxlint": "1.94.0",

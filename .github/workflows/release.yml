@@ -1,12 +1,44 @@
 name: release
+# On main: while changesets are waiting, keep a Release PR open that bumps the version and
+# writes them into packages/impression/CHANGELOG.md. Merging it lands an untagged version,
+# which the publish job sends to npm and tags v<version>.
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
+concurrency: release
 jobs:
-  publish:
+  version:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
+      pull-requests: write
+    outputs:
+      pending: ${{ steps.changesets.outputs.has-changesets }}
+      version: ${{ steps.untagged.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 24, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - id: changesets
+        uses: changesets/action@v2
+        with:
+          version-script: pnpm changeset version
+          pr-title: Release
+          commit-message: Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - id: untagged
+        run: |
+          v=$(node -p "require('./packages/impression/package.json').version")
+          git ls-remote --exit-code --tags origin "v$v" >/dev/null || echo "version=$v" >> "$GITHUB_OUTPUT"
+  publish:
+    needs: version
+    if: needs.version.outputs.pending == 'false' && needs.version.outputs.version != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
       id-token: write
     services:
       postgres:
@@ -18,22 +50,21 @@ jobs:
         ports: ["54329:5432"]
         options: >-
           --health-cmd "pg_isready -U impression" --health-interval 2s --health-retries 30
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: pnpm
+        with: { node-version: 24, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: pnpm test
-      - name: Tag matches package version
-        run: test "v$(node -p "require('./packages/impression/package.json').version")" = "$GITHUB_REF_NAME"
       - name: Changelog has this version
-        run: grep -q "^## \[\?${GITHUB_REF_NAME#v}\b" CHANGELOG.md
+        run: grep -q "^## \[\?$VERSION\b" packages/impression/CHANGELOG.md
       # Trusted publishing (OIDC) needs npm 11.5.1 or later. No token: npm
       # exchanges the workflow's id-token, and adds provenance on its own.
       - run: npm install -g npm@latest
       - run: npm publish --access public
         working-directory: packages/impression
+      - run: git tag "v$VERSION" && git push origin "v$VERSION"

@@ -5,7 +5,7 @@ import { configPath } from "@impression/shared";
 import { isNewer } from "./update-check.js";
 
 const CHANGELOG_URL =
-  "https://github.com/aglowinthefield/impression/blob/main/CHANGELOG.md";
+  "https://github.com/aglowinthefield/impression/blob/main/packages/impression/CHANGELOG.md";
 const MAX_LINES = 8;
 
 /** The bullets of every `## x.y.z` section newer than `previous`, up to `current`. */
