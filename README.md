@@ -53,7 +53,7 @@ The same MCP tools and hooks as Claude Code. Codex runs a plugin's hooks only af
 pi install npm:@aglowinthefield/impression
 ```
 
-pi installs and updates the package itself (`pi update --extensions`), so it doesn't need the global install. The package's extension adds the MCP tools (search and add) and runs `impression hook session-start` on session start, `hook prompt` (a search on the prompt text) before each prompt, and `hook session-end --extract` on each chunk of new conversation (after a run, once about 3000 characters have built up, and again on exit). Run `impression login` first. `impression setup` adds the same package entry to `~/.pi/agent/settings.json`, and removes the extension path and `impression` MCP entry that earlier versions of setup wrote.
+pi installs and updates the package itself (`pi update --extensions`), so it doesn't need the global install. The package's extension adds the MCP tools (search and add) and runs `impression hook session-start` on session start, `hook prompt` (a search on the prompt text) before each prompt, and `hook session-end --extract` on each chunk of new conversation (after a run, once about 3000 characters have built up, and again on exit). The footer counts the memories given to the session, and `/impression` lists them. Run `impression login` first. `impression setup` adds the same package entry to `~/.pi/agent/settings.json`, and removes the extension path and `impression` MCP entry that earlier versions of setup wrote.
 
 ### oh-my-pi
 
