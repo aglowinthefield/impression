@@ -2,7 +2,8 @@
 // transcript to Impression when it ends. Shells out to the `impression` CLI, so it
 // shares config (`impression login`) and fail-quietly behaviour with the Claude Code hooks.
 //
-// Also registers the Impression MCP server, so pi gets the search and add tools.
+// Also registers the Impression MCP server, so pi gets the search and add tools, and
+// /impression, which lists the memories given to this session.
 //
 // Install: `pi install npm:@aglowinthefield/impression`, or add this file's path to
 // "extensions" in ~/.pi/agent/settings.json. Works from the npm package
@@ -126,6 +127,30 @@ export default function (pi: ExtensionAPI) {
     pi.registerMcpServer("impression", {
       command: NODE,
       args: [MCP_SCRIPT],
+    });
+
+  // /impression lists what the footer counts. It reads the memories from the session's
+  // own entries, so a resumed session shows what it was given before.
+  if (typeof pi.registerCommand === "function")
+    pi.registerCommand("impression", {
+      description: "Show the memories Impression gave this session",
+      handler: async (_args, ctx) => {
+        try {
+          const lines = ctx.sessionManager.getEntries().flatMap((e) => {
+            const m = e as { customType?: string; content?: unknown };
+            return m.customType === "impression" &&
+              typeof m.content === "string"
+              ? m.content.split("\n").filter((l) => l.startsWith("- "))
+              : [];
+          });
+          ctx.ui.notify(
+            lines.length
+              ? `Impression gave this session ${lines.length} ${lines.length === 1 ? "memory" : "memories"}:\n${lines.join("\n")}`
+              : "Impression hasn't given this session any memories.",
+            "info",
+          );
+        } catch {}
+      },
     });
 
   let context = "";
