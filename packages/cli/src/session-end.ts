@@ -170,6 +170,7 @@ function headSha(cwd: string): string | undefined {
       cwd,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
+      windowsHide: true,
     }).trim();
     return /^[0-9a-f]{7,40}$/i.test(sha) ? sha : undefined;
   } catch {

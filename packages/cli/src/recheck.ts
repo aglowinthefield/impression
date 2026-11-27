@@ -96,6 +96,7 @@ function git(cwd: string, ...args: string[]): string | null {
       cwd,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
+      windowsHide: true,
       maxBuffer: 64 * 1024 * 1024,
     });
   } catch {

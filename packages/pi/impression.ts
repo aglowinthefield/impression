@@ -73,7 +73,7 @@ const HAND_OFF = `const [cli, dir, input, ...args] = process.argv.slice(1);
 const { execFileSync } = require("node:child_process");
 try {
   execFileSync(cli ? process.execPath : "impression", cli ? [cli, ...args] : args,
-    { input, stdio: ["pipe", "ignore", "ignore"], timeout: 35000 });
+    { input, stdio: ["pipe", "ignore", "ignore"], timeout: 35000, windowsHide: true });
 } catch {}
 require("node:fs").rmSync(dir, { recursive: true, force: true });`;
 
