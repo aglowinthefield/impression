@@ -4,8 +4,8 @@
 #               invariant, an uncovered criterion, or an open [NEEDS CLARIFICATION] marker, and
 #               explains a failure in a comment on the PR.
 # on-merge      on a push to main touching specs: each approved spec flips its plan's issue to
-#               ready-for-agent and runs spec-to-tasks.
-# spec-to-tasks when you label an issue ready-for-agent by hand (the trivial tier).
+#               ud:build and runs spec-to-tasks.
+# spec-to-tasks when you label an issue ud:build by hand (the trivial tier).
 #
 # Tasks go to the runner. With no runner reachable from Actions, the session runner prints each
 # task to the log for a person to start. To create Alice cards instead, run this on a runner that
@@ -63,7 +63,7 @@ jobs:
         env: { GH_TOKEN: "${{ github.token }}" }
 
   spec-to-tasks:
-    if: github.event_name == 'issues' && github.event.label.name == 'ready-for-agent'
+    if: github.event_name == 'issues' && github.event.label.name == 'ud:build'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
