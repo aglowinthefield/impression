@@ -1,7 +1,7 @@
 ---
 domain: agents
 owner: aglowinthefield
-status: draft
+status: confirmed
 ---
 
 ## Scope

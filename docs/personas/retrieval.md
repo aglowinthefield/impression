@@ -1,7 +1,7 @@
 ---
 domain: retrieval
 owner: aglowinthefield
-status: draft
+status: confirmed
 ---
 
 ## Scope
