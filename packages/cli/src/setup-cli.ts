@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
 import * as p from "@clack/prompts";
 import { createClient } from "@impression/shared";
@@ -6,7 +5,7 @@ import { openUrl } from "./browser.js";
 import { loadConfig, saveConfig } from "./config.js";
 import { usageLine } from "./cli-help.js";
 import { githubDeviceLogin } from "./github-login.js";
-import { cliOnPath, offerGlobalCli } from "./global-cli.js";
+import { cliOnPath, offerGlobalCli, runCommand } from "./global-cli.js";
 import { help } from "./help.js";
 import {
   detect,
@@ -95,8 +94,7 @@ export async function runSetup(
     const s = p.spinner();
     const line = [command, ...args].join(" ");
     s.start(line);
-    const r = spawnSync(command, args, {
-      encoding: "utf8",
+    const r = runCommand(command, args, {
       stdio: ["ignore", "pipe", "pipe"],
       timeout: 180_000,
     });

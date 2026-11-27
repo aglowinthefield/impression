@@ -1,6 +1,19 @@
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { CLI_INSTALL, cliOnPath, offerGlobalCli } from "./global-cli.js";
+import {
+  CLI_INSTALL,
+  cliOnPath,
+  offerGlobalCli,
+  runCommand,
+} from "./global-cli.js";
+
+describe("runCommand", () => {
+  it("runs the line through the shell on Windows, where npm is a .cmd shim", () => {
+    const r = runCommand("echo", ["a", "b"], {}, true);
+    expect(r.error).toBeUndefined();
+    expect(r.stdout.trim()).toBe("a b");
+  });
+});
 
 describe("cliOnPath", () => {
   const has =

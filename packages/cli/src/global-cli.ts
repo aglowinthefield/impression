@@ -1,3 +1,7 @@
+import {
+  type SpawnSyncOptionsWithStringEncoding,
+  spawnSync,
+} from "node:child_process";
 import { existsSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { PACKAGE } from "./update-check.js";
@@ -24,6 +28,23 @@ export function cliOnPath(
     .split(windows ? ";" : delimiter)
     .filter((dir) => dir && !/[\\/]_npx[\\/]/.test(dir))
     .some((dir) => names.some((n) => exists(join(dir, n))));
+}
+
+/**
+ * Runs an install command. On Windows npm, claude, codex, pi and omp are `.cmd`
+ * shims, which spawn can't start without a shell (ENOENT), so the line goes through
+ * cmd.exe there. Callers pass fixed arguments that need no quoting.
+ */
+export function runCommand(
+  command: string,
+  args: string[],
+  opts: Omit<SpawnSyncOptionsWithStringEncoding, "encoding">,
+  windows = process.platform === "win32",
+) {
+  const o = { ...opts, encoding: "utf8" as const };
+  return windows
+    ? spawnSync([command, ...args].join(" "), { ...o, shell: true })
+    : spawnSync(command, args, o);
 }
 
 /**
