@@ -25,6 +25,7 @@ Never record any of these:
 - Snapshots that will change: counts, sizes, costs, prices, timings, dates, how many of something exist, how the UI currently looks, what a file contains right now.
 - Explanations of how code works, including answers to the user's "how does X work" questions. A reader gets these from the code. Keep an explanation only when it states a trap that would surprise someone, and a list of implementation details is never a trap.
 - One-off run parameters, such as "run 200 cards first".
+- To-dos: anything the user or the assistant still has to do, fix, update, install or clean up, whether in this repo, another repo or the user's own machine (shell config, environment variables, dotfiles, local tools). "$X points to a stale path, update it in the shell config" is a chore, not knowledge: once done it is no longer true. Keep only the lasting rule or reason behind it, if the user stated one.
 - Rules from project instruction files (AGENTS.md, CLAUDE.md, README conventions), or that the assistant read from one, even when the user agrees. Those files are already loaded into every session.
 - Anything secret.
 A user's instruction on how to build something ("use deterministic ids so retries don't double count", "keep it behind a gate") is a decision with a reason: keep it, without the surrounding task.
@@ -38,7 +39,8 @@ Then keep a practice only when the user:
 - states it as a standing rule ("always", "never", "from now on", "every time", "make sure to"), or
 - corrects the assistant for doing it a different way, or
 - asks for the same thing again after having asked before (the transcript shows it was repeated).
-Write a practice as an instruction with its trigger and the reason if the user gave one: "When doing a /nitpick design session, run the app against a fork of production data, so the design is judged on real content." Name the trigger (a command, a kind of task, a tool) so a later session can tell when it applies. A request for one thing right now ("run the tests", "make that button blue") is not a practice, even if phrased as a demand. Practices don't count toward the limit of 3, but at most 2 per session.
+Write a practice as an instruction with its trigger and the reason if the user gave one: "When doing a /nitpick design session, run the app against a fork of production data, so the design is judged on real content." Name the trigger (a command, a kind of task, a tool) so a later session can tell when it applies.
+A practice reaches every repo the user works in, so it holds only what applies in all of them. When the rule comes with one repo's specifics (ports, hosts, URLs, service, app or repo names, paths), write the practice without them, and keep the specifics as a separate fact about that repo. For example, "before a release, smoke-test the checkout flow on staging at checkout.acme.dev:8443" becomes the practice "Before a release, smoke-test the main user flow on staging." and the fact "In acme-shop, staging is checkout.acme.dev:8443." Keep the practice even when there is no room for the fact. A request for one thing right now ("run the tests", "make that button blue") is not a practice, even if phrased as a demand. Practices don't count toward the limit of 3, but at most 2 per session.
 Everything above still applies to practices: never one the assistant invented, and never one the assistant quoted or paraphrased from AGENTS.md, CLAUDE.md or another instruction file. If the user only confirms a rule the assistant just read out ("yes, always"), that rule is already loaded in every session, so drop it.
 Reply with one JSON object and nothing else:
 {"memories":[{"kind":"fact","otherRepos":false,"content":"...","confidence":0.8,"anchors":[{"path":"src/x.ts","symbol":"fn"}]}]}
@@ -51,7 +53,7 @@ Give each fact a "project": the key of the repository it is about, copied exactl
 Edits and commands in a repository show work happened there. A repository that was only read is usually reference material: pick it only when the fact is clearly about that repository's own code or setup.
 If you are not sure which repository a fact is about, use the session's own project.
 Anchor paths are relative to the root of the repository you picked, never to another one. Leave an anchor out if you are unsure which repository its file is in.
-Practices follow the user, so they need no project.`;
+Practices follow the user, so they need no project. A fact holding the repo specifics split off a practice gets the key of the repository those specifics belong to.`;
 
 /** Repos a client may send with a session, beyond the one it ran in. */
 export const MAX_PROJECT_CANDIDATES = 10;

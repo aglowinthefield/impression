@@ -239,6 +239,84 @@ describe("project attribution", () => {
     ).toBeUndefined();
   });
 
+  describe("repo specifics split off a practice", () => {
+    const practice = {
+      kind: "practice",
+      otherRepos: true,
+      content:
+        "When doing a /nitpick design session, run the app against a fork of production data",
+      confidence: 0.9,
+    };
+    const ports = {
+      content: "In silk, /nitpick sessions on DMs run on ports 3100 and 3101",
+      confidence: 0.9,
+      project: silk.key,
+    };
+    const memory = (content: string) =>
+      t.db.query.memories.findFirst({
+        where: (m, { and, eq }) =>
+          and(eq(m.content, content), eq(m.status, "active")),
+      });
+
+    test("the prompt asks for the split, and for the fact to go to the repo it names", async () => {
+      await extract(await upload([silk]), []);
+      expect(seen[0]?.system).toContain(
+        "write the practice without them, and keep the specifics as a separate fact about that repo",
+      );
+      expect(seen[0]?.system).toContain(
+        "A fact holding the repo specifics split off a practice gets the key of the repository those specifics belong to",
+      );
+    });
+
+    test("the practice is user-scoped and the specifics land in their repo", async () => {
+      const id = await upload([silk]);
+      expect(await extract(id, [practice, ports])).toMatchObject({
+        accepted: 2,
+      });
+      expect(await memory(practice.content)).toMatchObject({
+        scope: "user",
+        projectId: null,
+        tags: ["practice"],
+      });
+      const silkRow = await t.db.query.projects.findFirst({
+        where: (p, { eq }) => eq(p.key, silk.key),
+      });
+      expect(await memory(ports.content)).toMatchObject({
+        scope: "project",
+        projectId: silkRow?.id,
+      });
+    });
+
+    test("when the person can't reach that repo, the fact is dropped and the practice kept", async () => {
+      const id = await upload([silk]);
+      const [s] = await t.db.select().from(sessions).where(eq(sessions.id, id));
+      const p = { ...practice, content: `${practice.content}, always` };
+      const f = { ...ports, content: `${ports.content}, as of now` };
+      reply = JSON.stringify({ memories: [p, f] });
+      const summary = await extractProposals(t.db, providers, {
+        sessionId: id,
+        projectId: s?.projectId as string,
+        projectKey: home.key,
+        owner: "alice",
+        commitSha: "abc1234",
+        transcript: "t",
+        candidates: [silk],
+        access: new Access(false, "u1", new Set([home.key])),
+      });
+      expect(summary).toMatchObject({ accepted: 1, skippedNoAccess: 1 });
+      expect(await memory(p.content)).toMatchObject({ scope: "user" });
+      expect(await memory(f.content)).toBeUndefined();
+    });
+  });
+
+  test("the prompt forbids to-dos anywhere, the person's machine included", async () => {
+    await extract(await upload([silk]), []);
+    for (const system of [seen[0]?.system, SYSTEM])
+      expect(system).toContain(
+        "To-dos: anything the user or the assistant still has to do, fix, update, install or clean up, whether in this repo, another repo or the user's own machine",
+      );
+  });
+
   test("repeat checks run against the picked project", async () => {
     const content = "Silk feeds are cached for an hour";
     const warm = await upload([silk]);

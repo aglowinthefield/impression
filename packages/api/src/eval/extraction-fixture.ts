@@ -8,7 +8,11 @@ export interface ExtractionCase {
   want: string[][];
   /** Wanted groups (as in `want`) that must come back as practices, not facts. */
   practice?: string[][];
+  /** Wanted groups that must come back as facts. A memory matching one is expected to be a fact even if it matches a practice group. */
+  fact?: string[][];
   avoid: RegExp[];
+  /** No practice may match, though a fact may. */
+  avoidInPractice?: RegExp[];
 }
 
 export const extractionCases: ExtractionCase[] = [
@@ -168,5 +172,29 @@ user: ok whatever, continue`,
 user: yes, always use a worktree`,
     want: [],
     avoid: [/worktree/i],
+  },
+  {
+    name: "repo specifics split off a practice into a fact",
+    transcript: `user: /nitpick the DM thread view in silk
+assistant: Starting the dev server on 3000 against the local seed data.
+user: no. whenever i do a nitpick design session, run it against a fork of the production database so the critique is on real content. and for DMs in silk it runs on ports 3100/3101 since the usual dev ports are taken
+assistant: Understood. Forking production and starting silk's web on 3100 and its api on 3101.`,
+    want: [
+      ["nitpick", "fork"],
+      ["3100", "3101"],
+    ],
+    practice: [["nitpick", "fork"]],
+    fact: [["3100", "3101"]],
+    avoid: [],
+    avoidInPractice: [/310[01]/, /\bports?\b/i, /silk/i],
+  },
+  {
+    name: "chore on the user's machine is not kept",
+    transcript: `user: the vault-report skill wrote to ~/Documents/Dev/Impression, thats wrong
+assistant: $DEV_VAULT is set to ~/Documents/Dev in your ~/.zshrc, which is a stale path. The vault now lives at ~/Documents/somewhere.garden.
+user: ugh. i need to update DEV_VAULT in my shell config at some point. for now just move the report to ~/Documents/somewhere.garden/Impression
+assistant: Moved the report to ~/Documents/somewhere.garden/Impression.`,
+    want: [],
+    avoid: [/./],
   },
 ];
