@@ -258,6 +258,7 @@ function gitOut(cwd: string, ...args: string[]): string | null {
       cwd,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
+      windowsHide: true,
     }).trim();
   } catch {
     return null;

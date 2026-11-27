@@ -130,6 +130,8 @@ export async function runHook(
  * Agents give a session-end hook a second or two before cancelling it, so the upload
  * runs in a detached child. The transcript is copied first: the agent may delete it
  * (pi does) or keep appending to it once the hook returns.
+ * On Windows the detached child has no console, so every console program it runs
+ * (git) opens its own window unless it is spawned with `windowsHide: true`.
  */
 function handOff(
   transcript: string,

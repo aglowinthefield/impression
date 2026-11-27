@@ -28,6 +28,7 @@ function changedSince(repo: string, sha: string): Set<string> | null {
         cwd: repo,
         encoding: "utf8",
         stdio: ["ignore", "pipe", "ignore"],
+        windowsHide: true,
         maxBuffer: 64 * 1024 * 1024,
       },
     );
