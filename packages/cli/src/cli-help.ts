@@ -1,4 +1,4 @@
-// House CLI help, shared in shape with bakery-cli and unconscious (house-style's references/cli.md).
+// House CLI help, shared in shape with alice and unconscious (house-style's references/cli.md).
 // Layout and colour only on a terminal, so agents and scripts that capture the output get plain
 // text. NO_COLOR drops the colour but keeps the layout; FORCE_COLOR wins over both.
 
