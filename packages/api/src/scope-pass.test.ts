@@ -17,6 +17,7 @@ import {
   projects,
   sessions,
   usageEvents,
+  users,
 } from "./db/schema.js";
 import { startDreamSchedule, SWEEP_MS } from "./dream-schedule.js";
 import { logEvent } from "./events.js";
@@ -30,6 +31,8 @@ import { createMemory } from "./memories.js";
 import type { CompleteRequest } from "./providers/index.js";
 import {
   parseScopePass,
+  type RepoSource,
+  SCOPE_PASS_MAX_ATTEMPTS,
   SCOPE_PASS_OPERATION,
   sweepScopePass,
 } from "./scope-pass.js";
@@ -51,6 +54,16 @@ const SILK = "github.com/alice/silk";
 const OTHER = "github.com/alice/other";
 const STRANGER = "github.com/someone/private";
 let silkId: string;
+let strangerId: string;
+
+/** gina signs in with GitHub, so she reaches only the repos GitHub lists for her now. */
+let ginaRepos: Set<string> | Error;
+const repos: RepoSource = {
+  async reposFor() {
+    if (ginaRepos instanceof Error) throw ginaRepos;
+    return ginaRepos;
+  },
+};
 
 beforeAll(async () => {
   t = await createTestDb();
@@ -96,10 +109,20 @@ beforeAll(async () => {
     ])
     .returning();
   silkId = p?.id as string;
+  strangerId = (
+    await t.db.select().from(projects).where(eq(projects.key, STRANGER))
+  )[0]?.id as string;
+  const [gina] = await t.db
+    .insert(users)
+    .values({ githubId: 4242, login: "gina" })
+    .returning();
+  await createToken(t.db, "gina", { userId: gina?.id });
+  await createToken(t.db, "bob");
 });
 afterAll(() => t.drop());
 beforeEach(async () => {
   calls = [];
+  ginaRepos = new Set([SILK]);
   reply = () => JSON.stringify({ results: [] });
   await t.db.delete(memoryEvents);
   await t.db.delete(memories);
@@ -107,13 +130,13 @@ beforeEach(async () => {
   await t.db.delete(usageEvents);
 });
 
-/** A session alice ran in silk that also touched `touched`. */
-async function session(touched: string[] = []) {
+/** A session alice (or `owner`) ran in silk that also touched `touched`. */
+async function session(touched: string[] = [], owner = "alice") {
   const [s] = await t.db
     .insert(sessions)
     .values({
       projectId: silkId,
-      owner: "alice",
+      owner,
       agent: "pi",
       transcript: "x",
       candidates: touched.map((key) => ({
@@ -148,12 +171,14 @@ async function legacy(
   return m?.id as string;
 }
 
-const legacyPractice = (content: string, sessionId?: string) =>
+const legacyPractice = (content: string, sessionId?: string, owner = "alice") =>
   legacy(content, {
     scope: "user",
     projectId: null,
     tags: [PRACTICE_TAG],
     sessionId,
+    owner,
+    author: owner,
   });
 
 const row = async (id: string) =>
@@ -232,21 +257,10 @@ describe("AC4: the pass applies the extraction rules to memories stored before t
   });
 
   test("asks with extraction's own rules and the repos the practice may name", async () => {
-    const s = await session([OTHER, STRANGER]);
-    await legacyPractice(NITPICK, s);
-    // Alice stored a memory in OTHER, so she could reach it.
-    const [other] = await t.db
-      .select()
-      .from(projects)
-      .where(eq(projects.key, OTHER));
-    await t.db.insert(memories).values({
-      scope: "project",
-      projectId: other?.id,
-      owner: "alice",
-      author: "alice",
-      content: "A fact in other.",
-    });
-    await sweepScopePass(t.db, providers);
+    ginaRepos = new Set([SILK, OTHER]);
+    const s = await session([OTHER, STRANGER], "gina");
+    await legacyPractice(NITPICK, s, "gina");
+    await sweepScopePass(t.db, providers, { repos });
     expect(calls).toHaveLength(1);
     const req = calls[0] as CompleteRequest;
     // The same wording extraction uses, not a copy that could drift from it.
@@ -256,7 +270,7 @@ describe("AC4: the pass applies the extraction rules to memories stored before t
     expect(req.system).toContain(PRACTICE_SPECIFICS_RULE);
     expect(req.prompt).toContain(`${SILK} (where it was learned)`);
     expect(req.prompt).toContain(OTHER);
-    // A repo alice never stored a session or memory in is not offered.
+    // A repo gina can't access now is not offered.
     expect(req.prompt).not.toContain(STRANGER);
   });
 
@@ -283,8 +297,8 @@ describe("AC4: the pass applies the extraction rules to memories stored before t
   });
 
   test("a fact for a repo the person can't reach is dropped and the practice still split", async () => {
-    const s = await session([STRANGER]);
-    const id = await legacyPractice(NITPICK, s);
+    const s = await session([STRANGER], "gina");
+    const id = await legacyPractice(NITPICK, s, "gina");
     reply = (p) =>
       JSON.stringify({
         results: [
@@ -297,7 +311,7 @@ describe("AC4: the pass applies the extraction rules to memories stored before t
           },
         ],
       });
-    const [r] = await sweepScopePass(t.db, providers);
+    const [r] = await sweepScopePass(t.db, providers, { repos });
     expect(r).toMatchObject({ split: 1, factsDropped: 1 });
     const old = await row(id);
     expect(old?.status).toBe("superseded");
@@ -371,6 +385,113 @@ describe("AC4: the pass applies the extraction rules to memories stored before t
   });
 });
 
+describe("AC4: the pass acts only where the person has access now", () => {
+  const split = (project: string) => (p: string) =>
+    JSON.stringify({
+      results: [
+        {
+          id: refOf(p, "/nitpick"),
+          action: "split",
+          practice: NITPICK_CUT,
+          fact: NITPICK_FACT,
+          project,
+        },
+      ],
+    });
+  const factStored = async () =>
+    (await t.db.select().from(memories)).some(
+      (m) => m.content === NITPICK_FACT,
+    );
+
+  test("a repo the person once stored in but can't access now gets no fact", async () => {
+    // gina stored a memory in OTHER before, but GitHub no longer lists it for her.
+    const [other] = await t.db
+      .select()
+      .from(projects)
+      .where(eq(projects.key, OTHER));
+    await t.db.insert(memories).values({
+      scope: "project",
+      projectId: other?.id,
+      owner: "gina",
+      author: "gina",
+      content: "A fact in other.",
+    });
+    const s = await session([OTHER], "gina");
+    const id = await legacyPractice(NITPICK, s, "gina");
+    reply = split(OTHER);
+    const [r] = await sweepScopePass(t.db, providers, { repos });
+    expect(calls[0]?.prompt).not.toContain(OTHER);
+    expect(r).toMatchObject({ split: 1, factsDropped: 1 });
+    expect((await row(id))?.status).toBe("superseded");
+    expect(await factStored()).toBe(false);
+  });
+
+  test("when current access can't be read, the fact is dropped and the practice still split", async () => {
+    ginaRepos = new Error("GitHub is down");
+    const s = await session([], "gina");
+    const id = await legacyPractice(NITPICK, s, "gina");
+    reply = split(SILK);
+    const [r] = await sweepScopePass(t.db, providers, { repos });
+    expect(calls[0]?.prompt).not.toContain(SILK);
+    expect(r).toMatchObject({ split: 1, factsDropped: 1 });
+    const old = await row(id);
+    expect(old?.status).toBe("superseded");
+    expect((await row(old?.supersededBy as string))?.content).toBe(NITPICK_CUT);
+    expect(await factStored()).toBe(false);
+  });
+
+  test("memories in a project the owner can't access now are neither read nor changed", async () => {
+    const hidden = await legacy(`${CHORE} private`, {
+      projectId: strangerId,
+      owner: "gina",
+      author: "gina",
+    });
+    const seen = await legacy(CHORE, { owner: "gina", author: "gina" });
+    reply = (p) =>
+      JSON.stringify({
+        results: [{ id: refOf(p, "DEV_VAULT"), action: "retire" }],
+      });
+    await sweepScopePass(t.db, providers, { repos });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.prompt).not.toContain("private");
+    expect((await row(seen))?.status).toBe("retired");
+    expect(await row(hidden)).toMatchObject({
+      status: "active",
+      scopeCheckedAt: null,
+    });
+    // Nor does it come back to them on the next sweep.
+    calls = [];
+    expect(await sweepScopePass(t.db, providers, { repos })).toEqual([]);
+    expect(calls).toHaveLength(0);
+  });
+
+  test("when current access can't be read, only memories outside any project are checked", async () => {
+    ginaRepos = new Error("GitHub session expired");
+    const inSilk = await legacy(`${CHORE} silk`, {
+      owner: "gina",
+      author: "gina",
+    });
+    const mine = await legacy(CHORE, {
+      scope: "user",
+      projectId: null,
+      owner: "gina",
+      author: "gina",
+    });
+    reply = (p) =>
+      JSON.stringify({
+        results: [{ id: refOf(p, "DEV_VAULT"), action: "retire" }],
+      });
+    await sweepScopePass(t.db, providers, { repos });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.prompt).not.toContain("silk");
+    expect((await row(mine))?.status).toBe("retired");
+    expect(await row(inSilk)).toMatchObject({
+      status: "active",
+      scopeCheckedAt: null,
+    });
+  });
+});
+
 describe("AC5: Activity shows the pass's changes, which can be undone", () => {
   async function passEntries() {
     const r = await call("GET", "/activity?source=pass");
@@ -434,6 +555,37 @@ describe("AC5: Activity shows the pass's changes, which can be undone", () => {
       200,
     );
     expect((await row(chore))?.status).toBe("active");
+  });
+
+  test("undoing an earlier merge never rewrites the practice the pass superseded", async () => {
+    const s = await session();
+    const id = await legacyPractice(NITPICK, s);
+    const merged = await logEvent(
+      t.db,
+      id,
+      "merged",
+      { actor: "extraction", principal: "alice" },
+      { before: "Older practice text.", after: NITPICK },
+    );
+    reply = (p) =>
+      JSON.stringify({
+        results: [
+          {
+            id: refOf(p, "/nitpick"),
+            action: "split",
+            practice: NITPICK_CUT,
+            project: SILK,
+          },
+        ],
+      });
+    await sweepScopePass(t.db, providers);
+    expect((await row(id))?.status).toBe("superseded");
+
+    expect((await call("POST", `/activity/${merged}/undo`)).status).toBe(409);
+    expect(await row(id)).toMatchObject({
+      status: "superseded",
+      content: NITPICK,
+    });
   });
 
   test("a sweep that changes nothing writes no Activity entry", async () => {
@@ -584,6 +736,51 @@ describe("AC6: each memory is checked at most once", () => {
     expect((await row(edited))?.scopeCheckedAt).not.toBeNull();
   });
 
+  test("a memory the person changed with no event (tags only) is skipped", async () => {
+    const id = await legacy(CHORE);
+    const res = await app.request(`/api/memories/${id}`, {
+      method: "PATCH",
+      headers: {
+        authorization: `Bearer ${alice}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ tags: ["shell"] }),
+    });
+    expect(res.status).toBe(200);
+    expect(
+      await t.db
+        .select()
+        .from(memoryEvents)
+        .where(eq(memoryEvents.memoryId, id)),
+    ).toHaveLength(0);
+    reply = (p) =>
+      JSON.stringify({
+        results: [{ id: refOf(p, "DEV_VAULT"), action: "retire" }],
+      });
+    await sweepScopePass(t.db, providers);
+    expect(calls).toHaveLength(0);
+    expect(await row(id)).toMatchObject({ status: "active", tags: ["shell"] });
+  });
+
+  test("a memory the person flagged before the release is skipped", async () => {
+    const flagged = await legacy(`${CHORE} flagged`);
+    await logEvent(
+      t.db,
+      flagged,
+      "flagged",
+      { actor: "person", principal: "alice", reason: "old" },
+      {},
+    );
+    reply = (p) =>
+      JSON.stringify({
+        results: [{ id: refOf(p, "DEV_VAULT"), action: "retire" }],
+      });
+    const [r] = await sweepScopePass(t.db, providers);
+    expect(r).toMatchObject({ skipped: 1 });
+    expect(calls).toHaveLength(0);
+    expect((await row(flagged))?.status).toBe("active");
+  });
+
   test("a memory the person edits while its batch is with the model is left for the next batch", async () => {
     const id = await legacy(CHORE);
     reply = async (p) => {
@@ -613,6 +810,54 @@ describe("AC6: each memory is checked at most once", () => {
     expect(calls).toHaveLength(0);
     expect((await row(id))?.status).toBe("active");
     expect((await row(id))?.scopeCheckedAt).not.toBeNull();
+  });
+});
+
+describe("a reply the pass can't read is retried a few times, then given up", () => {
+  test("after the last unreadable reply the batch is marked checked unchanged and never billed again", async () => {
+    const id = await legacy(CHORE);
+    reply = () => "sorry, I can't help with that";
+    for (let i = 0; i < SCOPE_PASS_MAX_ATTEMPTS; i++) {
+      expect((await row(id))?.scopeCheckedAt).toBeNull();
+      await sweepScopePass(t.db, providers);
+    }
+    expect(calls).toHaveLength(SCOPE_PASS_MAX_ATTEMPTS);
+    expect(await row(id)).toMatchObject({
+      status: "active",
+      scopeAttempts: SCOPE_PASS_MAX_ATTEMPTS,
+    });
+    expect((await row(id))?.scopeCheckedAt).not.toBeNull();
+    expect(await t.db.select().from(memoryEvents)).toHaveLength(0);
+    calls = [];
+    expect(await sweepScopePass(t.db, providers)).toEqual([]);
+    expect(calls).toHaveLength(0);
+  });
+
+  test("one person's failing batch doesn't hold up anyone else's", async () => {
+    const stuck = await legacy(`${CHORE} alice`);
+    await t.db.execute(
+      sql`UPDATE memories SET created_at = now() - interval '1 day' WHERE id = ${stuck}`,
+    );
+    const bobs = await legacy(`${CHORE} bob`, {
+      scope: "user",
+      projectId: null,
+      owner: "bob",
+      author: "bob",
+    });
+    reply = (p) =>
+      p.includes("alice")
+        ? "not json"
+        : JSON.stringify({
+            results: [{ id: refOf(p, "DEV_VAULT"), action: "retire" }],
+          });
+    await sweepScopePass(t.db, providers);
+    expect(calls).toHaveLength(2);
+    expect((await row(bobs))?.status).toBe("retired");
+    expect(await row(stuck)).toMatchObject({
+      status: "active",
+      scopeCheckedAt: null,
+      scopeAttempts: 1,
+    });
   });
 });
 

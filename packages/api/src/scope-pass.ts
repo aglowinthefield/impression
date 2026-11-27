@@ -1,7 +1,8 @@
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, type SQL, sql } from "drizzle-orm";
 import { z } from "zod";
+import { Access, ADMIN_ACCESS, canReach, memoryVisible } from "./access.js";
 import type { Db, Tx } from "./db/client.js";
-import { memories } from "./db/schema.js";
+import { apiTokens, memories } from "./db/schema.js";
 import { userOf } from "./dream-schedule.js";
 import { type EventSource, logEvent } from "./events.js";
 import {
@@ -22,6 +23,12 @@ import { withUsageContext } from "./usage.js";
  * to each memory with a null `scope_checked_at`, one person's memories at a time,
  * and sets that mark in the same transaction as its change, or alone when nothing
  * changes. Memories stored since get the mark at insert, so they are never checked.
+ *
+ * It acts only where the owner has access now, read the way a request from them
+ * would be: an admin token sees every project, a GitHub sign-in sees the repos
+ * GitHub lists for it today. When that can't be read (no live token, GitHub
+ * session gone or GitHub down), it checks only memories outside any project and
+ * splits facts out to nowhere, so they are dropped (memories/I2, memories/I7).
  */
 
 /** Memories sent to the model in one call. */
@@ -30,6 +37,8 @@ export const SCOPE_PASS_BATCH = 20;
 export const SCOPE_PASS_BATCHES_PER_SWEEP = 10;
 /** Usage operation every model call of the pass is recorded under. */
 export const SCOPE_PASS_OPERATION = "scope-pass";
+/** Unreadable replies for one batch before its memories are marked checked unchanged. */
+export const SCOPE_PASS_MAX_ATTEMPTS = 3;
 
 const LIVE = ["active", "possibly_stale"] as const;
 
@@ -117,31 +126,79 @@ export interface ScopePassResult {
   kept: number;
   retired: number;
   split: number;
-  /** Splits whose fact had no repo the person can reach, so only the practice changed. */
+  /** Splits whose fact had no repo the person can access now, so only the practice changed. */
   factsDropped: number;
-  /** Edited by their author before the pass reached them, so left as they are. */
+  /** Changed by their author before the pass reached them, so left as they are. */
   skipped: number;
+}
+
+/** Where repo access comes from: `RepoAccess` in the app, a fake in tests. */
+export interface RepoSource {
+  reposFor(userId: string): Promise<Set<string>>;
+}
+
+/**
+ * What a request from `owner` would be allowed to see now, as `requireAuth`
+ * works it out from their live token. Null when that can't be established: no
+ * live token, or their GitHub access can't be read.
+ */
+export async function ownerAccess(
+  db: Db,
+  owner: string,
+  repos?: RepoSource,
+): Promise<Access | null> {
+  const tokens = await db
+    .select({ userId: apiTokens.userId })
+    .from(apiTokens)
+    .where(and(eq(apiTokens.name, owner), isNull(apiTokens.revokedAt)));
+  if (tokens.length === 0) return null;
+  const userId = tokens.find((t) => t.userId)?.userId;
+  if (!userId) return ADMIN_ACCESS();
+  // Without GitHub sign-in configured, a GitHub user's token reaches nothing.
+  if (!repos) return new Access(false, userId, new Set());
+  try {
+    return new Access(false, userId, await repos.reposFor(userId));
+  } catch (err) {
+    console.error(
+      "scope pass couldn't read repo access:",
+      err instanceof Error ? err.message : err,
+    );
+    return null;
+  }
+}
+
+/** SQL for "the pass may read and change this memory of the owner's": visible to them now. */
+async function checkable(
+  db: Db,
+  access: Access | null,
+  owner: string,
+  alias: string,
+): Promise<SQL> {
+  return access
+    ? memoryVisible(db, access, owner, alias)
+    : sql`${sql.raw(alias)}.project_id IS NULL`;
 }
 
 /**
  * The repos a practice's specifics may be filed under: the project of the session
- * it came from, and the other repos that session touched. A repo counts only when
- * the person stored a session or memory there, so a split fact never lands in a
- * project they had no access to (memories/I2, memories/I7).
+ * it came from, and the other repos that session touched, each only when the
+ * owner can access it now (memories/I2, memories/I7).
  */
 async function reposFor(
   db: Db,
   owner: string,
+  access: Access | null,
   sessionIds: string[],
 ): Promise<Map<string, Repo[]>> {
   const out = new Map<string, Repo[]>();
-  if (sessionIds.length === 0) return out;
+  if (sessionIds.length === 0 || !access) return out;
   const sessions = await db.execute<{
     id: string;
     key: string;
+    created_by: string | null;
     candidates: unknown;
   }>(sql`
-    SELECT s.id, p.key, s.candidates FROM sessions s
+    SELECT s.id, p.key, p.created_by, s.candidates FROM sessions s
     JOIN projects p ON p.id = s.project_id
     WHERE s.owner = ${owner}
       AND s.id IN (${sql.join(
@@ -162,24 +219,34 @@ async function reposFor(
     listed.set(s.id, keys);
     for (const k of keys) others.add(k.toLowerCase());
   }
-  const reached = new Map<string, string>();
+  const stored = new Map<string, { key: string; createdBy: string | null }>();
   if (others.size > 0) {
-    const rows = await db.execute<{ key: string }>(sql`
-      SELECT p.key FROM projects p
+    const rows = await db.execute<{ key: string; created_by: string | null }>(
+      sql`
+      SELECT p.key, p.created_by FROM projects p
       WHERE lower(p.key) IN (${sql.join(
         [...others].map((k) => sql`${k}`),
         sql`, `,
-      )})
-        AND (EXISTS (SELECT 1 FROM sessions s WHERE s.project_id = p.id AND s.owner = ${owner})
-          OR EXISTS (SELECT 1 FROM memories m WHERE m.project_id = p.id AND m.owner = ${owner}))`);
-    for (const r of rows) reached.set(r.key.toLowerCase(), r.key);
+      )})`,
+    );
+    for (const r of rows)
+      stored.set(r.key.toLowerCase(), { key: r.key, createdBy: r.created_by });
   }
+  // A repo with no project yet is created on write, as extraction does, if the owner can reach it.
+  const reach = (k: string) => {
+    const p = stored.get(k.toLowerCase());
+    if (p) return access.canSeeKey(p.key, p.createdBy) ? p.key : null;
+    return canReach(access, k) ? k : null;
+  };
   for (const s of sessions) {
+    const own = access.canSeeKey(s.key, s.created_by)
+      ? [{ key: s.key, own: true }]
+      : [];
     const extra = (listed.get(s.id) ?? []).flatMap((k) => {
-      const key = reached.get(k.toLowerCase());
+      const key = reach(k);
       return key ? [{ key, own: false }] : [];
     });
-    out.set(s.id, [{ key: s.key, own: true }, ...extra]);
+    out.set(s.id, [...own, ...extra]);
   }
   return out;
 }
@@ -210,23 +277,19 @@ const tooLong = (text: string, original: string) =>
 class Moved extends Error {}
 
 /**
- * Checks the next batch: the oldest unchecked live memories of one person.
- * Returns null when nothing is left to check. Throws when the model call fails
- * or its reply has no results, leaving the batch unchecked for the next sweep.
+ * Checks the next batch of one person: their oldest unchecked live memories that
+ * `access` (from `ownerAccess`) lets the pass read. Returns null when none is left.
+ * Throws when the model call fails or its reply has no results, leaving the batch
+ * unchecked for the next sweep; after SCOPE_PASS_MAX_ATTEMPTS unreadable replies
+ * its memories are marked checked with no change, so a bad batch isn't billed forever.
  */
 export async function runScopePassBatch(
   db: Db,
   providers: Providers,
+  owner: string,
+  access: Access | null,
   size = SCOPE_PASS_BATCH,
 ): Promise<ScopePassResult | null> {
-  const [next] = await db
-    .select({ owner: memories.owner })
-    .from(memories)
-    .where(and(isNull(memories.scopeCheckedAt), inArray(memories.status, LIVE)))
-    .orderBy(memories.createdAt, memories.id)
-    .limit(1);
-  if (!next) return null;
-  const owner = next.owner;
   const result: ScopePassResult = {
     owner,
     checked: 0,
@@ -237,7 +300,9 @@ export async function runScopePassBatch(
     skipped: 0,
   };
 
-  // The person's own text wins: a memory they edited is theirs, not the pass's to change.
+  // The person's own changes win: a memory they changed is theirs, not the pass's.
+  // Since the release every person write sets the mark itself; this catches what
+  // they did before it, which left a person event.
   const skipped = await db
     .update(memories)
     .set({ scopeCheckedAt: new Date() })
@@ -246,7 +311,8 @@ export async function runScopePassBatch(
         eq(memories.owner, owner),
         isNull(memories.scopeCheckedAt),
         inArray(memories.status, LIVE),
-        sql`EXISTS (SELECT 1 FROM memory_events e WHERE e.memory_id = ${memories.id} AND e.actor = 'person' AND e.kind = 'edited')`,
+        await checkable(db, access, owner, "memories"),
+        sql`EXISTS (SELECT 1 FROM memory_events e WHERE e.memory_id = ${memories.id} AND e.actor = 'person')`,
       ),
     )
     .returning({ id: memories.id });
@@ -260,14 +326,16 @@ export async function runScopePassBatch(
     FROM memories m LEFT JOIN projects p ON p.id = m.project_id
     WHERE m.owner = ${owner} AND m.scope_checked_at IS NULL
       AND m.status IN ('active', 'possibly_stale')
+      AND ${await checkable(db, access, owner, "m")}
     ORDER BY m.created_at, m.id
     LIMIT ${size}`);
-  if (rows.length === 0) return result;
+  if (rows.length === 0) return result.checked > 0 ? result : null;
 
   const isPractice = (r: Row) => r.tags.includes(PRACTICE_TAG);
   const repos = await reposFor(
     db,
     owner,
+    access,
     rows.flatMap((r) => (isPractice(r) && r.session_id ? [r.session_id] : [])),
   );
   const items = rows.map((r, i) => ({
@@ -291,8 +359,25 @@ export async function runScopePassBatch(
     }),
   );
   const verdicts = parseScopePass(reply);
-  if (!verdicts)
+  if (!verdicts) {
+    // Billed but unreadable. Count it, and give up on these memories at the limit.
+    await db
+      .update(memories)
+      .set({
+        scopeAttempts: sql`${memories.scopeAttempts} + 1`,
+        scopeCheckedAt: sql`CASE WHEN ${memories.scopeAttempts} + 1 >= ${SCOPE_PASS_MAX_ATTEMPTS} THEN now() END`,
+      })
+      .where(
+        and(
+          inArray(
+            memories.id,
+            rows.map((r) => r.id),
+          ),
+          isNull(memories.scopeCheckedAt),
+        ),
+      );
     throw new Error("the scope pass got no results from the model");
+  }
 
   const source: EventSource = { actor: "pass", principal: owner };
   for (const item of items) {
@@ -358,8 +443,11 @@ export async function runScopePassBatch(
       const repo = item.repos.find((x) => x.key.toLowerCase() === target);
       const factText = split.fact ? scrub(split.fact).text : "";
       const fact =
-        repo && !isEmptyAfterScrub(factText) && !tooLong(factText, r.content)
-          ? { key: repo.key, text: factText }
+        access &&
+        repo &&
+        !isEmptyAfterScrub(factText) &&
+        !tooLong(factText, r.content)
+          ? { key: repo.key, text: factText, access }
           : null;
       const vectors = await withUsageContext(usage, () =>
         providers.embeddings.embed(fact ? [practice, fact.text] : [practice]),
@@ -371,7 +459,7 @@ export async function runScopePassBatch(
         return [] as number[][];
       });
 
-      await withUsageContext(usage, () =>
+      const stored = await withUsageContext(usage, () =>
         db.transaction(async (tx) => {
           const [ok] = await claim(tx);
           if (!ok) throw new Moved();
@@ -399,7 +487,7 @@ export async function runScopePassBatch(
           await logEvent(tx, keptId, "superseded", source, {
             replaced: [{ id: r.id, content: r.content, status: r.status }],
           });
-          if (!fact) return;
+          if (!fact) return false;
           const added = await createMemory(
             tx,
             providers,
@@ -415,18 +503,20 @@ export async function runScopePassBatch(
               dedup: false,
               anchors: [],
             },
-            undefined,
+            // Checked the way extraction checks it: a repo they can't access refuses it.
+            fact.access,
             { embedding: vectors[1] ?? null, event: false },
           );
           const addedId = added.status === 201 ? added.body.id : undefined;
-          if (!addedId) throw new Error("split fact not stored");
+          if (!addedId) return false;
           await logEvent(tx, addedId, "added", source, {
             splitFrom: r.id,
           });
+          return true;
         }),
       );
       result.split++;
-      if (!fact) result.factsDropped++;
+      if (!stored) result.factsDropped++;
       result.checked++;
     } catch (err) {
       // Changed since the batch read it: the next batch reads it again.
@@ -438,26 +528,47 @@ export async function runScopePassBatch(
 }
 
 /**
- * Runs batches until every memory is checked or `maxBatches` ran. A failed batch
- * is logged and ends the sweep; its memories stay unchecked for the next one.
+ * Runs batches, one person at a time from the one waiting longest, until every
+ * memory the pass may read is checked or `maxBatches` ran. A failed batch is
+ * logged and moves on to the next person; its memories stay unchecked for the
+ * next sweep, up to SCOPE_PASS_MAX_ATTEMPTS unreadable replies.
  */
 export async function sweepScopePass(
   db: Db,
   providers: Providers,
-  opts: { batchSize?: number; maxBatches?: number } = {},
+  opts: { batchSize?: number; maxBatches?: number; repos?: RepoSource } = {},
 ): Promise<ScopePassResult[]> {
   const done: ScopePassResult[] = [];
-  const max = opts.maxBatches ?? SCOPE_PASS_BATCHES_PER_SWEEP;
-  for (let i = 0; i < max; i++) {
-    let r: ScopePassResult | null;
-    try {
-      r = await runScopePassBatch(db, providers, opts.batchSize);
-    } catch (err) {
-      console.error("scope pass batch failed:", err);
-      break;
+  let left = opts.maxBatches ?? SCOPE_PASS_BATCHES_PER_SWEEP;
+  const owners = await db.execute<{ owner: string }>(sql`
+    SELECT owner FROM memories
+    WHERE scope_checked_at IS NULL AND status IN ('active', 'possibly_stale')
+    GROUP BY owner
+    ORDER BY min(created_at), owner`);
+  for (const { owner } of owners) {
+    if (left <= 0) break;
+    const access = await ownerAccess(db, owner, opts.repos);
+    while (left > 0) {
+      left--;
+      let r: ScopePassResult | null;
+      try {
+        r = await runScopePassBatch(
+          db,
+          providers,
+          owner,
+          access,
+          opts.batchSize,
+        );
+      } catch (err) {
+        console.error("scope pass batch failed:", err);
+        break;
+      }
+      if (!r) {
+        left++;
+        break;
+      }
+      done.push(r);
     }
-    if (!r) break;
-    done.push(r);
   }
   return done;
 }

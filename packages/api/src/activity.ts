@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, type SQL, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, ne, type SQL, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import { type Access, findProject, memoryVisible } from "./access.js";
@@ -6,7 +6,7 @@ import type { AuthEnv } from "./auth.js";
 import type { Db, Tx } from "./db/client.js";
 import { anchors, memories, memoryEvents } from "./db/schema.js";
 import { logEvent } from "./events.js";
-import { embedMemory } from "./memories.js";
+import { embedMemory, PERSON_CHECKED } from "./memories.js";
 import type { Providers } from "./providers/index.js";
 
 const PAGE = 50;
@@ -262,7 +262,9 @@ async function reverse(
     case "edited": {
       const content = String(d.before ?? "");
       if (!content) throw new Refused(409, "this entry has no earlier text");
-      await tx
+      // Superseded memories are history (memories/I4). A supersede may be logged
+      // only on its replacement, so the later-change check can miss it.
+      const [live] = await tx
         .update(memories)
         .set({
           content,
@@ -274,7 +276,15 @@ async function reverse(
             ? { status: prev.status, staleReason: prev.staleReason ?? null }
             : {}),
         })
-        .where(eq(memories.id, e.memoryId));
+        .where(
+          and(eq(memories.id, e.memoryId), ne(memories.status, "superseded")),
+        )
+        .returning({ id: memories.id });
+      if (!live)
+        throw new Refused(
+          409,
+          "the memory changed since this entry; undo the later change first",
+        );
       return [{ id: e.memoryId, content }];
     }
     case "rewritten": {
@@ -516,6 +526,11 @@ export function activityRoutes(db: Db, providers: Providers) {
           memoryId: e.ev.memoryId,
           detail,
         });
+        // An undo is the person's change: the one-time scope pass leaves these alone.
+        await tx
+          .update(memories)
+          .set(PERSON_CHECKED)
+          .where(inArray(memories.id, touched));
         const undoId = await logEvent(
           tx,
           e.ev.memoryId,

@@ -88,6 +88,8 @@ export const memories = pgTable(
      * written since follow those rules from extraction on.
      */
     scopeCheckedAt: timestamp({ withTimezone: true }).defaultNow(),
+    /** Replies from that pass's model that couldn't be read for this memory's batch. It gives up at a few. */
+    scopeAttempts: integer().notNull().default(0),
     search: tsvector().generatedAlwaysAs(
       (): ReturnType<typeof sql> => sql`to_tsvector('english', content)`,
     ),

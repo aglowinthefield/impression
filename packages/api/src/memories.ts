@@ -462,6 +462,14 @@ export async function createMemory(
   };
 }
 
+/**
+ * Set on every write a person makes to a memory, so the one-time scope pass
+ * (scope-pass.ts) leaves what they changed alone, even when the change logs no event.
+ */
+export const PERSON_CHECKED = {
+  scopeCheckedAt: sql`coalesce(${memories.scopeCheckedAt}, now())`,
+};
+
 export function memoryRoutes(db: Db, providers: Providers) {
   const app = new Hono<AuthEnv>();
 
@@ -677,6 +685,7 @@ export function memoryRoutes(db: Db, providers: Providers) {
           ...move,
           ...(b.tags ? { tags: [...new Set(b.tags)] } : {}),
           updatedAt: new Date(),
+          ...PERSON_CHECKED,
           // Rewriting a flagged memory is the "update" review outcome.
           ...(contentChanged && existing.status === "possibly_stale"
             ? { status: "active" as const, staleReason: null }
@@ -756,8 +765,14 @@ export function memoryRoutes(db: Db, providers: Providers) {
                 status: "possibly_stale",
                 staleReason: b.reason,
                 updatedAt: new Date(),
+                ...PERSON_CHECKED,
               }
-            : { status: "active", staleReason: null, updatedAt: new Date() },
+            : {
+                status: "active",
+                staleReason: null,
+                updatedAt: new Date(),
+                ...PERSON_CHECKED,
+              },
         )
         .where(eq(memories.id, id))
         .returning();
@@ -805,7 +820,7 @@ export function memoryRoutes(db: Db, providers: Providers) {
     const m = await db.transaction(async (tx) => {
       const [m] = await tx
         .update(memories)
-        .set({ status: "retired", updatedAt: new Date() })
+        .set({ status: "retired", updatedAt: new Date(), ...PERSON_CHECKED })
         .where(eq(memories.id, id))
         .returning();
       if (existing.status !== "retired")
