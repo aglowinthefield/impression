@@ -179,9 +179,9 @@ user: yes, always use a worktree`,
 assistant: Starting the dev server on 3000 against the local seed data.
 user: no. whenever i do a nitpick design session, run it against a fork of the production database so the critique is on real content. and for DMs in silk it runs on ports 3100/3101 since the usual dev ports are taken
 assistant: Understood. Forking production and starting silk's web on 3100 and its api on 3101.`,
-    want: [["nitpick", "fork"], ["3100"]],
+    want: [["nitpick", "fork"], ["3100", "3101"]],
     practice: [["nitpick", "fork"]],
-    fact: [["3100"]],
+    fact: [["3100", "3101"]],
     avoid: [],
     avoidInPractice: [/310[01]/, /\bports?\b/i, /silk/i],
   },
