@@ -20,6 +20,7 @@ export const STRICT_EXTRA = 0.1;
 
 const body = z.object({
   query: z.string().trim().min(1).max(2000),
+  /** With a project and no scope, the person's user-scoped memories are searched too. "project" leaves them out. */
   scope: z.enum(["user", "project"]).optional(),
   project: z.string().min(1).optional(),
   tag: z.string().min(1).optional(),
@@ -33,7 +34,7 @@ const body = z.object({
   minSimilarity: z.number().min(0).max(1).optional(),
   /** Raises the model's floor by STRICT_EXTRA. For injection into a prompt, where a wrong memory costs more than a missed one. */
   strict: z.boolean().optional(),
-  /** The agent's own session id, recorded with what is served. Ignored when malformed. */
+  /** The agent's own session id, recorded with what is served. Memories session start gave it are left out. Ignored when malformed. */
   session: z.string().min(1).max(200).optional().catch(undefined),
   agent: z.string().min(1).max(100).optional().catch(undefined),
   /** "prompt" when a hook injects the results into a prompt, "web" for a person in the dashboard (not logged), otherwise an agent's search. */
@@ -75,8 +76,19 @@ export function searchRoutes(db: Db, providers: Providers) {
     if (q.project) {
       const p = await findProject(db, c.get("access"), q.project);
       projectId = p?.id ?? null;
-      conds.push(p ? sql`m.project_id = ${p.id}` : sql`false`);
+      const inProject = p ? sql`m.project_id = ${p.id}` : sql`false`;
+      // The person's own user-scoped memories (practices among them) apply in every project.
+      conds.push(
+        q.scope === "project"
+          ? inProject
+          : sql`(${inProject} OR (m.project_id IS NULL AND m.scope = 'user' AND m.owner = ${principal}))`,
+      );
     }
+    // What session start already gave this session is in its context; don't repeat it.
+    if (q.session)
+      conds.push(
+        sql`NOT EXISTS (SELECT 1 FROM memory_serves v WHERE v.memory_id = m.id AND v.session_key = ${q.session} AND v.source = 'core')`,
+      );
     if (q.path) {
       const path = q.path.replace(/^\/+|\/+$/g, "");
       conds.push(

@@ -370,12 +370,31 @@ test("a practice is accepted user-scoped and follows the user to other projects"
     anchors: [],
   });
 
-  // It shows up at session start in a project the session never touched, first in the list.
-  const core = (await (
-    await call("GET", "/core?project=github.com%2Facme%2Fother")
-  ).json()) as { items: { content: string; tags: string[] }[] };
-  expect(core.items[0]?.content).toContain("nitpick");
-  expect(core.items[0]?.tags).toEqual(["practice"]);
+  // Session start serves it in the project it was learned in, not in one the session never touched.
+  const core = async (key: string) =>
+    (
+      (await (
+        await call("GET", `/core?project=${encodeURIComponent(key)}`)
+      ).json()) as { items: { content: string }[] }
+    ).items.map((i) => i.content);
+  expect(await core(project.key)).toContainEqual(
+    expect.stringContaining("nitpick"),
+  );
+  expect(await core("github.com/acme/other")).not.toContainEqual(
+    expect.stringContaining("nitpick"),
+  );
+  // There a prompt search finds it when it comes up.
+  const found = (await (
+    await call("POST", "/search", {
+      query: "nitpick design session production data",
+      project: "github.com/acme/other",
+      strict: true,
+      source: "prompt",
+    })
+  ).json()) as { results: { content: string }[] };
+  expect(found.results.map((r) => r.content)).toContainEqual(
+    expect.stringContaining("nitpick"),
+  );
 
   // Tags can be filtered and edited.
   const byTag = (await (

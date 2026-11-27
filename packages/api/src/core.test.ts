@@ -1,8 +1,8 @@
 import { eq } from "drizzle-orm";
-import { afterAll, beforeAll, expect, test } from "vitest";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { createApp } from "./app.js";
 import { createToken } from "./auth.js";
-import { memoryServes } from "./db/schema.js";
+import { memories, memoryServes, projects, sessions } from "./db/schema.js";
 import { createTestDb } from "./test-db.js";
 import { fakeProviders } from "./test-providers.js";
 
@@ -48,25 +48,140 @@ const core = async (qs = "", tok = token) =>
     tokens: number;
   };
 
-test("practices first, then confidence; stale and superseded are left out", async () => {
+test("confidence, then newest; stale and superseded are left out", async () => {
   await add("low", { confidence: 0.2 });
   await add("high", { confidence: 0.95 });
-  await add("practice one", {
-    scope: "user",
-    tags: ["practice"],
-    confidence: 0.1,
-  });
   const stale = await add("stale one", { confidence: 0.99 });
   await call("PUT", `/memories/${stale}/staleness`, {
     stale: true,
     reason: "gone",
   });
   const r = await core();
-  expect(r.items.map((i) => i.content)).toEqual([
-    "practice one",
-    "high",
-    "low",
-  ]);
+  expect(r.items.map((i) => i.content)).toEqual(["high", "low"]);
+});
+
+describe("practices", () => {
+  // Carol keeps her user-scoped memories apart from the other tests' ones.
+  let carol: string;
+  beforeAll(async () => {
+    carol = await createToken(t.db, "carol");
+  });
+  /** Content that costs exactly 25 tokens: 92 characters is 23, plus 2. */
+  const sized = (label: string) => label.padEnd(92, ".");
+  const addAs = async (tok: string, body: Record<string, unknown>) =>
+    (
+      (await (await call("POST", "/memories", body, tok)).json()) as {
+        id: string;
+      }
+    ).id;
+  const projectId = async (key: string) => {
+    const [p] = await t.db.select().from(projects).where(eq(projects.key, key));
+    if (!p) throw new Error(`no project ${key}`);
+    return p.id;
+  };
+  /** A practice of carol's, learned in a session in `key`'s project. */
+  const practiceFrom = async (key: string, content: string) => {
+    const id = await addAs(carol, {
+      scope: "user",
+      tags: ["practice"],
+      content,
+      confidence: 0.99,
+      dedup: false,
+    });
+    const [s] = await t.db
+      .insert(sessions)
+      .values({
+        projectId: await projectId(key),
+        owner: "carol",
+        transcript: "",
+      })
+      .returning();
+    await t.db
+      .update(memories)
+      .set({ sessionId: s?.id })
+      .where(eq(memories.id, id));
+    return id;
+  };
+  const facts = async (key: string, n: number) => {
+    for (let i = 0; i < n; i++)
+      await addAs(carol, {
+        scope: "project",
+        project: { key },
+        content: sized(`${key} fact ${i}`),
+        dedup: false,
+      });
+  };
+  const coreAs = async (key: string, budget: number) =>
+    (await (
+      await call(
+        "GET",
+        `/core?project=${key}&budget=${budget}`,
+        undefined,
+        carol,
+      )
+    ).json()) as {
+      items: { content: string; tags: string[] }[];
+      tokens: number;
+    };
+  const split = (r: Awaited<ReturnType<typeof coreAs>>) => ({
+    practices: r.items.filter((i) => i.tags.includes("practice")).length,
+    others: r.items.filter((i) => !i.tags.includes("practice")).length,
+  });
+
+  test("take at most a quarter of the budget when other memories fill the rest", async () => {
+    const key = "github.com/acme/share";
+    await facts(key, 10);
+    for (let i = 0; i < 5; i++)
+      await practiceFrom(key, sized(`share practice ${i}`));
+    const r = await coreAs(key, 200);
+    // 25 tokens each: the others get 150, practices the 50 left.
+    expect(split(r)).toEqual({ practices: 2, others: 6 });
+    expect(r.tokens).toBe(200);
+  });
+
+  test("may use room the other memories leave unused", async () => {
+    const key = "github.com/acme/roomy";
+    await facts(key, 2);
+    for (let i = 0; i < 5; i++)
+      await practiceFrom(key, sized(`roomy practice ${i}`));
+    expect(split(await coreAs(key, 200))).toEqual({ practices: 5, others: 2 });
+  });
+
+  test("other memories take room practices don't need", async () => {
+    const key = "github.com/acme/sparse";
+    await facts(key, 10);
+    await practiceFrom(key, sized("sparse practice"));
+    expect(split(await coreAs(key, 200))).toEqual({ practices: 1, others: 7 });
+  });
+
+  test("only those learned here or found by a prompt search here are served", async () => {
+    const here = "github.com/acme/here";
+    const there = "github.com/acme/there";
+    await facts(here, 1);
+    await facts(there, 1);
+    await practiceFrom(here, "learned here");
+    await practiceFrom(there, "learned elsewhere");
+    // No words in common, so each search returns only its own practice.
+    const promptedHere = "always alphabetize imports";
+    const promptedThere = "never squash release commits";
+    const searchedHere = "prefer tabs inside makefiles";
+    for (const content of [promptedHere, promptedThere, searchedHere])
+      await addAs(carol, {
+        scope: "user",
+        tags: ["practice"],
+        content,
+        dedup: false,
+      });
+    const search = (query: string, project: string, source: string) =>
+      call("POST", "/search", { query, project, source, strict: true }, carol);
+    await search(promptedHere, here, "prompt");
+    await search(promptedThere, there, "prompt");
+    await search(searchedHere, here, "search");
+    const served = (await coreAs(here, 2000)).items
+      .filter((i) => i.tags.includes("practice"))
+      .map((i) => i.content);
+    expect(served.sort()).toEqual([promptedHere, "learned here"]);
+  });
 });
 
 test("respects the token budget", async () => {

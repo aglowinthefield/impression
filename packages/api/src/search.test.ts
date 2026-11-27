@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { createApp } from "./app.js";
 import { createToken } from "./auth.js";
-import { memories, memoryServes } from "./db/schema.js";
+import { memories, memoryServes, projects } from "./db/schema.js";
 import { toTsQuery } from "./search.js";
 import { createTestDb } from "./test-db.js";
 import { fakeProviders } from "./test-providers.js";
@@ -157,6 +157,8 @@ describe("hybrid search", () => {
     const r = await search(alice, {
       query: "???",
       project: "github.com/acme/empty",
+      // The fake embedder gives "???" a zero vector, which every memory passes the floor against.
+      scope: "project",
     });
     expect(r.results).toEqual([]);
   });
@@ -192,7 +194,15 @@ describe("filters", () => {
       query: "narwhal",
       project: "github.com/acme/other",
     });
-    expect(inOther.results.map((r) => r.id)).toEqual([p.id]);
+    expect(inOther.results.map((r) => r.id).sort()).toEqual(
+      [p.id, u.id].sort(),
+    );
+    const projectOnly = await search(alice, {
+      query: "narwhal",
+      project: "github.com/acme/other",
+      scope: "project",
+    });
+    expect(projectOnly.results.map((r) => r.id)).toEqual([p.id]);
     const userOnly = await search(alice, { query: "narwhal", scope: "user" });
     expect(userOnly.results.map((r) => r.id)).toEqual([u.id]);
   });
@@ -333,5 +343,154 @@ describe("serve log", () => {
   test("a bad source is rejected", async () => {
     const res = await call(alice, "/search", { query: "x", source: "core" });
     expect(res.status).toBe(400);
+  });
+});
+
+describe("user-scoped memories in a project search", () => {
+  const key = "github.com/acme/practices";
+  let carol: string;
+  beforeAll(async () => {
+    carol = await createToken(t.db, "carol");
+  });
+
+  test("a strict prompt search returns them, ranked with project memories", async () => {
+    const fact = await add(carol, {
+      scope: "project",
+      project: { key },
+      content: "kangaroo rules for the build",
+      dedup: false,
+    });
+    const practice = await add(carol, {
+      scope: "user",
+      tags: ["practice"],
+      content: "kangaroo pouch rules",
+      dedup: false,
+    });
+    const theirs = await add(bob, {
+      scope: "user",
+      content: "kangaroo pouch rules",
+      dedup: false,
+    });
+    const r = await search(carol, {
+      query: "kangaroo pouch rules",
+      project: key,
+      strict: true,
+      source: "prompt",
+    });
+    // The closer match ranks first, whichever kind it is.
+    expect(r.results.map((x) => x.id)).toEqual([practice.id, fact.id]);
+    expect(r.results.map((x) => x.id)).not.toContain(theirs.id);
+    const projectOnly = await search(carol, {
+      query: "kangaroo pouch rules",
+      project: key,
+      strict: true,
+      scope: "project",
+    });
+    expect(projectOnly.results.map((x) => x.id)).toEqual([fact.id]);
+  });
+
+  test("they pass the same strict floor as project memories", async () => {
+    const filler = "alpha beta gamma delta epsilon zeta eta theta iota kappa";
+    const fact = await add(carol, {
+      scope: "project",
+      project: { key },
+      content: `wallaby ${filler} lambda`,
+      dedup: false,
+    });
+    const practice = await add(carol, {
+      scope: "user",
+      tags: ["practice"],
+      content: `wallaby ${filler} omicron`,
+      dedup: false,
+    });
+    const query = "wallaby hops far";
+    const strict = await search(carol, { query, project: key, strict: true });
+    expect(strict.results).toEqual([]);
+    const loose = await search(carol, {
+      query,
+      project: key,
+      minSimilarity: 0.1,
+    });
+    expect(loose.results.map((x) => x.id).sort()).toEqual(
+      [fact.id, practice.id].sort(),
+    );
+  });
+
+  test("the MCP search tool's request (project, no scope) returns them", async () => {
+    const practice = await add(carol, {
+      scope: "user",
+      tags: ["practice"],
+      content: "echidna spines need gloves",
+      dedup: false,
+    });
+    const r = await search(carol, {
+      query: "echidna spines",
+      project: key,
+      limit: 5,
+    });
+    expect(r.results.map((x) => x.id)).toEqual([practice.id]);
+  });
+
+  test("a prompt search leaves out what session start gave the same session", async () => {
+    const given = await add(carol, {
+      scope: "project",
+      project: { key },
+      content: "platypus eggs hatch in burrows",
+      dedup: false,
+    });
+    const core = (await (
+      await call(
+        carol,
+        `/core?project=${key}&session=sess-skip&budget=20000`,
+        undefined,
+        "GET",
+      )
+    ).json()) as { items: { id: string }[] };
+    expect(core.items.map((i) => i.id)).toContain(given.id);
+    const prompt = (session: string) =>
+      search(carol, {
+        query: "platypus eggs burrows",
+        project: key,
+        strict: true,
+        source: "prompt",
+        session,
+      });
+    expect((await prompt("sess-skip")).results.map((x) => x.id)).not.toContain(
+      given.id,
+    );
+    expect((await prompt("sess-other")).results.map((x) => x.id)).toContain(
+      given.id,
+    );
+  });
+
+  test("a practice a prompt search returns is logged like a project memory", async () => {
+    const practice = await add(carol, {
+      scope: "user",
+      tags: ["practice"],
+      content: "quoll traps need checking daily",
+      dedup: false,
+    });
+    const r = await search(carol, {
+      query: "quoll traps",
+      project: key,
+      strict: true,
+      source: "prompt",
+      session: "sess-practice-log",
+      agent: "pi",
+    });
+    expect(r.results.map((x) => x.id)).toEqual([practice.id]);
+    const [p] = await t.db.select().from(projects).where(eq(projects.key, key));
+    const rows = await t.db
+      .select()
+      .from(memoryServes)
+      .where(eq(memoryServes.sessionKey, "sess-practice-log"));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      memoryId: practice.id,
+      source: "prompt",
+      agent: "pi",
+      principal: "carol",
+      projectId: p?.id,
+    });
   });
 });
