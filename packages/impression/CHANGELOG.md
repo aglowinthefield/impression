@@ -2,6 +2,13 @@
 
 What changed in each release of `@aglowinthefield/impression`, for people who use it. pi shows the new entries once, at the first session after an update.
 
+## 0.11.1
+
+### Patch Changes
+
+- A practice saved from a session no longer carries one repo's ports, hosts or paths to every other repo; those details are saved as a memory in that repo instead.
+- Chores, such as a setting you still have to update on your machine, are no longer saved as memories.
+
 ## 0.11.0
 
 ### Minor Changes
