@@ -2,6 +2,14 @@
 
 What changed in each release of `@aglowinthefield/impression`, for people who use it. pi shows the new entries once, at the first session after an update.
 
+## 0.10.0
+
+- `impression setup` and `impression update` work on Windows. They used to fail with `spawnSync npm ENOENT`.
+- In pi and oh-my-pi, `/impression` lists the memories Impression gave the current session.
+- `impression` with no command shows the commands in groups. `impression help <command>` and `<command> --help` explain one command with its options and examples, and a mistyped command suggests the nearest one.
+- Your agent can save a private (user-scope) memory through the MCP add tool. It used to be refused.
+- The dashboard's Activity retire rate stays at or under 100%. It now shows how many of the week's added memories are retired.
+
 ## 0.9.1
 
 - `impression setup` offers to install the `impression` command, so `impression status`, `list` and `update` work after the quick start.
