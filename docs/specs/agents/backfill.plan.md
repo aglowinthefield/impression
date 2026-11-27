@@ -31,7 +31,7 @@ Why two tasks: t1 (server) can merge and deploy alone, since no client sends bac
 - `started_at timestamptz`: when the backfilled session started.
 - `extracted_at timestamptz`: set when extraction finishes, so a piece stored but not extracted (a failed or interrupted run) is sent to extraction again.
 
-Server settings: `BACKFILL_MODEL` (default `claude-sonnet-5-5`), `BACKFILL_BUDGET_USD` (default per AC7's answer). Spend is the sum of the person's `usage_events` with operation `backfill`.
+Server settings: `BACKFILL_MODEL` (default `claude-sonnet-5-5`), `BACKFILL_BUDGET_USD` (default 10). Spend is the sum of the person's `usage_events` with operation `backfill`.
 
 `POST /backfill/plan` body `{ project, pieces: [{ sessionKey, hash, chars }] }` returns `{ pieces: [{ hash, status: "new" | "done" | "live" }], estimateUsd, budgetUsd, spentUsd, model }`. `live` means the hooks already uploaded a session with that `sessionKey` for this owner. The estimate prices the new pieces' characters at about 4 per token plus the extraction prompt, at the backfill model's prices, plus 2,000 output tokens each.
 

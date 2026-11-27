@@ -1,6 +1,6 @@
 ---
 domain: agents
-status: draft
+status: approved
 issues:
   - https://github.com/aglowinthefield/impression/issues/106
 surfaces:
@@ -28,8 +28,7 @@ A new user's first sessions get no memories, because Impression only learns from
 - AC4: Pieces are sent oldest first, so a later session's memory supersedes an earlier contradicting one.
 - AC5: Backfill extraction uses the server's backfill model, Sonnet unless the server sets another. Live extraction from the hooks keeps its own model.
 - AC6: A session the hooks already uploaded is skipped, so is a session changed in the last hour (it may still be running), and so is a piece a backfill already extracted, however long ago. A rerun after a finished run sends nothing and prints that there is nothing new.
-- AC7: Each person has a backfill budget of [NEEDS CLARIFICATION: dollars per person] dollars on a server, set by the server. The plan shows what is left of it. A run whose estimate exceeds what is left sends only the oldest pieces that fit, and says how many it left out.
-  > **Open:** what should a person's backfill budget be on impression.quest, which you pay for? Lifetime, per person, across repos. Self-hosted servers set their own.
+- AC7: Each person has a lifetime backfill budget across repos, set by the server: $10 unless the server sets another. The plan shows what is left of it. A run whose estimate exceeds what is left sends only the oldest pieces that fit, and says how many it left out.
 - AC8: When the budget runs out mid-run, the server refuses further backfill extraction for that person, the run stops after the pieces already in flight, and it prints how many pieces were not sent. No piece is extracted twice.
 - AC9: The run prints one line per piece and ends with the sessions read, memories saved and updated, and the actual cost, taken from what the server recorded.
 - AC10: A run stopped midway (Ctrl-C, a crash, a closed terminal) leaves every finished piece extracted, and the next run sends only the rest.
