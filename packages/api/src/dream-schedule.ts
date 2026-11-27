@@ -69,7 +69,7 @@ export async function runDream(
 }
 
 /** The GitHub user behind a principal, for usage attribution. */
-async function userOf(db: Db, owner: string): Promise<string | null> {
+export async function userOf(db: Db, owner: string): Promise<string | null> {
   const [row] = await db
     .select({ userId: apiTokens.userId })
     .from(apiTokens)
@@ -157,18 +157,30 @@ export async function sweepDreams(
   return ran;
 }
 
-/** Sweeps every SWEEP_MS. A sweep that is still running makes the next one skip. */
+/**
+ * Sweeps every SWEEP_MS. A sweep that is still running makes the next one skip.
+ * `jobs` run first on each sweep, such as the one-time scope pass; `dreams: false`
+ * leaves dreaming out and keeps the jobs.
+ */
 export function startDreamSchedule(
   db: Db,
   llm: LlmProvider,
   every = DREAM_EVERY,
+  opts: { dreams?: boolean; jobs?: (() => Promise<unknown>)[] } = {},
 ): () => void {
   let busy = false;
   const tick = async () => {
     if (busy) return;
     busy = true;
     try {
-      await sweepDreams(db, llm, every);
+      for (const job of opts.jobs ?? []) {
+        try {
+          await job();
+        } catch (err) {
+          console.error("scheduled job failed:", err);
+        }
+      }
+      if (opts.dreams !== false) await sweepDreams(db, llm, every);
     } catch (err) {
       console.error("dream sweep failed:", err);
     } finally {

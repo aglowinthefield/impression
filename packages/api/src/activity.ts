@@ -23,7 +23,7 @@ const UNDOABLE = new Set([
   "edited",
 ]);
 
-const sources = ["extraction", "check", "dream", "person"] as const;
+const sources = ["extraction", "check", "dream", "person", "pass"] as const;
 
 const listQuery = z.object({
   /** Leave out for every project you can see. */
@@ -40,7 +40,7 @@ export interface Entry {
   id: string;
   at: string;
   kind: string;
-  actor: "extraction" | "check" | "person" | "dream";
+  actor: "extraction" | "check" | "person" | "dream" | "pass";
   principal: string | null;
   memory: {
     id: string;
@@ -72,7 +72,7 @@ interface EventRow extends Record<string, unknown> {
   id: string;
   at: string;
   kind: string;
-  actor: "extraction" | "check" | "person";
+  actor: "extraction" | "check" | "person" | "pass";
   principal: string | null;
   reason: string;
   detail: Record<string, unknown>;

@@ -7,7 +7,7 @@ export interface Entry {
   id: string;
   at: string;
   kind: string;
-  actor: "extraction" | "check" | "person" | "dream";
+  actor: "extraction" | "check" | "person" | "dream" | "pass";
   principal: string | null;
   memory: { id: string; content: string; scope: string; status: string } | null;
   before?: string;
@@ -41,6 +41,7 @@ const sources = [
   ["extraction", "Extraction"],
   ["check", "Staleness check"],
   ["dream", "Dreaming"],
+  ["pass", "One-time cleanup"],
   ["person", "People"],
 ] as const;
 
@@ -76,9 +77,11 @@ export function describe(e: Entry): string {
         : "by extraction"
       : e.actor === "check"
         ? "by the staleness check"
-        : e.principal
-          ? `by ${e.principal}`
-          : "";
+        : e.actor === "pass"
+          ? "by the one-time cleanup of practices and to-dos"
+          : e.principal
+            ? `by ${e.principal}`
+            : "";
   return by ? `${verb} ${by}` : verb;
 }
 

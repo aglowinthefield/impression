@@ -6,6 +6,7 @@ import { loadConfig } from "./config.js";
 import { createDb } from "./db/client.js";
 import { DREAM_EVERY, startDreamSchedule } from "./dream-schedule.js";
 import { createProviders } from "./providers/index.js";
+import { sweepScopePass } from "./scope-pass.js";
 import { UsageRecorder } from "./usage.js";
 
 const config = loadConfig();
@@ -25,13 +26,16 @@ serve({
 });
 console.log(`impression api listening on :${config.port}`);
 
-if (process.env.DREAM_SCHEDULE !== "off") {
-  startDreamSchedule(
-    db,
-    providers.dreamLlm,
-    Number(process.env.DREAM_EVERY ?? DREAM_EVERY),
-  );
-}
+// The scope pass runs on this schedule even with dreaming off, so it finishes on its own.
+startDreamSchedule(
+  db,
+  providers.dreamLlm,
+  Number(process.env.DREAM_EVERY ?? DREAM_EVERY),
+  {
+    dreams: process.env.DREAM_SCHEDULE !== "off",
+    jobs: [() => sweepScopePass(db, providers)],
+  },
+);
 
 // Prometheus metrics on a separate port, so they never reach the public listener.
 const metricsPort = Number(process.env.METRICS_PORT ?? 9091);

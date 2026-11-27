@@ -82,6 +82,9 @@ test("describes who made each change", () => {
   expect(describe(entry({ kind: "retired", actor: "check" }))).toBe(
     "Retired by the staleness check",
   );
+  expect(describe(entry({ kind: "superseded", actor: "pass" }))).toBe(
+    "Replaced older memories by the one-time cleanup of practices and to-dos",
+  );
   expect(
     describe(entry({ kind: "undone", actor: "person", undoes: "merged" })),
   ).toBe("Undid merged by alice");

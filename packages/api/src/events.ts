@@ -2,7 +2,7 @@ import type { Queryer } from "./db/client.js";
 import { memoryEvents } from "./db/schema.js";
 
 export type EventKind = (typeof memoryEvents.$inferInsert)["kind"];
-export type EventActor = "extraction" | "check" | "person";
+export type EventActor = "extraction" | "check" | "person" | "pass";
 
 /** Who made a change, as createMemory and the routes pass it to `logEvent`. */
 export interface EventSource {

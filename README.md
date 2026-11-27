@@ -234,6 +234,8 @@ A dream run groups one person's memories in a project into concepts, given the c
 
 The API also dreams on its own. Every 10 minutes it looks for people whose memories in a project changed: 20 changes since their last run (`DREAM_EVERY`), or any change once a day has passed. It skips anyone with fewer than 8 memories and runs each person and project at most once an hour. Every run is logged in `dream_runs` with what it changed and what it cost, and the sidebar says when the concepts were last grouped. Set `DREAM_SCHEDULE=off` to stop it.
 
+The same schedule runs a one-time cleanup of memories stored before practices stopped carrying one repo's details and to-dos stopped being kept. It checks each memory once, 20 to a model call, splitting a practice into one without the repo's details plus a memory in that repo, and retiring to-dos. Its changes show in Activity under "One-time cleanup" and can be undone there; its model calls are recorded as `scope-pass`. Memories stored since have `scope_checked_at` set at insert, so the cleanup never reads them. It keeps running with `DREAM_SCHEDULE=off`.
+
 ## Web UI
 
 `packages/web` is a React single-page app. `pnpm build` produces `packages/web/dist`, and the API serves it at `/` when that directory exists (or set `WEB_DIR`). Sign in with an API token; the project switcher lists every project on the server. For hot reload run the API on :3000 and `pnpm --filter @impression/web dev`.
