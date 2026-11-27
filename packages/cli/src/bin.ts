@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import { execFileSync } from "node:child_process";
 import { createClient, resolveProject } from "@impression/shared";
 import { dashboardUrl, openUrl } from "./browser.js";
 import {
@@ -11,6 +10,7 @@ import {
 import { add, edit, keep, list, retire, search, status } from "./commands.js";
 import { loadConfig, saveConfig } from "./config.js";
 import { pushEvalTurns } from "./eval-push.js";
+import { runCommand } from "./global-cli.js";
 import { HIDDEN, help } from "./help.js";
 import { runHook } from "./hook-run.js";
 import { login } from "./login.js";
@@ -60,11 +60,10 @@ if (cmd === "hook") {
   await runHook(sub, process.argv.slice(4));
   process.exit(0);
 } else if (cmd === "update") {
-  try {
-    execFileSync("npm", ["i", "-g", `${PACKAGE}@latest`], { stdio: "inherit" });
-  } catch {
-    process.exit(1);
-  }
+  const r = runCommand("npm", ["i", "-g", `${PACKAGE}@latest`], {
+    stdio: "inherit",
+  });
+  if (r.status !== 0) process.exit(1);
 } else if (cmd === "setup") {
   await runSetup(process.argv.slice(3), { token, url });
 } else if (cmd === "login") {
