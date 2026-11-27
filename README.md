@@ -29,6 +29,8 @@ Each agent installs Impression with its own plugin command, and updates and remo
 
 Every client reads `IMPRESSION_URL` (default `https://impression.quest`) and `IMPRESSION_TOKEN`, and falls back to the file `impression login` writes. Each request names its client and machine, like `pi/0.3.0 (tom-mini)`, so Settings can show where every token was last used, including attempts with a revoked one. Set `IMPRESSION_MACHINE` where the hostname says nothing, as in containers and CI.
 
+A tool that starts agents for you can set `IMPRESSION_SESSION` on them. With `read`, the session gets memories at start and on each prompt, but its transcript is never uploaded or extracted. With `off`, Impression does nothing in that process: no memories, no upload, and in pi and oh-my-pi no MCP tools.
+
 ### Claude Code
 
 ```sh

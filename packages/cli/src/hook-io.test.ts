@@ -9,6 +9,7 @@ import {
   hookSessionId,
   hookTranscript,
   parseHookInput,
+  sessionMode,
 } from "./hook-io.js";
 
 describe("hook io", () => {
@@ -23,6 +24,13 @@ describe("hook io", () => {
     expect(foreignHost("claude", env)).toBe("cursor");
     expect(foreignHost("cursor", env)).toBeUndefined();
     expect(foreignHost("claude", {})).toBeUndefined();
+  });
+
+  test("IMPRESSION_SESSION picks read or off, and anything else is a normal session", () => {
+    expect(sessionMode({ IMPRESSION_SESSION: "read" })).toBe("read");
+    expect(sessionMode({ IMPRESSION_SESSION: " OFF " })).toBe("off");
+    expect(sessionMode({ IMPRESSION_SESSION: "nope" })).toBe("full");
+    expect(sessionMode({})).toBe("full");
   });
 
   test("context shape per agent", () => {

@@ -29,6 +29,7 @@ import {
   hookTranscript,
   parseHookInput,
   sessionAgent,
+  sessionMode,
 } from "./hook-io.js";
 import { recheckProject, startRecheck } from "./recheck.js";
 import { sendSession } from "./session-end.js";
@@ -58,6 +59,8 @@ export async function runHook(
 ): Promise<void> {
   const agent = agentArg(args);
   if (!agent || foreignHost(agent)) return;
+  const mode = sessionMode();
+  if (mode === "off" || (mode === "read" && sub === "session-end")) return;
   const config = loadConfig();
   if (!config.token) {
     // The plugin is installed but nobody signed in: say so once per session.

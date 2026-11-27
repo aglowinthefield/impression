@@ -121,6 +121,10 @@ const MIN_PROMPT_CHARS = 15;
 const MCP_SCRIPT = local("../dist/impression-mcp.js", "../mcp/dist/bin.js");
 
 export default function (pi: ExtensionAPI) {
+  // Set by tools that start agents: `off` turns Impression off, and `read` gives the
+  // session memories but sends nothing back. The CLI's hooks read it the same way.
+  const mode = process.env.IMPRESSION_SESSION?.trim().toLowerCase();
+  if (mode === "off") return;
   // Runs the bundled server with this node, so it doesn't depend on what's on PATH.
   // An "impression" entry in mcp.json takes precedence over this one.
   if (MCP_SCRIPT && typeof pi.registerMcpServer === "function")
@@ -192,6 +196,7 @@ export default function (pi: ExtensionAPI) {
     minChars: number,
     detach = false,
   ) => {
+    if (mode === "read") return;
     const entries = ctx.sessionManager.getEntries();
     const fresh = entries.slice(sent);
     const text = fresh.map((e) => JSON.stringify(e)).join("\n");
