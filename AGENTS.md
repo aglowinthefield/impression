@@ -15,4 +15,6 @@ Work is spec-driven, following Unconscious Development: each domain has a Person
 
 ## Releasing
 
-Before bumping `packages/impression/package.json` and tagging `v<version>`, add a `## <version>` section to the top of `CHANGELOG.md`. Write it for people who use Impression, not its developers: one bullet per change they would notice, from the PRs merged since the last tag, and leave out internal work (CI, specs, tests, dev scripts). pi shows these bullets once after an update, and the release workflow fails without the section.
+A PR with a change people who use Impression would notice adds a changeset: a file `.changeset/<short-name>.md` with `"@aglowinthefield/impression": minor` (a feature) or `patch` (a fix) in its frontmatter, and one line per change below it. Write each line for people who use Impression, not its developers. Internal work (CI, specs, tests, dev scripts) gets no changeset. Don't bump the version or edit `packages/impression/CHANGELOG.md` by hand.
+
+The release workflow keeps a Release PR open while changesets wait on main. It bumps the version and moves their lines into the changelog, where pi shows them once after an update. Merging it publishes to npm and tags `v<version>`.

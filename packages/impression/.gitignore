@@ -2,7 +2,6 @@ dist/
 pi/
 LICENSE
 README.md
-CHANGELOG.md
 *.tgz
 .claude-plugin/
 .codex-plugin/
