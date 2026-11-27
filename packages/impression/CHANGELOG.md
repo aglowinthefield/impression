@@ -2,6 +2,16 @@
 
 What changed in each release of `@aglowinthefield/impression`, for people who use it. pi shows the new entries once, at the first session after an update.
 
+## 0.11.0
+
+### Minor Changes
+
+- Set `IMPRESSION_SESSION=read` on an agent to give it memories without uploading its transcript, or `IMPRESSION_SESSION=off` to turn Impression off for it.
+
+### Patch Changes
+
+- On Windows, console windows no longer flash open when an agent finishes a turn or starts a session.
+
 ## 0.10.0
 
 - `impression setup` and `impression update` work on Windows. They used to fail with `spawnSync npm ENOENT`.
