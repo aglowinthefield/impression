@@ -19,6 +19,8 @@ Options it beat:
 - Running backfill extraction on the live model and offering Sonnet as an option: the Self chose Sonnet, and a per-run choice is a knob nobody needs.
 - Rechecking every backfilled memory against HEAD at once: a model call per memory up front; anchoring at the old commit gets the same effect through the staleness check as files are touched.
 
+The server half also stands on the memories Persona. Its rules hold: pieces are scrubbed before storage and extraction (memories/I1, AC16), undo retires and leaves superseded memories alone (memories/I3, memories/I4), backfilled memories go live without review (memories/I5), and every backfill call records its operation, tokens and cost (memories/I8, AC17).
+
 Why two tasks: t1 (server) can merge and deploy alone, since no client sends backfill pieces until t2 ships, and its migration and budget check are worth reviewing on their own. t2 needs t1's endpoints.
 
 ## Data model and contracts
@@ -58,15 +60,6 @@ CLI:
 - agents/I6: holds. The project key comes from the repo the same way the hooks resolve it, so worktree and subdirectory sessions land in one project.
 - agents/I7: holds. Not signed in, `impression backfill` says so and exits; setup offers backfill only after sign-in.
 - agents/I8: holds. The offer changes no agent config.
-- memories/I1: holds. Backfill pieces go through the same scrub before storage and extraction (AC16).
-- memories/I2: holds. A person backfills, plans and undoes only their own sessions and memories, in projects they can access.
-- memories/I3: holds. Undo retires; nothing is deleted.
-- memories/I4: holds. Undo leaves superseded memories as they are.
-- memories/I5: holds. Backfilled memories go live without review, as live ones do; confirming the plan is the only step.
-- memories/I6: holds. Dreaming picks the new memories up as it does any change.
-- memories/I7: holds. Extraction's choice of project is unchanged.
-- memories/I8: holds. Backfill calls record operation `backfill` with tokens and cost (AC17).
-- memories/I9: holds. Serving and search are untouched.
 
 ## Tasks
 
