@@ -166,6 +166,8 @@ async function legacy(
       author: "alice",
       agent: "extraction",
       content,
+      // Stored well before the pass starts, so the default cutoff (now) never ties with it.
+      createdAt: new Date(Date.now() - 60 * 60_000),
       ...extra,
     })
     .returning();
@@ -685,7 +687,7 @@ describe("AC6: one owner and visibility per call, and nothing done twice", () =>
       sql`UPDATE memories SET created_at = now() - interval '1 hour' WHERE id = ${old}`,
     );
     const cutoff = new Date(Date.now() - 30 * 60_000);
-    const fresh = await legacy(`${CHORE} fresh`);
+    const fresh = await legacy(`${CHORE} fresh`, { createdAt: new Date() });
     reply = (p) =>
       JSON.stringify({
         results: [...p.matchAll(/^\[(m\d+)\]/gm)].map((m) => ({
@@ -716,11 +718,14 @@ describe("AC6: one owner and visibility per call, and nothing done twice", () =>
   test("a memory edited while its batch is with the model is left alone", async () => {
     const chore = await legacy(CHORE);
     const practice = await legacyPractice(NITPICK, await session());
+    // Each call moves both rows to a new, distinct time, whatever the clock does.
+    let bump = 0;
     reply = async (p) => {
+      bump++;
       for (const id of [chore, practice])
         await t.db
           .update(memories)
-          .set({ updatedAt: new Date(Date.now() + 1000) })
+          .set({ updatedAt: new Date(Date.UTC(2030, 0, 1) + bump * 1000) })
           .where(eq(memories.id, id));
       return JSON.stringify({
         results: [
