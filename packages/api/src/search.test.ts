@@ -335,3 +335,43 @@ describe("serve log", () => {
     expect(res.status).toBe(400);
   });
 });
+
+describe("after session start", () => {
+  const key = "github.com/acme/skip";
+  let carol: string;
+  beforeAll(async () => {
+    carol = await createToken(t.db, "carol");
+  });
+
+  test("a prompt search leaves out what session start gave the same session", async () => {
+    const given = await add(carol, {
+      scope: "project",
+      project: { key },
+      content: "platypus eggs hatch in burrows",
+      dedup: false,
+    });
+    const core = (await (
+      await call(
+        carol,
+        `/core?project=${key}&session=sess-skip&budget=20000`,
+        undefined,
+        "GET",
+      )
+    ).json()) as { items: { id: string }[] };
+    expect(core.items.map((i) => i.id)).toContain(given.id);
+    const prompt = (session: string) =>
+      search(carol, {
+        query: "platypus eggs burrows",
+        project: key,
+        strict: true,
+        source: "prompt",
+        session,
+      });
+    expect((await prompt("sess-skip")).results.map((x) => x.id)).not.toContain(
+      given.id,
+    );
+    expect((await prompt("sess-other")).results.map((x) => x.id)).toContain(
+      given.id,
+    );
+  });
+});

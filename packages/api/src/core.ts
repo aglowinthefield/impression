@@ -4,7 +4,7 @@ import { z } from "zod";
 import { canReach, findProject, memoryVisible } from "./access.js";
 import type { AuthEnv } from "./auth.js";
 import type { Db } from "./db/client.js";
-import { memories } from "./db/schema.js";
+import { memories, sessions } from "./db/schema.js";
 import { PRACTICE_TAG } from "./extract.js";
 import { logServes } from "./serves.js";
 
@@ -28,43 +28,76 @@ export interface CoreItem {
   tags: string[];
 }
 
-/** Picks the core set from the memories matching `where`, in core order, until the budget runs out. */
+/** Share of the budget practices may take while other memories still want room. */
+export const PRACTICE_SHARE = 0.25;
+
+/**
+ * Picks the core set from the memories matching `where`, until the budget runs out.
+ * Memories that aren't practices fill all but PRACTICE_SHARE of the budget first,
+ * practices then get their share plus whatever that left unused, and other
+ * memories take any room practices didn't need. Within each group: confidence
+ * (unrated counts as middling), then newest.
+ */
 export async function coreSet(
   db: Db,
   where: SQL[],
   budget: number,
 ): Promise<{ items: CoreItem[]; tokens: number }> {
-  const rows = await db
-    .select()
-    .from(memories)
-    .where(and(...where))
-    .orderBy(
-      // Practices go first: they apply to whatever the session is about.
-      sql`(${PRACTICE_TAG} = ANY(${memories.tags})) desc`,
-      sql`coalesce(${memories.confidence}, 0.5) desc`,
-      desc(memories.createdAt),
-      desc(memories.id),
-    )
-    .limit(200);
-  const items: CoreItem[] = [];
+  // Each group gets its own row limit, so many practices can't push every other memory past it.
+  const ranked = (group: SQL) =>
+    db
+      .select()
+      .from(memories)
+      .where(and(...where, group))
+      .orderBy(
+        sql`coalesce(${memories.confidence}, 0.5) desc`,
+        desc(memories.createdAt),
+        desc(memories.id),
+      )
+      .limit(200);
+  const isPracticeSql = sql`${PRACTICE_TAG} = ANY(${memories.tags})`;
+  const [practiceRows, otherRows] = await Promise.all([
+    ranked(isPracticeSql),
+    ranked(sql`NOT (${isPracticeSql})`),
+  ]);
+  const rows = [...otherRows, ...practiceRows];
+  const isPractice = (m: (typeof rows)[number]) =>
+    m.tags.includes(PRACTICE_TAG);
+  const chosen = new Set<(typeof rows)[number]>();
   let used = 0;
-  for (const m of rows) {
-    const cost = estimateTokens(m.content) + 2;
-    if (used + cost > budget) continue;
-    used += cost;
-    items.push({
-      id: m.id,
-      content: m.content,
-      tags: m.tags,
-    });
-  }
+  const fill = (group: typeof rows, limit: number) => {
+    for (const m of group) {
+      if (chosen.has(m)) continue;
+      const cost = estimateTokens(m.content) + 2;
+      if (used + cost > limit) continue;
+      used += cost;
+      chosen.add(m);
+    }
+  };
+  const others = rows.filter((m) => !isPractice(m));
+  fill(others, budget - Math.floor(budget * PRACTICE_SHARE));
+  fill(rows.filter(isPractice), budget);
+  fill(others, budget);
+  const items = rows
+    .filter((m) => chosen.has(m))
+    .map((m) => ({ id: m.id, content: m.content, tags: m.tags }));
   return { items, tokens: used };
 }
 
 /**
- * The small set worth showing at session start: practices first, then by
- * confidence (unrated counts as middling), then newest. Flagged-stale and
- * superseded memories are left out. Stops at the budget.
+ * Whether a practice fits the project: it was learned in a session there.
+ * Memories that aren't practices always pass.
+ */
+export function practiceFits(projectId: string | null): SQL {
+  if (!projectId) return sql`NOT (${PRACTICE_TAG} = ANY(${memories.tags}))`;
+  return sql`(NOT (${PRACTICE_TAG} = ANY(${memories.tags}))
+    OR EXISTS (SELECT 1 FROM ${sessions} s WHERE s.id = ${memories.sessionId} AND s.project_id = ${projectId}))`;
+}
+
+/**
+ * The small set worth showing at session start: see `coreSet` for the order and
+ * the practices' share. Only practices that fit the project are offered.
+ * Flagged-stale and superseded memories are left out. Stops at the budget.
  */
 export function coreRoutes(db: Db) {
   const app = new Hono<AuthEnv>();
@@ -94,6 +127,7 @@ export function coreRoutes(db: Db) {
           : isNull(memories.projectId),
       );
     }
+    where.push(practiceFits(projectId));
     if (!q.path) where.push(isNull(memories.pathPrefix));
     else {
       const path = q.path.replace(/^\/+|\/+$/g, "");

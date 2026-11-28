@@ -33,7 +33,7 @@ const body = z.object({
   minSimilarity: z.number().min(0).max(1).optional(),
   /** Raises the model's floor by STRICT_EXTRA. For injection into a prompt, where a wrong memory costs more than a missed one. */
   strict: z.boolean().optional(),
-  /** The agent's own session id, recorded with what is served. Ignored when malformed. */
+  /** The agent's own session id, recorded with what is served. Memories session start gave it are left out. Ignored when malformed. */
   session: z.string().min(1).max(200).optional().catch(undefined),
   agent: z.string().min(1).max(100).optional().catch(undefined),
   /** "prompt" when a hook injects the results into a prompt, "web" for a person in the dashboard (not logged), otherwise an agent's search. */
@@ -77,6 +77,11 @@ export function searchRoutes(db: Db, providers: Providers) {
       projectId = p?.id ?? null;
       conds.push(p ? sql`m.project_id = ${p.id}` : sql`false`);
     }
+    // What session start already gave this session is in its context; don't repeat it.
+    if (q.session)
+      conds.push(
+        sql`NOT EXISTS (SELECT 1 FROM memory_serves v WHERE v.memory_id = m.id AND v.session_key = ${q.session} AND v.principal = ${principal} AND v.source = 'core')`,
+      );
     if (q.path) {
       const path = q.path.replace(/^\/+|\/+$/g, "");
       conds.push(
