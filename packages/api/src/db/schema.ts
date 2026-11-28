@@ -186,9 +186,24 @@ export const sessions = pgTable(
     candidates: jsonb(),
     /** The agent's own session id, so serves and uploads from one session can be joined. */
     sessionKey: text(),
+    /** "hook" for a session an agent uploaded as it ran, "backfill" for a piece of a past one. */
+    source: text().$type<"hook" | "backfill">().notNull().default("hook"),
+    /** For a backfill piece: `pieceHash` of the text as received, so no piece is extracted twice. */
+    pieceHash: text(),
+    /** When a backfilled session started. */
+    startedAt: timestamp({ withTimezone: true }),
+    /** When a backfill piece's extraction is claimed. A claim older than 15 minutes is abandoned. */
+    extractingAt: timestamp({ withTimezone: true }),
+    /** When a backfill piece's extraction finished. Unset means it is sent to extraction again. */
+    extractedAt: timestamp({ withTimezone: true }),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("sessions_session_key_idx").on(t.sessionKey)],
+  (t) => [
+    index("sessions_session_key_idx").on(t.sessionKey),
+    uniqueIndex("sessions_backfill_piece_idx")
+      .on(t.owner, t.projectId, t.pieceHash)
+      .where(sql`${t.source} = 'backfill'`),
+  ],
 );
 
 /**

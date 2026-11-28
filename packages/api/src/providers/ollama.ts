@@ -60,6 +60,7 @@ export function ollamaLlm(
   const baseUrl = opts.baseUrl ?? "http://localhost:11434";
   return {
     model: opts.model,
+    provider: "ollama",
     async complete({ system, prompt, maxTokens }) {
       const json = (await postJson(
         "ollama",

@@ -63,17 +63,32 @@ describe("bearer auth", () => {
 
 describe("loadConfig", () => {
   test("defaults", () => {
-    expect(loadConfig({})).toMatchObject({ port: 3000 });
+    expect(loadConfig({})).toMatchObject({ port: 3000, backfillBudgetUsd: 10 });
   });
   test("reads env", () => {
-    expect(loadConfig({ PORT: "8080", DATABASE_URL: "postgres://x" })).toEqual({
+    expect(
+      loadConfig({
+        PORT: "8080",
+        DATABASE_URL: "postgres://x",
+        BACKFILL_BUDGET_USD: "2.5",
+      }),
+    ).toEqual({
       port: 8080,
       databaseUrl: "postgres://x",
       github: null,
+      backfillBudgetUsd: 2.5,
     });
   });
   test("rejects a bad port", () => {
     expect(() => loadConfig({ PORT: "abc" })).toThrow(/PORT/);
+  });
+  test("rejects a bad backfill budget", () => {
+    expect(() => loadConfig({ BACKFILL_BUDGET_USD: "-1" })).toThrow(
+      /BACKFILL_BUDGET_USD/,
+    );
+    expect(() => loadConfig({ BACKFILL_BUDGET_USD: "ten" })).toThrow(
+      /BACKFILL_BUDGET_USD/,
+    );
   });
 });
 

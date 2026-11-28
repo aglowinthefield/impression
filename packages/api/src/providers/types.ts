@@ -15,6 +15,8 @@ export interface CompleteRequest {
 
 export interface LlmProvider {
   readonly model: string;
+  /** Who serves the model, for pricing a call before it is made. */
+  readonly provider?: ModelUsage["provider"];
   complete(req: CompleteRequest): Promise<string>;
 }
 

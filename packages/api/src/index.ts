@@ -19,6 +19,7 @@ const providers = createProviders(process.env, undefined, usage.record);
 serve({
   fetch: createApp(db, providers, {
     github: config.github,
+    backfillBudgetUsd: config.backfillBudgetUsd,
     webDir: existsSync(webDir) ? webDir : undefined,
   }).fetch,
   port: config.port,

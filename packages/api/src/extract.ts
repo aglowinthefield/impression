@@ -4,7 +4,7 @@ import { type Access, upsertProject } from "./access.js";
 import type { Db } from "./db/client.js";
 import { proposals } from "./db/schema.js";
 import { anchorInput, createMemory } from "./memories.js";
-import type { Providers } from "./providers/index.js";
+import type { LlmProvider, Providers } from "./providers/index.js";
 import { isEmptyAfterScrub, scrub } from "./scrub.js";
 import { getExtractionFloor } from "./settings.js";
 
@@ -158,6 +158,8 @@ export interface ExtractInput {
   candidates?: SessionCandidate[];
   /** The request's access. A fact only goes to another repo the person can reach. */
   access?: Access;
+  /** The model that reads the transcript. Defaults to `providers.llm`; backfill passes its own. */
+  llm?: LlmProvider;
 }
 
 /** A repo a memory can be filed under. The session's own project comes first. */
@@ -279,7 +281,7 @@ export async function extractProposals(
     targets.length ? targetsPrompt(targets) : "",
     `Transcript:\n${text}`,
   ];
-  const reply = await providers.llm.complete({
+  const reply = await (input.llm ?? providers.llm).complete({
     system: targets.length ? `${SYSTEM}\n${PROJECTS_SYSTEM}` : SYSTEM,
     prompt: parts.filter(Boolean).join("\n\n"),
     maxTokens: 2000,

@@ -108,6 +108,8 @@ TypeScript monorepo (pnpm workspaces, Node 22+). Packages: `shared`, `api`, `cli
 | `LLM_PROVIDER`                       | `anthropic`                                  | or `ollama`. Needs `ANTHROPIC_API_KEY` for anthropic.                       |
 | `EMBEDDING_MODEL`, `LLM_MODEL`       | `text-embedding-3-small`, `claude-haiku-5-5` | Required for ollama.                                                        |
 | `DREAM_MODEL`                        | `claude-sonnet-5-5`                          | Model for dreaming. With ollama, defaults to `LLM_MODEL`.                   |
+| `BACKFILL_MODEL`                     | `claude-sonnet-5-5`                          | Model for backfill extraction. With ollama, defaults to `LLM_MODEL`.        |
+| `BACKFILL_BUDGET_USD`                | `10`                                         | Lifetime backfill spend allowed per person, in US dollars.                  |
 | `EMBEDDING_DIMENSIONS`, `OLLAMA_URL` |                                              | Ollama only. The dimension must be 768 to match the column.                 |
 | `EMBEDDING_MIN_SIMILARITY`           | `0.3` openai, `0.45` ollama                  | Search floor. Cosine scores differ between models, so retune with the eval. |
 

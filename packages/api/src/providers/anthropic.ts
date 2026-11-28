@@ -21,6 +21,7 @@ export function anthropicLlm(opts: AnthropicOptions): LlmProvider {
   const baseUrl = opts.baseUrl ?? "https://api.anthropic.com";
   return {
     model,
+    provider: "anthropic",
     async complete({ system, prompt, maxTokens }) {
       const json = (await postJson(
         "anthropic",

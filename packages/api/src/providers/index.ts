@@ -17,6 +17,8 @@ export interface Providers {
   llm: LlmProvider;
   /** A stronger model for dreaming, which groups a whole project in one call. */
   dreamLlm: LlmProvider;
+  /** Extracts backfilled past sessions. Stronger than `llm`, and budgeted per person. */
+  backfillLlm: LlmProvider;
 }
 
 type Env = Record<string, string | undefined>;
@@ -32,7 +34,7 @@ function need(env: Env, key: string, why: string): string {
  *
  *   EMBEDDING_PROVIDER = openai (default) | ollama
  *   LLM_PROVIDER       = anthropic (default) | ollama
- *   EMBEDDING_MODEL, LLM_MODEL, DREAM_MODEL, OLLAMA_URL override model names and the Ollama host.
+ *   EMBEDDING_MODEL, LLM_MODEL, DREAM_MODEL, BACKFILL_MODEL, OLLAMA_URL override model names and the Ollama host.
  *   EMBEDDING_MIN_SIMILARITY sets the search floor (Ollama default 0.45, tuned on nomic-embed-text).
  *
  * The embedding column is `EMBEDDING_DIM` wide, so a provider with another
@@ -41,6 +43,9 @@ function need(env: Env, key: string, why: string): string {
  */
 /** Anthropic model for dreaming. In testing it left 1 of 100 memories ungrouped, where Haiku left 5 to 18. */
 export const DREAM_MODEL = "claude-sonnet-5-5";
+
+/** Anthropic model for backfill extraction. Old sessions are read once, so a stronger model is worth it. */
+export const BACKFILL_MODEL = "claude-sonnet-5-5";
 
 export function createProviders(
   env: Env = process.env,
@@ -85,6 +90,7 @@ export function createProviders(
 
   let llm: LlmProvider;
   let dreamLlm: LlmProvider;
+  let backfillLlm: LlmProvider;
   if (llmKind === "anthropic") {
     const apiKey = need(
       env,
@@ -103,6 +109,12 @@ export function createProviders(
       fetch: fetchFn,
       onUsage,
     });
+    backfillLlm = anthropicLlm({
+      apiKey,
+      model: env.BACKFILL_MODEL || BACKFILL_MODEL,
+      fetch: fetchFn,
+      onUsage,
+    });
   } else if (llmKind === "ollama") {
     llm = ollamaLlm({
       model: need(env, "LLM_MODEL", "when LLM_PROVIDER=ollama"),
@@ -118,9 +130,17 @@ export function createProviders(
           onUsage,
         })
       : llm;
+    backfillLlm = env.BACKFILL_MODEL
+      ? ollamaLlm({
+          model: env.BACKFILL_MODEL,
+          baseUrl: ollamaUrl,
+          fetch: fetchFn,
+          onUsage,
+        })
+      : llm;
   } else {
     throw new Error(`unknown LLM_PROVIDER "${llmKind}" (anthropic or ollama)`);
   }
 
-  return { embeddings, llm, dreamLlm };
+  return { embeddings, llm, dreamLlm, backfillLlm };
 }

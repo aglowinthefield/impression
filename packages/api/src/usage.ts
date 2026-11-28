@@ -12,6 +12,8 @@ export interface UsageContext {
   operation: string;
   /** Collects this context's model calls, so a job can report its own cost. */
   tally?: ModelUsage[];
+  /** Collects this context's usage inserts, so a caller can wait until its spend is summable. */
+  inserts?: Promise<void>[];
 }
 
 const storage = new AsyncLocalStorage<UsageContext>();
@@ -110,7 +112,7 @@ export class UsageRecorder {
       principal: null,
       operation: "job",
     };
-    const { tally, ...who } = ctx;
+    const { tally, inserts, ...who } = ctx;
     tally?.push(u);
     const cost = costMicros(u);
     const labels = {
@@ -151,6 +153,7 @@ export class UsageRecorder {
       )
       .finally(() => this.pending.delete(p));
     this.pending.add(p);
+    inserts?.push(p);
     return p;
   };
 }
