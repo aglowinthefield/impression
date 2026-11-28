@@ -14,16 +14,10 @@ const MAX_CANDIDATES = 15;
 /** Tag on memories that record how the user likes work done. */
 export const PRACTICE_TAG = "practice";
 
-/**
- * The rule against storing to-dos. Shared by extraction and the one-time pass
- * over stored memories (scope-pass.ts), so both apply the same wording.
- */
+/** The rule against storing to-dos. */
 export const TODO_RULE = `To-dos: anything the user or the assistant still has to do, fix, update, install or clean up, whether in this repo, another repo or the user's own machine (shell config, environment variables, dotfiles, local tools). "$X points to a stale path, update it in the shell config" is a chore, not knowledge: once done it is no longer true. Keep only the lasting rule or reason behind it, if the user stated one.`;
 
-/**
- * The rule that keeps one repo's specifics out of a practice. Shared by
- * extraction and the one-time pass over stored memories (scope-pass.ts).
- */
+/** The rule that keeps one repo's specifics out of a practice. */
 export const PRACTICE_SPECIFICS_RULE = `A practice reaches every repo the user works in, so it holds only what applies in all of them. When the rule comes with one repo's specifics (ports, hosts, URLs, service, app or repo names, paths), write the practice without them, and keep the specifics as a separate fact about that repo. For example, "before a release, smoke-test the checkout flow on staging at checkout.acme.dev:8443" becomes the practice "Before a release, smoke-test the main user flow on staging." and the fact "In acme-shop, staging is checkout.acme.dev:8443." Keep the practice even when there is no room for the fact.`;
 
 export const SYSTEM = `You extract durable project knowledge from a coding-session transcript, for a memory that future sessions will read.

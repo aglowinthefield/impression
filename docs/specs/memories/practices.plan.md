@@ -5,7 +5,7 @@ budget_usd: 15
 
 ## Approach
 
-Teach extraction the two rules, then run the same rules once over what is stored. Extraction gains an instruction to move repo specifics out of a practice into a fact for the repo they name (picked from the session's candidates, else the session's own project, per memories/I7), and to drop to-dos. A script, `pnpm db:scope-pass`, reuses that instruction on stored memories in batches, and writes its changes through the supersede and retire paths Activity already logs and can undo. An agent runs it once against prod, dry run first.
+Teach extraction the two rules, then run the same rules once over what is stored. Extraction gains an instruction to move repo specifics out of a practice into a fact for the repo they name (picked from the session's candidates, else the session's own project, per memories/I7), and to drop to-dos. A script, `pnpm db:scope-pass`, reuses that instruction on stored memories in batches, and writes its changes through the supersede and retire paths Activity already logs and can undo. An agent runs it once against prod, dry run first. It ran on 2026-11-28 (39 changes: 1 split, 38 retired, 6 of the retires undone as wrong), and a follow-up PR removed it.
 
 A scheduled pass was built first: a job on the API's dream schedule with a check-mark column and an attempts column. It was dropped as too much permanent code (about 1,500 lines and two migrations) for something that runs once.
 
