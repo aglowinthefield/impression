@@ -1,6 +1,7 @@
 import { EMBEDDING_DIM } from "../db/schema.js";
 import { anthropicLlm } from "./anthropic.js";
 import { ollamaEmbeddings, ollamaLlm } from "./ollama.js";
+import { hasPrice } from "../usage.js";
 import { openaiEmbeddings } from "./openai.js";
 import type {
   EmbeddingProvider,
@@ -140,6 +141,12 @@ export function createProviders(
       : llm;
   } else {
     throw new Error(`unknown LLM_PROVIDER "${llmKind}" (anthropic or ollama)`);
+  }
+  // Without a price, backfill spend reads as $0: the budget never runs out and plans estimate nothing.
+  if (!hasPrice(backfillLlm.provider ?? "anthropic", backfillLlm.model)) {
+    throw new Error(
+      `BACKFILL_MODEL "${backfillLlm.model}" has no price, so backfill spend couldn't be counted against BACKFILL_BUDGET_USD. Pick a priced model or add its price in packages/api/src/usage.ts.`,
+    );
   }
 
   return { embeddings, llm, dreamLlm, backfillLlm };

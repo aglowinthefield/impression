@@ -187,16 +187,31 @@ describe("createProviders", () => {
   });
 
   test("BACKFILL_MODEL picks the backfill model and leaves live extraction alone", () => {
-    const p = createProviders({ ...keys, BACKFILL_MODEL: "claude-opus-5" });
+    const p = createProviders({ ...keys, BACKFILL_MODEL: "claude-sonnet-4-5" });
     expect([p.llm.model, p.backfillLlm.model]).toEqual([
       "claude-haiku-5-5",
-      "claude-opus-5",
+      "claude-sonnet-4-5",
     ]);
     const q = createProviders({ ...keys, LLM_MODEL: "claude-haiku-4-5" });
     expect([q.llm.model, q.backfillLlm.model]).toEqual([
       "claude-haiku-4-5",
       "claude-sonnet-5-5",
     ]);
+  });
+
+  test("refuses a backfill model with no price, naming it", () => {
+    expect(() =>
+      createProviders({ ...keys, BACKFILL_MODEL: "claude-opus-5" }),
+    ).toThrow(/BACKFILL_MODEL "claude-opus-5" has no price/);
+    // A local Ollama model costs nothing, so it counts as priced.
+    expect(
+      createProviders({
+        ...keys,
+        LLM_PROVIDER: "ollama",
+        LLM_MODEL: "qwen",
+        BACKFILL_MODEL: "anything",
+      }).backfillLlm.model,
+    ).toBe("anything");
   });
 
   test("names the missing key", () => {

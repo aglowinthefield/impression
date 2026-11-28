@@ -10,9 +10,11 @@ import {
   projects,
   sessions,
   usageEvents,
+  users,
 } from "./db/schema.js";
 import { SYSTEM } from "./extract.js";
 import type { CompleteRequest, LlmProvider } from "./providers/index.js";
+import type { RepoAccess } from "./repo-access.js";
 import { createTestDb } from "./test-db.js";
 import { fakeProviders } from "./test-providers.js";
 import { UsageRecorder } from "./usage.js";
@@ -327,6 +329,42 @@ describe("backfill extraction", () => {
     expect((await extract("alice", body.id)).status).toBe(200);
   });
 
+  test.each([
+    ["finishes", false],
+    ["fails", true],
+  ])(
+    "a request whose claim expired and %s leaves the new claim alone",
+    async (_n, fails) => {
+      const { body } = await upload("alice", `user: expired claim piece ${_n}`);
+      const a = model.hold();
+      const first = extract("alice", body.id);
+      await a.started;
+      // A's claim goes stale while its model call is still out.
+      await t.db
+        .update(sessions)
+        .set({ extractingAt: new Date(Date.now() - 16 * 60_000) })
+        .where(eq(sessions.id, body.id));
+      const b = model.hold();
+      const second = extract("alice", body.id);
+      await b.started;
+      const claimB = (await row(body.id))?.extractingAt;
+      expect(claimB?.getTime()).toBeGreaterThan(Date.now() - 60_000);
+
+      model.fail = fails;
+      a.release();
+      expect((await first).status).toBe(fails ? 502 : 409);
+      expect(await row(body.id)).toMatchObject({
+        extractedAt: null,
+        extractingAt: claimB,
+      });
+
+      b.release();
+      expect(await second).toMatchObject({ status: 200 });
+      expect(await row(body.id)).toMatchObject({ extractingAt: null });
+      expect((await row(body.id))?.extractedAt).toBeInstanceOf(Date);
+    },
+  );
+
   test("refuses once the budget is reached mid-run, without extracting the rest", async () => {
     const ids: string[] = [];
     for (const n of [1, 2, 3])
@@ -583,9 +621,65 @@ describe("POST /backfill/undo", () => {
     expect(await bob.json()).toEqual({ retired: 0 });
   });
 
-  test("needs a project, and an unknown one retires nothing", async () => {
+  test("needs a project, and an unknown one is not found", async () => {
     expect((await call("erin", "POST", "/backfill/undo")).status).toBe(400);
     const res = await call("erin", "POST", "/backfill/undo?project=nope");
-    expect(await res.json()).toEqual({ retired: 0 });
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: "project not found" });
+  });
+
+  test("someone who lost access to the repo can't undo there", async () => {
+    const repos = new Set([project.key]);
+    const repoAccess = {
+      reposFor: async () => new Set(repos),
+    } as unknown as RepoAccess;
+    const gated = createApp(
+      t.db,
+      { ...fakeProviders(), backfillLlm: model },
+      { repoAccess },
+    );
+    const [gus] = await t.db
+      .insert(users)
+      .values({ githubId: 106, login: "gus" })
+      .returning();
+    tokens.gus = await createToken(t.db, "gus", { userId: gus?.id });
+    const res = await call(
+      "gus",
+      "POST",
+      "/sessions",
+      { project, transcript: "user: gus's piece", source: "backfill" },
+      gated,
+    );
+    expect(res.status).toBe(201);
+    const { id } = (await res.json()) as { id: string };
+    model.next = "Gus's backfilled memory";
+    expect((await extract("gus", id, gated)).status).toBe(200);
+
+    repos.clear();
+    const undo = await call(
+      "gus",
+      "POST",
+      `/backfill/undo?project=${encodeURIComponent(project.key)}`,
+      undefined,
+      gated,
+    );
+    expect(undo.status).toBe(404);
+    expect(await undo.json()).toEqual({ error: "project not found" });
+    const [m] = await t.db
+      .select({ status: memories.status })
+      .from(memories)
+      .where(eq(memories.sessionId, id));
+    expect(m?.status).toBe("active");
+
+    // With access back, the same call retires it.
+    repos.add(project.key);
+    const back = await call(
+      "gus",
+      "POST",
+      `/backfill/undo?project=${encodeURIComponent(project.key)}`,
+      undefined,
+      gated,
+    );
+    expect(await back.json()).toEqual({ retired: 1 });
   });
 });

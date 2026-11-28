@@ -49,6 +49,11 @@ const PRICES: Record<string, [number, number]> = {
   "anthropic/claude-sonnet-5-5": [2, 10],
 };
 
+/** Whether calls to this model get a cost: a local Ollama model, or one with a price above. */
+export function hasPrice(provider: ModelUsage["provider"], model: string) {
+  return provider === "ollama" || `${provider}/${model}` in PRICES;
+}
+
 /** Estimated cost in millionths of a dollar. 0 for local Ollama models, null for unknown ones. */
 export function costMicros(u: ModelUsage): number | null {
   if (u.provider === "ollama") return 0;

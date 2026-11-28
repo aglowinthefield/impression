@@ -1,7 +1,7 @@
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
-import type { Access } from "./access.js";
+import { type Access, findProject } from "./access.js";
 import type { AuthEnv } from "./auth.js";
 import type { Db } from "./db/client.js";
 import { memories, projects, sessions, usageEvents } from "./db/schema.js";
@@ -82,11 +82,13 @@ export async function extractionCounts(db: Db, sessionId: string) {
 }
 
 /**
- * Takes a backfill piece for extraction. Returns false when it is extracted
- * already, or another request holds a live claim on it.
+ * Takes a backfill piece for extraction. Returns the claim, the stored
+ * `extracting_at` as Postgres prints it (microseconds, which a Date would cut),
+ * or null when the piece is extracted already or another request holds a live
+ * claim on it.
  */
-export async function claimPiece(db: Db, id: string): Promise<boolean> {
-  const claimed = await db
+export async function claimPiece(db: Db, id: string): Promise<string | null> {
+  const [claimed] = await db
     .update(sessions)
     .set({ extractingAt: sql`now()` })
     .where(
@@ -96,8 +98,37 @@ export async function claimPiece(db: Db, id: string): Promise<boolean> {
         sql`(${sessions.extractingAt} IS NULL OR ${sessions.extractingAt} < now() - make_interval(mins => ${CLAIM_MINUTES}))`,
       ),
     )
+    .returning({ at: sql<string>`${sessions.extractingAt}::text` });
+  return claimed?.at ?? null;
+}
+
+/** Whether this row's claim is still `claim`, the one a request took. */
+const holds = (id: string, claim: string) =>
+  and(
+    eq(sessions.id, id),
+    sql`${sessions.extractingAt} = ${claim}::timestamptz`,
+  );
+
+/**
+ * Marks a claimed piece extracted, only if the claim is still this request's.
+ * False when the claim expired and another request took the piece over.
+ */
+export async function finishPiece(
+  db: Db,
+  id: string,
+  claim: string,
+): Promise<boolean> {
+  const rows = await db
+    .update(sessions)
+    .set({ extractedAt: sql`now()`, extractingAt: null })
+    .where(holds(id, claim))
     .returning({ id: sessions.id });
-  return claimed.length > 0;
+  return rows.length > 0;
+}
+
+/** Gives a claim back after a failure, unless another request has taken the piece over. */
+export async function releasePiece(db: Db, id: string, claim: string) {
+  await db.update(sessions).set({ extractingAt: null }).where(holds(id, claim));
 }
 
 const planBody = z.object({
@@ -202,17 +233,16 @@ export function backfillRoutes(
   /**
    * Retires the caller's live memories that came from backfilled sessions of a
    * project, each with an event so it can be undone. Superseded and retired
-   * memories are history and stay as they are.
+   * memories are history and stay as they are. 404 for a project the caller
+   * can't see, as the other project routes answer.
    */
   app.post("/undo", async (c) => {
     const key = c.req.query("project");
     if (!key) return c.json({ error: "project is required" }, 400);
     const owner = c.get("principal");
-    const [p] = await db
-      .select({ id: projects.id })
-      .from(projects)
-      .where(eq(projects.key, key));
-    if (!p) return c.json({ retired: 0 });
+    // Someone who lost access to the repo can't change memories others there see.
+    const p = await findProject(db, c.get("access"), key);
+    if (!p) return c.json({ error: "project not found" }, 404);
     const retired = await db.transaction(async (tx) => {
       const rows = await tx
         .select({

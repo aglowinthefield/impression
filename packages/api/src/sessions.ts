@@ -8,6 +8,8 @@ import {
   BACKFILL_OPERATION,
   backfillSpentMicros,
   claimPiece,
+  finishPiece,
+  releasePiece,
   extractionCounts,
 } from "./backfill.js";
 import type { Db } from "./db/client.js";
@@ -300,7 +302,8 @@ export function sessionRoutes(
         },
         402,
       );
-    if (!(await claimPiece(db, s.id))) {
+    const claim = await claimPiece(db, s.id);
+    if (!claim) {
       const [now] = await db
         .select({ extractedAt: sessions.extractedAt })
         .from(sessions)
@@ -327,10 +330,7 @@ export function sessionRoutes(
       );
     } catch (err) {
       await Promise.all(inserts);
-      await db
-        .update(sessions)
-        .set({ extractingAt: null })
-        .where(eq(sessions.id, s.id));
+      await releasePiece(db, s.id, claim);
       console.error(
         "backfill extraction failed:",
         err instanceof Error ? err.message : err,
@@ -339,10 +339,10 @@ export function sessionRoutes(
     }
     // The spend must be summable before the next piece's budget check.
     await Promise.all(inserts);
-    await db
-      .update(sessions)
-      .set({ extractedAt: sql`now()`, extractingAt: null })
-      .where(eq(sessions.id, s.id));
+    // A claim that expired mid-run belongs to another request now: leave the
+    // piece to it, and tell this client it isn't done, as for a live claim.
+    if (!(await finishPiece(db, s.id, claim)))
+      return c.json({ error: "piece is being extracted" }, 409);
     const cost = tally.reduce((sum, u) => sum + (costMicros(u) ?? 0), 0);
     return c.json({
       ...(await extractionCounts(db, s.id)),
