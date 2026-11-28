@@ -331,15 +331,19 @@ export async function runScopePass(
     const visible = await checkable(db, access, owner, "m");
     const base = sql`m.owner = ${owner} AND m.status IN ('active', 'possibly_stale')
       AND m.created_at < ${opts.before.toISOString()}::timestamptz AND ${visible}`;
-    const teams = await db.execute<{ project_id: string }>(sql`
-      SELECT DISTINCT m.project_id FROM memories m
-      WHERE ${base} AND m.scope = 'team' ORDER BY m.project_id`);
-    const groups = [
-      sql`m.scope <> 'team'`,
-      ...teams.map(
-        (g) => sql`m.scope = 'team' AND m.project_id = ${g.project_id}`,
-      ),
-    ];
+    // One model call holds one scope of one project (or the user-scoped ones), so a
+    // reason the model writes can only quote text with the same visibility.
+    const kinds = await db.execute<{
+      scope: string;
+      project_id: string | null;
+    }>(sql`
+      SELECT DISTINCT m.scope, m.project_id FROM memories m
+      WHERE ${base} ORDER BY m.scope, m.project_id`);
+    const groups = kinds.map((g) =>
+      g.project_id
+        ? sql`m.scope = ${g.scope} AND m.project_id = ${g.project_id}`
+        : sql`m.scope = ${g.scope} AND m.project_id IS NULL`,
+    );
     for (const group of groups) {
       let after: { at: string; id: string } | null = null;
       for (;;) {

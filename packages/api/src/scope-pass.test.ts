@@ -85,7 +85,7 @@ beforeAll(async () => {
     model: "claude-haiku-5-5",
     async complete(req) {
       calls.push(req);
-      const out = await reply(req.prompt);
+      const out = onlyThisBatch(await reply(req.prompt));
       usage.record({
         kind: "completion",
         provider: "anthropic",
@@ -186,12 +186,25 @@ const row = async (id: string) =>
   (await t.db.select().from(memories).where(eq(memories.id, id)))[0];
 
 /** The ref the prompt gave the memory whose text contains `text`. */
+/** The ref of the memory holding `text` in this prompt, or "" when it's in another batch. */
 function refOf(prompt: string, text: string): string {
   const blocks = prompt.split("\n\n");
   const b = blocks.find((x) => x.includes(text));
-  const ref = b?.match(/^\[(m\d+)\]/)?.[1];
-  if (!ref) throw new Error(`no memory with "${text}" in the prompt`);
-  return ref;
+  return b?.match(/^\[(m\d+)\]/)?.[1] ?? "";
+}
+
+/** Drops the verdicts a reply gives for memories that sit in another batch. */
+function onlyThisBatch(out: string): string {
+  try {
+    const r = JSON.parse(out) as { results?: { id?: string }[] };
+    if (!Array.isArray(r.results)) return out;
+    return JSON.stringify({
+      ...r,
+      results: r.results.filter((x) => x.id !== ""),
+    });
+  } catch {
+    return out;
+  }
 }
 
 async function call(method: string, path: string) {
@@ -571,7 +584,7 @@ describe("AC5: Activity shows the pass's changes, which can be undone", () => {
 });
 
 describe("AC6: one owner and visibility per call, and nothing done twice", () => {
-  test("one model call holds one owner's memories of one visibility", async () => {
+  test("one model call holds one owner's memories of one scope and project", async () => {
     const [other] = await t.db
       .select()
       .from(projects)
@@ -591,9 +604,11 @@ describe("AC6: one owner and visibility per call, and nothing done twice", () =>
     });
     await pass();
     const prompts = calls.map((c) => c.prompt);
-    expect(prompts).toHaveLength(4);
+    expect(prompts).toHaveLength(5);
     const holding = (text: string) => prompts.filter((p) => p.includes(text));
-    expect(holding("/nitpick")).toEqual(holding("Private fact in silk."));
+    // A user-scoped practice never shares a call with a repo's private text.
+    expect(holding("/nitpick")).toHaveLength(1);
+    expect(holding("/nitpick")[0]).not.toContain("Private fact in silk.");
     expect(holding("Team fact in silk.")).toHaveLength(1);
     expect(holding("Team fact in silk.")[0]).not.toContain("fact in other");
     expect(holding("Team fact in silk.")[0]).not.toContain("Private");
@@ -722,10 +737,14 @@ describe("AC6: one owner and visibility per call, and nothing done twice", () =>
     };
     const r = await pass();
     expect(r.changes).toEqual([]);
-    expect(r.skipped).toEqual([
-      { memoryId: chore, owner: "alice", why: "changed" },
-      { memoryId: practice, owner: "alice", why: "changed" },
-    ]);
+    // They sit in separate batches, so the order of the two doesn't matter.
+    expect(r.skipped).toHaveLength(2);
+    expect(r.skipped).toEqual(
+      expect.arrayContaining([
+        { memoryId: chore, owner: "alice", why: "changed" },
+        { memoryId: practice, owner: "alice", why: "changed" },
+      ]),
+    );
     expect((await row(chore))?.status).toBe("active");
     expect((await row(practice))?.status).toBe("active");
     expect(await t.db.select().from(memories)).toHaveLength(2);
