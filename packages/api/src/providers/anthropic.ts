@@ -21,7 +21,8 @@ export function anthropicLlm(opts: AnthropicOptions): LlmProvider {
   const baseUrl = opts.baseUrl ?? "https://api.anthropic.com";
   return {
     model,
-    async complete({ system, prompt, maxTokens }) {
+    provider: "anthropic",
+    async complete({ system, prompt, maxTokens, signal }) {
       const json = (await postJson(
         "anthropic",
         fetchFn,
@@ -33,6 +34,7 @@ export function anthropicLlm(opts: AnthropicOptions): LlmProvider {
           ...(system ? { system } : {}),
           messages: [{ role: "user", content: prompt }],
         },
+        signal,
       )) as {
         content?: { type: string; text?: string }[];
         usage?: { input_tokens?: number; output_tokens?: number };

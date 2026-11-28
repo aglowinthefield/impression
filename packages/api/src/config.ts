@@ -5,7 +5,12 @@ export interface Config {
   databaseUrl: string;
   /** Null when GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET aren't both set. */
   github: GithubConfig | null;
+  /** Lifetime backfill spend allowed per person, in US dollars. */
+  backfillBudgetUsd: number;
 }
+
+/** Default lifetime backfill budget per person, in US dollars. */
+export const BACKFILL_BUDGET_USD = 10;
 
 export interface GithubConfig {
   clientId: string;
@@ -27,10 +32,19 @@ export function loadConfig(
       `PORT must be an integer from 0 to 65535, got "${env.PORT}"`,
     );
   }
+  const backfillBudgetUsd = Number(
+    env.BACKFILL_BUDGET_USD || BACKFILL_BUDGET_USD,
+  );
+  if (!Number.isFinite(backfillBudgetUsd) || backfillBudgetUsd < 0) {
+    throw new Error(
+      `BACKFILL_BUDGET_USD must be a dollar amount of 0 or more, got "${env.BACKFILL_BUDGET_USD}"`,
+    );
+  }
   return {
     port,
     databaseUrl: env.DATABASE_URL ?? DEFAULT_DATABASE_URL,
     github: loadGithubConfig(env),
+    backfillBudgetUsd,
   };
 }
 

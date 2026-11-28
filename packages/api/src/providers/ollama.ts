@@ -60,7 +60,8 @@ export function ollamaLlm(
   const baseUrl = opts.baseUrl ?? "http://localhost:11434";
   return {
     model: opts.model,
-    async complete({ system, prompt, maxTokens }) {
+    provider: "ollama",
+    async complete({ system, prompt, maxTokens, signal }) {
       const json = (await postJson(
         "ollama",
         fetchFn,
@@ -75,6 +76,7 @@ export function ollamaLlm(
             { role: "user", content: prompt },
           ],
         },
+        signal,
       )) as {
         message?: { content?: string };
         prompt_eval_count?: number;

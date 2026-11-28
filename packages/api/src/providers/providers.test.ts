@@ -183,6 +183,35 @@ describe("createProviders", () => {
     });
     expect(p.llm.model).toBe("claude-haiku-5-5");
     expect(p.dreamLlm.model).toBe("claude-sonnet-5-5");
+    expect(p.backfillLlm.model).toBe("claude-sonnet-5-5");
+  });
+
+  test("BACKFILL_MODEL picks the backfill model and leaves live extraction alone", () => {
+    const p = createProviders({ ...keys, BACKFILL_MODEL: "claude-sonnet-4-5" });
+    expect([p.llm.model, p.backfillLlm.model]).toEqual([
+      "claude-haiku-5-5",
+      "claude-sonnet-4-5",
+    ]);
+    const q = createProviders({ ...keys, LLM_MODEL: "claude-haiku-4-5" });
+    expect([q.llm.model, q.backfillLlm.model]).toEqual([
+      "claude-haiku-4-5",
+      "claude-sonnet-5-5",
+    ]);
+  });
+
+  test("refuses a backfill model with no price, naming it", () => {
+    expect(() =>
+      createProviders({ ...keys, BACKFILL_MODEL: "claude-opus-5" }),
+    ).toThrow(/BACKFILL_MODEL "claude-opus-5" has no price/);
+    // A local Ollama model costs nothing, so it counts as priced.
+    expect(
+      createProviders({
+        ...keys,
+        LLM_PROVIDER: "ollama",
+        LLM_MODEL: "qwen",
+        BACKFILL_MODEL: "anything",
+      }).backfillLlm.model,
+    ).toBe("anything");
   });
 
   test("names the missing key", () => {
@@ -205,11 +234,12 @@ describe("createProviders", () => {
       LLM_PROVIDER: "ollama",
       LLM_MODEL: "qwen",
     });
-    expect([p.embeddings.model, p.llm.model, p.dreamLlm.model]).toEqual([
-      "big-embed",
-      "qwen",
-      "qwen",
-    ]);
+    expect([
+      p.embeddings.model,
+      p.llm.model,
+      p.dreamLlm.model,
+      p.backfillLlm.model,
+    ]).toEqual(["big-embed", "qwen", "qwen", "qwen"]);
   });
 
   test("rejects an embedding model whose size doesn't match the column", () => {

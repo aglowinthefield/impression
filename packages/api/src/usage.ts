@@ -12,6 +12,8 @@ export interface UsageContext {
   operation: string;
   /** Collects this context's model calls, so a job can report its own cost. */
   tally?: ModelUsage[];
+  /** Collects this context's usage inserts, so a caller can wait until its spend is summable. */
+  inserts?: Promise<void>[];
 }
 
 const storage = new AsyncLocalStorage<UsageContext>();
@@ -46,6 +48,11 @@ const PRICES: Record<string, [number, number]> = {
   "anthropic/claude-haiku-5-5": [0.1, 0.5],
   "anthropic/claude-sonnet-5-5": [2, 10],
 };
+
+/** Whether calls to this model get a cost: a local Ollama model, or one with a price above. */
+export function hasPrice(provider: ModelUsage["provider"], model: string) {
+  return provider === "ollama" || `${provider}/${model}` in PRICES;
+}
 
 /** Estimated cost in millionths of a dollar. 0 for local Ollama models, null for unknown ones. */
 export function costMicros(u: ModelUsage): number | null {
@@ -110,7 +117,7 @@ export class UsageRecorder {
       principal: null,
       operation: "job",
     };
-    const { tally, ...who } = ctx;
+    const { tally, inserts, ...who } = ctx;
     tally?.push(u);
     const cost = costMicros(u);
     const labels = {
@@ -151,6 +158,7 @@ export class UsageRecorder {
       )
       .finally(() => this.pending.delete(p));
     this.pending.add(p);
+    inserts?.push(p);
     return p;
   };
 }

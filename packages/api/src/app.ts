@@ -3,7 +3,8 @@ import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
 import { activityRoutes } from "./activity.js";
 import { type AuthEnv, requireAuth } from "./auth.js";
-import type { GithubConfig } from "./config.js";
+import { EXTRACT_DEADLINE_MS, backfillRoutes } from "./backfill.js";
+import { BACKFILL_BUDGET_USD, type GithubConfig } from "./config.js";
 import { coreRoutes } from "./core.js";
 import type { Db } from "./db/client.js";
 import { dreamRoutes } from "./dream.js";
@@ -35,8 +36,13 @@ export function createApp(
     githubClient?: GithubClient;
     /** Replaces the default 10-minute repo access cache, for tests. */
     repoAccess?: RepoAccess;
+    /** Lifetime backfill spend allowed per person, in US dollars. */
+    backfillBudgetUsd?: number;
+    /** How long a backfill extraction's model call may take. Tests shorten it. */
+    backfillDeadlineMs?: number;
   } = {},
 ) {
+  const backfillBudgetUsd = opts.backfillBudgetUsd ?? BACKFILL_BUDGET_USD;
   const app = new Hono<AuthEnv>();
 
   // Unauthenticated: used by load balancers and `doctor`-style checks.
@@ -77,7 +83,17 @@ export function createApp(
   api.route("/memories", memoryRoutes(db, providers));
   api.route("/core", coreRoutes(db));
   api.route("/search", searchRoutes(db, providers));
-  api.route("/sessions", sessionRoutes(db, providers));
+  api.route(
+    "/sessions",
+    sessionRoutes(db, providers, {
+      backfillBudgetUsd,
+      backfillDeadlineMs: opts.backfillDeadlineMs ?? EXTRACT_DEADLINE_MS,
+    }),
+  );
+  api.route(
+    "/backfill",
+    backfillRoutes(db, providers, { budgetUsd: backfillBudgetUsd }),
+  );
   api.route("/projects", projectRoutes(db));
   api.route("/evals", evalRoutes(db));
   api.route("/dream", dreamRoutes(db, providers));
