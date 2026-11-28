@@ -5,8 +5,8 @@ import { type Access, findProject, memoryVisible } from "./access.js";
 import type { AuthEnv } from "./auth.js";
 import type { Db, Tx } from "./db/client.js";
 import { anchors, memories, memoryEvents } from "./db/schema.js";
-import { logEvent } from "./events.js";
-import { embedMemory, PERSON_CHECKED } from "./memories.js";
+import { logEvent, PASS_BY } from "./events.js";
+import { embedMemory } from "./memories.js";
 import type { Providers } from "./providers/index.js";
 
 const PAGE = 50;
@@ -107,6 +107,9 @@ function inProject(projectId: string | null): SQL {
     : sql`(m.scope = 'user' AND m.project_id IS NULL)`;
 }
 
+/** The event's actor as Activity shows it: the scope pass's events are stored as extraction's (events.ts). */
+const actorOf = sql`CASE WHEN e.detail->>'by' = ${PASS_BY} THEN 'pass' ELSE e.actor::text END`;
+
 async function eventRows(
   db: Db,
   access: Access,
@@ -116,7 +119,7 @@ async function eventRows(
 ): Promise<EventRow[]> {
   const visible = await memoryVisible(db, access, principal, "m");
   return db.execute<EventRow>(sql`
-    SELECT e.id, ${atText("e.created_at")} AS at, e.kind, e.actor, e.principal, e.reason,
+    SELECT e.id, ${atText("e.created_at")} AS at, e.kind, ${actorOf} AS actor, e.principal, e.reason,
       e.detail, e.undone_by, u.kind AS undoes_kind,
       m.id AS memory_id, m.content, m.scope, m.status, m.owner,
       s.id AS session_id, s.owner AS session_owner, s.agent AS session_agent
@@ -357,7 +360,7 @@ export function activityRoutes(db: Db, providers: Providers) {
     let events: EventRow[] = [];
     if (q.source !== "dream") {
       const where: SQL[] = [q.project ? inProject(p?.id ?? null) : sql`true`];
-      if (q.source) where.push(sql`e.actor = ${q.source}`);
+      if (q.source) where.push(sql`${actorOf} = ${q.source}`);
       if (cursor)
         where.push(
           sql`(e.created_at, e.id::text) < (${cursor.at}::timestamptz, ${cursor.id})`,
@@ -526,11 +529,6 @@ export function activityRoutes(db: Db, providers: Providers) {
           memoryId: e.ev.memoryId,
           detail,
         });
-        // An undo is the person's change: the one-time scope pass leaves these alone.
-        await tx
-          .update(memories)
-          .set(PERSON_CHECKED)
-          .where(inArray(memories.id, touched));
         const undoId = await logEvent(
           tx,
           e.ev.memoryId,

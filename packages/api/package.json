@@ -19,6 +19,7 @@
     "db:migrate": "tsx src/db/migrate-cli.ts",
     "db:reembed": "tsx src/reembed-cli.ts",
     "db:dream": "tsx src/dream-cli.ts",
+    "db:scope-pass": "tsx src/scope-pass-cli.ts",
     "db:accept-backlog": "tsx src/accept-backlog-cli.ts",
     "token:create": "tsx src/token-cli.ts",
     "owner:rename": "tsx src/owner-rename-cli.ts"

@@ -81,15 +81,6 @@ export const memories = pgTable(
     updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     /** Last automatic staleness check. Kept apart from updatedAt so a check doesn't count as recent. */
     checkedAt: timestamp({ withTimezone: true }),
-    /**
-     * When the one-time pass for practices and to-dos (scope-pass.ts) checked it.
-     * Null only on memories stored before that pass shipped: the migration adds
-     * the column empty and then defaults it to the insert time, because memories
-     * written since follow those rules from extraction on.
-     */
-    scopeCheckedAt: timestamp({ withTimezone: true }).defaultNow(),
-    /** Replies from that pass's model that couldn't be read for this memory's batch. It gives up at a few. */
-    scopeAttempts: integer().notNull().default(0),
     search: tsvector().generatedAlwaysAs(
       (): ReturnType<typeof sql> => sql`to_tsvector('english', content)`,
     ),
@@ -136,12 +127,11 @@ export const memoryEventKindEnum = pgEnum("memory_event_kind", [
   "undone",
 ]);
 
-/** Who changed a memory: extraction, the staleness check, a person, or the one-time practice and to-do pass. */
+/** Who changed a memory: extraction, the staleness check, or a person. */
 export const memoryEventActorEnum = pgEnum("memory_event_actor", [
   "extraction",
   "check",
   "person",
-  "pass",
 ]);
 
 /**

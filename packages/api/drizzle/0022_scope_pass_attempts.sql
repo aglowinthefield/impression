@@ -1,1 +1,0 @@
-ALTER TABLE "memories" ADD COLUMN "scope_attempts" integer DEFAULT 0 NOT NULL;

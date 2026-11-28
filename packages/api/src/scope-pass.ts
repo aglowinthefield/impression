@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, type SQL, sql } from "drizzle-orm";
+import { and, eq, isNull, type SQL, sql } from "drizzle-orm";
 import { z } from "zod";
 import { Access, ADMIN_ACCESS, canReach, memoryVisible } from "./access.js";
 import type { Db, Tx } from "./db/client.js";
@@ -19,10 +19,17 @@ import { withUsageContext } from "./usage.js";
 
 /**
  * The one-time pass over memories stored before extraction learned to keep repo
- * specifics out of practices and to keep no to-dos. It applies the same two rules
- * to each memory with a null `scope_checked_at`, one person's memories at a time,
- * and sets that mark in the same transaction as its change, or alone when nothing
- * changes. Memories stored since get the mark at insert, so they are never checked.
+ * specifics out of practices and to keep no to-dos. An agent runs it once with
+ * `pnpm db:scope-pass` (scope-pass-cli.ts), dry run first. It applies the same two
+ * rules to the live memories created before a cutoff, one owner at a time, in
+ * small batches that each hold one owner's memories of one visibility: their
+ * private ones, or their team ones in one project. So a model call never sees
+ * private text next to text others can read, and a reason written on a team
+ * memory can't quote a private one (memories/I2).
+ *
+ * It keeps no mark of what it checked. A second run with the same cutoff doesn't
+ * read what the first changed, since that is no longer live, nor what it created,
+ * since that was created after the cutoff.
  *
  * It acts only where the owner has access now, read the way a request from them
  * would be: an admin token sees every project, a GitHub sign-in sees the repos
@@ -33,14 +40,10 @@ import { withUsageContext } from "./usage.js";
 
 /** Memories sent to the model in one call. */
 export const SCOPE_PASS_BATCH = 20;
-/** Batches per sweep of the schedule, so one sweep stays short. */
-export const SCOPE_PASS_BATCHES_PER_SWEEP = 10;
 /** Usage operation every model call of the pass is recorded under. */
 export const SCOPE_PASS_OPERATION = "scope-pass";
-/** Unreadable replies for one batch before its memories are marked checked unchanged. */
+/** Unreadable replies for one batch before the pass gives up on it and leaves its memories alone. */
 export const SCOPE_PASS_MAX_ATTEMPTS = 3;
-
-const LIVE = ["active", "possibly_stale"] as const;
 
 export const SYSTEM = `You check memories already saved for one developer against two rules that new memories now follow. Each memory is either a practice (how the user likes work done, shown in every repo they work in) or a fact (about one repo).
 Rule 1, for practices only. ${PRACTICE_SPECIFICS_RULE}
@@ -111,6 +114,8 @@ interface Row extends Record<string, unknown> {
   superseded_by: string | null;
   /** updated_at as text, so a write can tell the memory changed since it was read. */
   seen: string;
+  /** created_at as text, the cursor for the next batch. */
+  created: string;
 }
 
 interface Repo {
@@ -119,17 +124,46 @@ interface Repo {
   own: boolean;
 }
 
-export interface ScopePassResult {
+/** One change the pass made, or with --dry-run would make. */
+export interface ScopePassChange {
+  memoryId: string;
   owner: string;
-  /** Memories marked checked, skipped ones included. */
-  checked: number;
+  old: string;
+  /** Retire it, or supersede it with `practice` plus `fact`. */
+  action: "retire" | "split";
+  /** The practice without the repo's specifics, scrubbed. */
+  practice?: string;
+  /** The fact split out, scrubbed. Null when no repo the owner can access now takes it, so it is dropped. */
+  fact?: { project: string; text: string } | null;
+  /** The model's reason for a retire, scrubbed. */
+  why?: string | null;
+}
+
+/** A memory the pass left alone because it couldn't act on it safely. */
+export interface ScopePassSkip {
+  memoryId: string;
+  owner: string;
+  /** "changed": its updated_at moved between reading and writing. "unreadable": its batch got no readable reply. */
+  why: "changed" | "unreadable";
+}
+
+export interface ScopePassReport {
+  changes: ScopePassChange[];
+  /** Memories read and left as they are. */
   kept: number;
-  retired: number;
-  split: number;
-  /** Splits whose fact had no repo the person can access now, so only the practice changed. */
-  factsDropped: number;
-  /** Changed by their author before the pass reached them, so left as they are. */
-  skipped: number;
+  skipped: ScopePassSkip[];
+}
+
+export interface ScopePassOptions {
+  /** Only memories created before this are read. */
+  before: Date;
+  /** Read and ask the model, but change no memory and log no event. */
+  dryRun?: boolean;
+  /** Repo access for owners who sign in with GitHub. */
+  repos?: RepoSource;
+  batchSize?: number;
+  /** Called with each change as it is made, or proposed in a dry run. */
+  onChange?: (c: ScopePassChange) => void;
 }
 
 /** Where repo access comes from: `RepoAccess` in the app, a fake in tests. */
@@ -273,64 +307,71 @@ export function buildScopePassPrompt(
 const tooLong = (text: string, original: string) =>
   text.length > Math.max(2 * original.length, original.length + 200);
 
-/** Thrown inside a write when the memory changed since the batch read it. */
+/** Thrown inside a write when the memory changed since its batch read it. */
 class Moved extends Error {}
 
 /**
- * Checks the next batch of one person: their oldest unchecked live memories that
- * `access` (from `ownerAccess`) lets the pass read. Returns null when none is left.
- * Throws when the model call fails or its reply has no results, leaving the batch
- * unchecked for the next sweep; after SCOPE_PASS_MAX_ATTEMPTS unreadable replies
- * its memories are marked checked with no change, so a bad batch isn't billed forever.
+ * Runs the pass over every live memory created before `opts.before`, one owner
+ * at a time. Each owner's memories go in batches of one visibility: private
+ * (user and project scope) together, team ones one project at a time.
  */
-export async function runScopePassBatch(
+export async function runScopePass(
+  db: Db,
+  providers: Providers,
+  opts: ScopePassOptions,
+): Promise<ScopePassReport> {
+  const report: ScopePassReport = { changes: [], kept: 0, skipped: [] };
+  const size = opts.batchSize ?? SCOPE_PASS_BATCH;
+  const owners = await db.execute<{ owner: string }>(sql`
+    SELECT DISTINCT owner FROM memories
+    WHERE status IN ('active', 'possibly_stale') AND created_at < ${opts.before.toISOString()}::timestamptz
+    ORDER BY owner`);
+  for (const { owner } of owners) {
+    const access = await ownerAccess(db, owner, opts.repos);
+    const visible = await checkable(db, access, owner, "m");
+    const base = sql`m.owner = ${owner} AND m.status IN ('active', 'possibly_stale')
+      AND m.created_at < ${opts.before.toISOString()}::timestamptz AND ${visible}`;
+    const teams = await db.execute<{ project_id: string }>(sql`
+      SELECT DISTINCT m.project_id FROM memories m
+      WHERE ${base} AND m.scope = 'team' ORDER BY m.project_id`);
+    const groups = [
+      sql`m.scope <> 'team'`,
+      ...teams.map(
+        (g) => sql`m.scope = 'team' AND m.project_id = ${g.project_id}`,
+      ),
+    ];
+    for (const group of groups) {
+      let after: { at: string; id: string } | null = null;
+      for (;;) {
+        const rows: Row[] = await db.execute<Row>(sql`
+          SELECT m.id, m.scope, p.key AS project_key, m.content, m.tags, m.agent,
+            m.session_id, m.confidence, m.status, m.stale_reason, m.superseded_by,
+            m.updated_at::text AS seen, m.created_at::text AS created
+          FROM memories m LEFT JOIN projects p ON p.id = m.project_id
+          WHERE ${base} AND ${group}
+            ${after ? sql`AND (m.created_at, m.id) > (${after.at}::timestamptz, ${after.id}::uuid)` : sql``}
+          ORDER BY m.created_at, m.id
+          LIMIT ${size}`);
+        const last = rows[rows.length - 1];
+        if (!last) break;
+        after = { at: last.created, id: last.id };
+        await runBatch(db, providers, owner, access, rows, opts, report);
+      }
+    }
+  }
+  return report;
+}
+
+/** Asks the model about one batch, then makes (or in a dry run, reports) its changes. */
+async function runBatch(
   db: Db,
   providers: Providers,
   owner: string,
   access: Access | null,
-  size = SCOPE_PASS_BATCH,
-): Promise<ScopePassResult | null> {
-  const result: ScopePassResult = {
-    owner,
-    checked: 0,
-    kept: 0,
-    retired: 0,
-    split: 0,
-    factsDropped: 0,
-    skipped: 0,
-  };
-
-  // The person's own changes win: a memory they changed is theirs, not the pass's.
-  // Since the release every person write sets the mark itself; this catches what
-  // they did before it, which left a person event.
-  const skipped = await db
-    .update(memories)
-    .set({ scopeCheckedAt: new Date() })
-    .where(
-      and(
-        eq(memories.owner, owner),
-        isNull(memories.scopeCheckedAt),
-        inArray(memories.status, LIVE),
-        await checkable(db, access, owner, "memories"),
-        sql`EXISTS (SELECT 1 FROM memory_events e WHERE e.memory_id = ${memories.id} AND e.actor = 'person')`,
-      ),
-    )
-    .returning({ id: memories.id });
-  result.skipped = skipped.length;
-  result.checked += skipped.length;
-
-  const rows = await db.execute<Row>(sql`
-    SELECT m.id, m.scope, p.key AS project_key, m.content, m.tags, m.agent,
-      m.session_id, m.confidence, m.status, m.stale_reason, m.superseded_by,
-      m.updated_at::text AS seen
-    FROM memories m LEFT JOIN projects p ON p.id = m.project_id
-    WHERE m.owner = ${owner} AND m.scope_checked_at IS NULL
-      AND m.status IN ('active', 'possibly_stale')
-      AND ${await checkable(db, access, owner, "m")}
-    ORDER BY m.created_at, m.id
-    LIMIT ${size}`);
-  if (rows.length === 0) return result.checked > 0 ? result : null;
-
+  rows: Row[],
+  opts: ScopePassOptions,
+  report: ScopePassReport,
+) {
   const isPractice = (r: Row) => r.tags.includes(PRACTICE_TAG);
   const repos = await reposFor(
     db,
@@ -351,104 +392,107 @@ export async function runScopePassBatch(
     principal: owner,
     operation: SCOPE_PASS_OPERATION,
   };
-  const reply = await withUsageContext(usage, () =>
-    providers.llm.complete({
-      system: SYSTEM,
-      prompt: buildScopePassPrompt(items),
-      maxTokens: 4000,
-    }),
-  );
-  const verdicts = parseScopePass(reply);
-  if (!verdicts) {
-    // Billed but unreadable. Count it, and give up on these memories at the limit.
-    await db
-      .update(memories)
-      .set({
-        scopeAttempts: sql`${memories.scopeAttempts} + 1`,
-        scopeCheckedAt: sql`CASE WHEN ${memories.scopeAttempts} + 1 >= ${SCOPE_PASS_MAX_ATTEMPTS} THEN now() END`,
-      })
-      .where(
-        and(
-          inArray(
-            memories.id,
-            rows.map((r) => r.id),
-          ),
-          isNull(memories.scopeCheckedAt),
-        ),
+  let verdicts: Map<string, ScopeVerdict> | null = null;
+  for (let i = 0; i < SCOPE_PASS_MAX_ATTEMPTS && !verdicts; i++) {
+    try {
+      const reply = await withUsageContext(usage, () =>
+        providers.llm.complete({
+          system: SYSTEM,
+          prompt: buildScopePassPrompt(items),
+          maxTokens: 4000,
+        }),
       );
-    throw new Error("the scope pass got no results from the model");
+      verdicts = parseScopePass(reply);
+    } catch (err) {
+      console.error(
+        "scope pass model call failed:",
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+  if (!verdicts) {
+    for (const r of rows)
+      report.skipped.push({ memoryId: r.id, owner, why: "unreadable" });
+    return;
   }
 
   const source: EventSource = { actor: "pass", principal: owner };
+  /** Locks the memory, or throws Moved when it changed since the batch read it. */
+  const hold = async (tx: Tx, r: Row) => {
+    const [ok] = await tx.execute(sql`
+      SELECT id FROM memories
+      WHERE id = ${r.id} AND status IN ('active', 'possibly_stale')
+        AND updated_at::text = ${r.seen}
+      FOR UPDATE`);
+    if (!ok) throw new Moved();
+  };
+
   for (const item of items) {
     const r = item.row;
     const v = verdicts.get(item.ref) ?? { id: item.ref, action: "keep" };
-    const claim = (
-      tx: Db | Tx,
-      set: Partial<typeof memories.$inferInsert> = {},
-    ) =>
-      tx
-        .update(memories)
-        .set({ scopeCheckedAt: new Date(), ...set })
-        .where(
-          and(
-            eq(memories.id, r.id),
-            isNull(memories.scopeCheckedAt),
-            inArray(memories.status, LIVE),
-            sql`${memories.updatedAt}::text = ${r.seen}`,
-          ),
-        )
-        .returning({ id: memories.id });
+    const base = { memoryId: r.id, owner, old: r.content };
 
-    try {
-      if (v.action === "retire") {
-        const why = v.why ? scrub(v.why).text : null;
-        await db.transaction(async (tx) => {
-          const [ok] = await claim(tx, {
-            status: "retired",
-            updatedAt: new Date(),
+    if (v.action === "retire") {
+      const why = v.why ? scrub(v.why).text : null;
+      const change: ScopePassChange = { ...base, action: "retire", why };
+      if (!opts.dryRun) {
+        try {
+          await db.transaction(async (tx) => {
+            await hold(tx, r);
+            await tx
+              .update(memories)
+              .set({ status: "retired", updatedAt: new Date() })
+              .where(eq(memories.id, r.id));
+            await logEvent(tx, r.id, "retired", source, {
+              previous: {
+                status: r.status,
+                staleReason: r.stale_reason,
+                supersededBy: r.superseded_by,
+              },
+              why,
+            });
           });
-          if (!ok) throw new Moved();
-          await logEvent(tx, r.id, "retired", source, {
-            previous: {
-              status: r.status,
-              staleReason: r.stale_reason,
-              supersededBy: r.superseded_by,
-            },
-            why,
-          });
-        });
-        result.retired++;
-        result.checked++;
-        continue;
-      }
-
-      const split = v.action === "split" && item.practice ? v : null;
-      const practice = split ? scrub(split.practice).text : "";
-      if (
-        !split ||
-        isEmptyAfterScrub(practice) ||
-        practice === r.content ||
-        tooLong(practice, r.content)
-      ) {
-        const [ok] = await claim(db);
-        if (ok) {
-          result.kept++;
-          result.checked++;
+        } catch (err) {
+          if (!(err instanceof Moved)) throw err;
+          report.skipped.push({ memoryId: r.id, owner, why: "changed" });
+          continue;
         }
-        continue;
       }
+      report.changes.push(change);
+      opts.onChange?.(change);
+      continue;
+    }
 
-      const target = split.project?.toLowerCase();
-      const repo = item.repos.find((x) => x.key.toLowerCase() === target);
-      const factText = split.fact ? scrub(split.fact).text : "";
-      const fact =
-        access &&
-        repo &&
-        !isEmptyAfterScrub(factText) &&
-        !tooLong(factText, r.content)
-          ? { key: repo.key, text: factText, access }
-          : null;
+    const split = v.action === "split" && item.practice ? v : null;
+    const practice = split ? scrub(split.practice).text : "";
+    if (
+      !split ||
+      isEmptyAfterScrub(practice) ||
+      practice === r.content ||
+      tooLong(practice, r.content)
+    ) {
+      report.kept++;
+      continue;
+    }
+
+    const target = split.project?.toLowerCase();
+    const repo = item.repos.find((x) => x.key.toLowerCase() === target);
+    const factText = split.fact ? scrub(split.fact).text : "";
+    const fact =
+      access &&
+      repo &&
+      !isEmptyAfterScrub(factText) &&
+      !tooLong(factText, r.content)
+        ? { project: repo.key, text: factText }
+        : null;
+    const change: ScopePassChange = {
+      ...base,
+      action: "split",
+      practice,
+      fact,
+    };
+
+    if (!opts.dryRun) {
       const vectors = await withUsageContext(usage, () =>
         providers.embeddings.embed(fact ? [practice, fact.text] : [practice]),
       ).catch((err: unknown) => {
@@ -458,117 +502,67 @@ export async function runScopePassBatch(
         );
         return [] as number[][];
       });
-
-      const stored = await withUsageContext(usage, () =>
-        db.transaction(async (tx) => {
-          const [ok] = await claim(tx);
-          if (!ok) throw new Moved();
-          const kept = await createMemory(
-            tx,
-            providers,
-            owner,
-            {
-              scope: "user",
-              content: practice,
-              tags: r.tags,
-              confidence: r.confidence ?? undefined,
-              agent: r.agent ?? undefined,
-              sessionId: r.session_id ?? undefined,
-              // The merge path in the dedup check stores model text unscrubbed (#127).
-              dedup: false,
-              anchors: [],
-            },
-            undefined,
-            { embedding: vectors[0] ?? null, event: false },
-          );
-          const keptId = kept.status === 201 ? kept.body.id : undefined;
-          if (!keptId) throw new Error("split practice not stored");
-          await markSuperseded(tx, [r.id], keptId);
-          await logEvent(tx, keptId, "superseded", source, {
-            replaced: [{ id: r.id, content: r.content, status: r.status }],
-          });
-          if (!fact) return false;
-          const added = await createMemory(
-            tx,
-            providers,
-            owner,
-            {
-              scope: "project",
-              project: { key: fact.key },
-              content: fact.text,
-              tags: r.tags.filter((t) => t !== PRACTICE_TAG),
-              confidence: r.confidence ?? undefined,
-              agent: r.agent ?? undefined,
-              sessionId: r.session_id ?? undefined,
-              dedup: false,
-              anchors: [],
-            },
-            // Checked the way extraction checks it: a repo they can't access refuses it.
-            fact.access,
-            { embedding: vectors[1] ?? null, event: false },
-          );
-          const addedId = added.status === 201 ? added.body.id : undefined;
-          if (!addedId) return false;
-          await logEvent(tx, addedId, "added", source, {
-            splitFrom: r.id,
-          });
-          return true;
-        }),
-      );
-      result.split++;
-      if (!stored) result.factsDropped++;
-      result.checked++;
-    } catch (err) {
-      // Changed since the batch read it: the next batch reads it again.
-      if (err instanceof Moved) continue;
-      throw err;
-    }
-  }
-  return result;
-}
-
-/**
- * Runs batches, one person at a time from the one waiting longest, until every
- * memory the pass may read is checked or `maxBatches` ran. A failed batch is
- * logged and moves on to the next person; its memories stay unchecked for the
- * next sweep, up to SCOPE_PASS_MAX_ATTEMPTS unreadable replies.
- */
-export async function sweepScopePass(
-  db: Db,
-  providers: Providers,
-  opts: { batchSize?: number; maxBatches?: number; repos?: RepoSource } = {},
-): Promise<ScopePassResult[]> {
-  const done: ScopePassResult[] = [];
-  let left = opts.maxBatches ?? SCOPE_PASS_BATCHES_PER_SWEEP;
-  const owners = await db.execute<{ owner: string }>(sql`
-    SELECT owner FROM memories
-    WHERE scope_checked_at IS NULL AND status IN ('active', 'possibly_stale')
-    GROUP BY owner
-    ORDER BY min(created_at), owner`);
-  for (const { owner } of owners) {
-    if (left <= 0) break;
-    const access = await ownerAccess(db, owner, opts.repos);
-    while (left > 0) {
-      left--;
-      let r: ScopePassResult | null;
       try {
-        r = await runScopePassBatch(
-          db,
-          providers,
-          owner,
-          access,
-          opts.batchSize,
+        change.fact = await withUsageContext(usage, () =>
+          db.transaction(async (tx) => {
+            await hold(tx, r);
+            const kept = await createMemory(
+              tx,
+              providers,
+              owner,
+              {
+                scope: "user",
+                content: practice,
+                tags: r.tags,
+                confidence: r.confidence ?? undefined,
+                agent: r.agent ?? undefined,
+                sessionId: r.session_id ?? undefined,
+                // The merge path in the dedup check stores model text unscrubbed (#127).
+                dedup: false,
+                anchors: [],
+              },
+              undefined,
+              { embedding: vectors[0] ?? null, event: false },
+            );
+            const keptId = kept.status === 201 ? kept.body.id : undefined;
+            if (!keptId) throw new Error("split practice not stored");
+            await markSuperseded(tx, [r.id], keptId);
+            await logEvent(tx, keptId, "superseded", source, {
+              replaced: [{ id: r.id, content: r.content, status: r.status }],
+            });
+            if (!fact || !access) return null;
+            const added = await createMemory(
+              tx,
+              providers,
+              owner,
+              {
+                scope: "project",
+                project: { key: fact.project },
+                content: fact.text,
+                tags: r.tags.filter((t) => t !== PRACTICE_TAG),
+                confidence: r.confidence ?? undefined,
+                agent: r.agent ?? undefined,
+                sessionId: r.session_id ?? undefined,
+                dedup: false,
+                anchors: [],
+              },
+              // Checked the way extraction checks it: a repo they can't access refuses it.
+              access,
+              { embedding: vectors[1] ?? null, event: false },
+            );
+            const addedId = added.status === 201 ? added.body.id : undefined;
+            if (!addedId) return null;
+            await logEvent(tx, addedId, "added", source, { splitFrom: r.id });
+            return fact;
+          }),
         );
       } catch (err) {
-        console.error("scope pass batch failed:", err);
-        break;
+        if (!(err instanceof Moved)) throw err;
+        report.skipped.push({ memoryId: r.id, owner, why: "changed" });
+        continue;
       }
-      if (!r) {
-        left++;
-        break;
-      }
-      done.push(r);
     }
+    report.changes.push(change);
+    opts.onChange?.(change);
   }
-  return done;
 }

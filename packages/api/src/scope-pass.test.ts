@@ -6,7 +6,6 @@ import {
   describe,
   expect,
   test,
-  vi,
 } from "vitest";
 import type { Entry } from "./activity.js";
 import { createApp } from "./app.js";
@@ -19,7 +18,6 @@ import {
   usageEvents,
   users,
 } from "./db/schema.js";
-import { startDreamSchedule, SWEEP_MS } from "./dream-schedule.js";
 import { logEvent } from "./events.js";
 import {
   PRACTICE_SPECIFICS_RULE,
@@ -27,14 +25,14 @@ import {
   SYSTEM as EXTRACT_SYSTEM,
   TODO_RULE,
 } from "./extract.js";
-import { createMemory } from "./memories.js";
 import type { CompleteRequest } from "./providers/index.js";
 import {
   parseScopePass,
   type RepoSource,
+  runScopePass,
   SCOPE_PASS_MAX_ATTEMPTS,
   SCOPE_PASS_OPERATION,
-  sweepScopePass,
+  type ScopePassOptions,
 } from "./scope-pass.js";
 import { createTestDb } from "./test-db.js";
 import { fakeProviders } from "./test-providers.js";
@@ -150,7 +148,11 @@ async function session(touched: string[] = [], owner = "alice") {
   return s?.id as string;
 }
 
-/** A memory stored before the release: no check mark yet. */
+/** Runs the pass with a cutoff of now, as the script does by default. */
+const pass = (opts: Partial<ScopePassOptions> = {}) =>
+  runScopePass(t.db, providers, { before: new Date(), ...opts });
+
+/** A memory stored before the release. */
 async function legacy(
   content: string,
   extra: Partial<typeof memories.$inferInsert> = {},
@@ -164,7 +166,6 @@ async function legacy(
       author: "alice",
       agent: "extraction",
       content,
-      scopeCheckedAt: null,
       ...extra,
     })
     .returning();
@@ -226,12 +227,20 @@ describe("AC4: the pass applies the extraction rules to memories stored before t
           },
         ],
       });
-    const [r] = await sweepScopePass(t.db, providers);
-    expect(r).toMatchObject({ owner: "alice", split: 1, checked: 1 });
+    const r = await pass();
+    expect(r.changes).toEqual([
+      {
+        memoryId: id,
+        owner: "alice",
+        old: NITPICK,
+        action: "split",
+        practice: NITPICK_CUT,
+        fact: { project: SILK, text: NITPICK_FACT },
+      },
+    ]);
 
     const old = await row(id);
     expect(old?.status).toBe("superseded");
-    expect(old?.scopeCheckedAt).not.toBeNull();
     const practice = await row(old?.supersededBy as string);
     expect(practice).toMatchObject({
       scope: "user",
@@ -260,7 +269,7 @@ describe("AC4: the pass applies the extraction rules to memories stored before t
     ginaRepos = new Set([SILK, OTHER]);
     const s = await session([OTHER, STRANGER], "gina");
     await legacyPractice(NITPICK, s, "gina");
-    await sweepScopePass(t.db, providers, { repos });
+    await pass({ repos });
     expect(calls).toHaveLength(1);
     const req = calls[0] as CompleteRequest;
     // The same wording extraction uses, not a copy that could drift from it.
@@ -288,12 +297,12 @@ describe("AC4: the pass applies the extraction rules to memories stored before t
           { id: refOf(p, "Dashboard"), action: "keep" },
         ],
       });
-    const [r] = await sweepScopePass(t.db, providers);
-    expect(r).toMatchObject({ retired: 2, kept: 1, checked: 3 });
+    const r = await pass();
+    expect(r.changes.map((c) => c.action)).toEqual(["retire", "retire"]);
+    expect(r.kept).toBe(1);
     expect((await row(chore))?.status).toBe("retired");
     expect((await row(practiceChore))?.status).toBe("retired");
     expect(await row(keep)).toMatchObject({ status: "active" });
-    expect((await row(keep))?.scopeCheckedAt).not.toBeNull();
   });
 
   test("a fact for a repo the person can't reach is dropped and the practice still split", async () => {
@@ -311,8 +320,8 @@ describe("AC4: the pass applies the extraction rules to memories stored before t
           },
         ],
       });
-    const [r] = await sweepScopePass(t.db, providers, { repos });
-    expect(r).toMatchObject({ split: 1, factsDropped: 1 });
+    const r = await pass({ repos });
+    expect(r.changes).toMatchObject([{ action: "split", fact: null }]);
     const old = await row(id);
     expect(old?.status).toBe("superseded");
     expect((await row(old?.supersededBy as string))?.content).toBe(NITPICK_CUT);
@@ -342,7 +351,7 @@ describe("AC4: the pass applies the extraction rules to memories stored before t
           },
         ],
       });
-    await sweepScopePass(t.db, providers);
+    await pass();
     const old = await row(id);
     const practice = await row(old?.supersededBy as string);
     expect(practice?.content).not.toContain(token);
@@ -351,36 +360,6 @@ describe("AC4: the pass applies the extraction rules to memories stored before t
     expect(all.some((m) => m.content.includes(token))).toBe(false);
     const events = await t.db.select().from(memoryEvents);
     expect(JSON.stringify(events)).not.toContain(token);
-    expect((await row(chore))?.status).toBe("retired");
-  });
-
-  test("runs on the API's schedule with no step for the person", async () => {
-    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
-    const chore = await legacy(CHORE);
-    reply = (p) =>
-      JSON.stringify({
-        results: [{ id: refOf(p, "DEV_VAULT"), action: "retire" }],
-      });
-    let ran: () => void = () => {};
-    const done = new Promise<void>((r) => {
-      ran = r;
-    });
-    const stop = startDreamSchedule(t.db, providers.dreamLlm, 20, {
-      dreams: false,
-      jobs: [
-        async () => {
-          await sweepScopePass(t.db, providers);
-          ran();
-        },
-      ],
-    });
-    try {
-      vi.advanceTimersByTime(SWEEP_MS);
-      await done;
-    } finally {
-      stop();
-      vi.useRealTimers();
-    }
     expect((await row(chore))?.status).toBe("retired");
   });
 });
@@ -419,9 +398,9 @@ describe("AC4: the pass acts only where the person has access now", () => {
     const s = await session([OTHER], "gina");
     const id = await legacyPractice(NITPICK, s, "gina");
     reply = split(OTHER);
-    const [r] = await sweepScopePass(t.db, providers, { repos });
+    const r = await pass({ repos });
     expect(calls[0]?.prompt).not.toContain(OTHER);
-    expect(r).toMatchObject({ split: 1, factsDropped: 1 });
+    expect(r.changes).toMatchObject([{ action: "split", fact: null }]);
     expect((await row(id))?.status).toBe("superseded");
     expect(await factStored()).toBe(false);
   });
@@ -431,9 +410,9 @@ describe("AC4: the pass acts only where the person has access now", () => {
     const s = await session([], "gina");
     const id = await legacyPractice(NITPICK, s, "gina");
     reply = split(SILK);
-    const [r] = await sweepScopePass(t.db, providers, { repos });
+    const r = await pass({ repos });
     expect(calls[0]?.prompt).not.toContain(SILK);
-    expect(r).toMatchObject({ split: 1, factsDropped: 1 });
+    expect(r.changes).toMatchObject([{ action: "split", fact: null }]);
     const old = await row(id);
     expect(old?.status).toBe("superseded");
     expect((await row(old?.supersededBy as string))?.content).toBe(NITPICK_CUT);
@@ -451,18 +430,11 @@ describe("AC4: the pass acts only where the person has access now", () => {
       JSON.stringify({
         results: [{ id: refOf(p, "DEV_VAULT"), action: "retire" }],
       });
-    await sweepScopePass(t.db, providers, { repos });
+    await pass({ repos });
     expect(calls).toHaveLength(1);
     expect(calls[0]?.prompt).not.toContain("private");
     expect((await row(seen))?.status).toBe("retired");
-    expect(await row(hidden)).toMatchObject({
-      status: "active",
-      scopeCheckedAt: null,
-    });
-    // Nor does it come back to them on the next sweep.
-    calls = [];
-    expect(await sweepScopePass(t.db, providers, { repos })).toEqual([]);
-    expect(calls).toHaveLength(0);
+    expect(await row(hidden)).toMatchObject({ status: "active" });
   });
 
   test("when current access can't be read, only memories outside any project are checked", async () => {
@@ -481,14 +453,11 @@ describe("AC4: the pass acts only where the person has access now", () => {
       JSON.stringify({
         results: [{ id: refOf(p, "DEV_VAULT"), action: "retire" }],
       });
-    await sweepScopePass(t.db, providers, { repos });
+    await pass({ repos });
     expect(calls).toHaveLength(1);
     expect(calls[0]?.prompt).not.toContain("silk");
     expect((await row(mine))?.status).toBe("retired");
-    expect(await row(inSilk)).toMatchObject({
-      status: "active",
-      scopeCheckedAt: null,
-    });
+    expect(await row(inSilk)).toMatchObject({ status: "active" });
   });
 });
 
@@ -517,7 +486,7 @@ describe("AC5: Activity shows the pass's changes, which can be undone", () => {
           { id: refOf(p, "DEV_VAULT"), action: "retire", why: "a chore" },
         ],
       });
-    await sweepScopePass(t.db, providers);
+    await pass();
 
     const items = await passEntries();
     expect(items.map((e) => e.kind).sort()).toEqual([
@@ -529,6 +498,9 @@ describe("AC5: Activity shows the pass's changes, which can be undone", () => {
       expect(e.actor).toBe("pass");
       expect(e.canUndo).toBe(true);
     }
+    // Stored as extraction's events, but never listed as extraction's.
+    const extraction = await call("GET", "/activity?source=extraction");
+    expect((extraction.json as { items: Entry[] }).items).toEqual([]);
     // A memory the pass left alone has no entry from it at all.
     const kept = await t.db
       .select()
@@ -578,7 +550,7 @@ describe("AC5: Activity shows the pass's changes, which can be undone", () => {
           },
         ],
       });
-    await sweepScopePass(t.db, providers);
+    await pass();
     expect((await row(id))?.status).toBe("superseded");
 
     expect((await call("POST", `/activity/${merged}/undo`)).status).toBe(409);
@@ -588,21 +560,70 @@ describe("AC5: Activity shows the pass's changes, which can be undone", () => {
     });
   });
 
-  test("a sweep that changes nothing writes no Activity entry", async () => {
+  test("a run that changes nothing writes no Activity entry", async () => {
     await legacy("Dashboard searches send source web.");
     await legacyPractice(NITPICK_CUT, await session());
     reply = () => JSON.stringify({ results: [] });
-    const [r] = await sweepScopePass(t.db, providers);
-    expect(r).toMatchObject({ kept: 2, checked: 2 });
+    const r = await pass();
+    expect(r).toMatchObject({ kept: 2, changes: [] });
     expect(await t.db.select().from(memoryEvents)).toHaveLength(0);
   });
 });
 
-describe("AC6: each memory is checked at most once", () => {
-  test("a second start changes nothing already checked", async () => {
+describe("AC6: one owner and visibility per call, and nothing done twice", () => {
+  test("one model call holds one owner's memories of one visibility", async () => {
+    const [other] = await t.db
+      .select()
+      .from(projects)
+      .where(eq(projects.key, OTHER));
+    await legacyPractice(NITPICK, await session());
+    await legacy("Private fact in silk.");
+    await legacy("Team fact in silk.", { scope: "team" });
+    await legacy("Team fact in other.", {
+      scope: "team",
+      projectId: other?.id,
+    });
+    await legacy("Bob's own fact.", {
+      scope: "user",
+      projectId: null,
+      owner: "bob",
+      author: "bob",
+    });
+    await pass();
+    const prompts = calls.map((c) => c.prompt);
+    expect(prompts).toHaveLength(4);
+    const holding = (text: string) => prompts.filter((p) => p.includes(text));
+    expect(holding("/nitpick")).toEqual(holding("Private fact in silk."));
+    expect(holding("Team fact in silk.")).toHaveLength(1);
+    expect(holding("Team fact in silk.")[0]).not.toContain("fact in other");
+    expect(holding("Team fact in silk.")[0]).not.toContain("Private");
+    expect(holding("Team fact in other.")[0]).not.toContain("Private");
+    expect(holding("Bob's own fact.")[0]).not.toContain("silk");
+  });
+
+  test("an owner's memories go in small batches, each read once", async () => {
+    const ids: string[] = [];
+    for (const n of [1, 2, 3, 4, 5]) {
+      ids.push(await legacy(`Old fact number ${n} about silk.`));
+      await t.db.execute(
+        sql`UPDATE memories SET created_at = now() - ${`${10 - n} minutes`}::interval WHERE id = ${ids[n - 1]}`,
+      );
+    }
+    const r = await pass({ batchSize: 2 });
+    expect(r.kept).toBe(5);
+    expect(
+      calls.map((c) => (c.prompt.match(/number \d/g) ?? []).join()),
+    ).toEqual(["number 1,number 2", "number 3,number 4", "number 5"]);
+  });
+
+  test("a second run with the same cutoff changes nothing", async () => {
+    const before = new Date();
     const s = await session();
-    await legacyPractice(NITPICK, s);
+    await legacyPractice(NITPICK, s, "alice");
     await legacy(CHORE);
+    await t.db.execute(
+      sql`UPDATE memories SET created_at = ${before.toISOString()}::timestamptz - interval '1 minute'`,
+    );
     reply = (p) =>
       JSON.stringify({
         results: [
@@ -616,228 +637,182 @@ describe("AC6: each memory is checked at most once", () => {
           { id: refOf(p, "DEV_VAULT"), action: "retire" },
         ],
       });
-    await sweepScopePass(t.db, providers);
-    const before = {
+    expect((await pass({ before })).changes).toHaveLength(2);
+    const snapshot = async () => ({
       memories: await t.db
         .select()
         .from(memories)
         .orderBy(memories.id)
         .then((r) => r.map(({ embedding: _, ...m }) => m)),
       events: await t.db.select().from(memoryEvents).orderBy(memoryEvents.id),
-    };
+    });
+    const first = await snapshot();
+    expect(first.memories).toHaveLength(4);
+
     calls = [];
-    expect(await sweepScopePass(t.db, providers)).toEqual([]);
+    // Whatever the model would say, the second run reads nothing the first changed or created.
+    reply = (p) =>
+      JSON.stringify({
+        results: [...p.matchAll(/^\[(m\d+)\]/gm)].map((m) => ({
+          id: m[1],
+          action: "retire",
+        })),
+      });
+    const again = await pass({ before });
+    expect(again).toEqual({ changes: [], kept: 0, skipped: [] });
     expect(calls).toHaveLength(0);
-    expect(
-      await t.db
-        .select()
-        .from(memories)
-        .orderBy(memories.id)
-        .then((r) => r.map(({ embedding: _, ...m }) => m)),
-    ).toEqual(before.memories);
-    expect(
-      await t.db.select().from(memoryEvents).orderBy(memoryEvents.id),
-    ).toEqual(before.events);
+    expect(await snapshot()).toEqual(first);
   });
 
-  test("after a crash midway, the next start checks only the memories not yet checked", async () => {
-    const ids: string[] = [];
-    for (const n of [1, 2, 3, 4]) {
-      ids.push(await legacy(`Old fact number ${n} about silk.`));
-      // Distinct created_at, so batches are in insertion order.
-      await t.db.execute(
-        sql`UPDATE memories SET created_at = now() - ${`${10 - n} minutes`}::interval WHERE id = ${ids[n - 1]}`,
-      );
-    }
-    let n = 0;
-    reply = () => {
-      n++;
-      if (n === 2) throw new Error("model went away");
-      return JSON.stringify({ results: [] });
-    };
-    await sweepScopePass(t.db, providers, { batchSize: 2 });
-    const checked = async () =>
-      (await t.db.select().from(memories))
-        .filter((m) => m.scopeCheckedAt !== null)
-        .map((m) => m.id)
-        .sort();
-    expect(await checked()).toEqual([ids[0], ids[1]].sort());
-
-    calls = [];
-    reply = () => JSON.stringify({ results: [] });
-    await sweepScopePass(t.db, providers, { batchSize: 2 });
+  test("memories created after the cutoff are never read", async () => {
+    const old = await legacy(`${CHORE} old`);
+    await t.db.execute(
+      sql`UPDATE memories SET created_at = now() - interval '1 hour' WHERE id = ${old}`,
+    );
+    const cutoff = new Date(Date.now() - 30 * 60_000);
+    const fresh = await legacy(`${CHORE} fresh`);
+    reply = (p) =>
+      JSON.stringify({
+        results: [...p.matchAll(/^\[(m\d+)\]/gm)].map((m) => ({
+          id: m[1],
+          action: "retire",
+        })),
+      });
+    await pass({ before: cutoff });
     expect(calls).toHaveLength(1);
-    const prompt = calls[0]?.prompt ?? "";
-    expect(prompt).toContain("number 3");
-    expect(prompt).toContain("number 4");
-    expect(prompt).not.toContain("number 1");
-    expect(prompt).not.toContain("number 2");
-    expect(await checked()).toEqual([...ids].sort());
+    expect(calls[0]?.prompt).not.toContain("fresh");
+    expect((await row(old))?.status).toBe("retired");
+    expect((await row(fresh))?.status).toBe("active");
   });
 
-  test("a memory created after the release is never checked", async () => {
-    const r = await createMemory(t.db, providers, "alice", {
-      scope: "project",
-      project: { key: SILK },
-      content: CHORE,
-      tags: [],
-      dedup: false,
-      anchors: [],
-    });
-    expect(r.status).toBe(201);
-    const [raw] = await t.db
-      .insert(memories)
-      .values({
-        scope: "project",
-        projectId: silkId,
-        owner: "alice",
-        author: "alice",
-        content: "Inserted without naming the column.",
-      })
-      .returning();
-    expect(raw?.scopeCheckedAt).not.toBeNull();
-    reply = (p) =>
-      JSON.stringify({
-        results: [{ id: refOf(p, "DEV_VAULT"), action: "retire" }],
-      });
-    expect(await sweepScopePass(t.db, providers)).toEqual([]);
-    expect(calls).toHaveLength(0);
-    expect((await row((r.body as { id: string }).id))?.status).toBe("active");
-  });
-
-  test("memories the person retired, superseded or edited first are skipped", async () => {
-    const retired = await legacy(`${CHORE} retired`, { status: "retired" });
+  test("retired and superseded memories are not read", async () => {
+    await legacy(`${CHORE} retired`, { status: "retired" });
     const newer = await legacy("Newer fact.");
-    const superseded = await legacy(`${CHORE} superseded`, {
+    await legacy(`${CHORE} superseded`, {
       status: "superseded",
       supersededBy: newer,
     });
-    const edited = await legacy(`${CHORE} edited`);
-    await logEvent(
-      t.db,
-      edited,
-      "edited",
-      { actor: "person", principal: "alice" },
-      { before: "x", after: `${CHORE} edited` },
-    );
-    const [r] = await sweepScopePass(t.db, providers);
-    expect(r).toMatchObject({ skipped: 1, kept: 1 });
-    for (const c of calls) {
-      expect(c.prompt).not.toContain("retired");
-      expect(c.prompt).not.toContain("superseded");
-      expect(c.prompt).not.toContain("edited");
-    }
-    expect((await row(retired))?.status).toBe("retired");
-    expect(await row(superseded)).toMatchObject({
-      status: "superseded",
-      supersededBy: newer,
-    });
-    expect((await row(edited))?.status).toBe("active");
-    expect((await row(edited))?.scopeCheckedAt).not.toBeNull();
+    await pass();
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.prompt).not.toContain("retired");
+    expect(calls[0]?.prompt).not.toContain("superseded");
   });
 
-  test("a memory the person changed with no event (tags only) is skipped", async () => {
-    const id = await legacy(CHORE);
-    const res = await app.request(`/api/memories/${id}`, {
-      method: "PATCH",
-      headers: {
-        authorization: `Bearer ${alice}`,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({ tags: ["shell"] }),
-    });
-    expect(res.status).toBe(200);
-    expect(
-      await t.db
-        .select()
-        .from(memoryEvents)
-        .where(eq(memoryEvents.memoryId, id)),
-    ).toHaveLength(0);
-    reply = (p) =>
-      JSON.stringify({
-        results: [{ id: refOf(p, "DEV_VAULT"), action: "retire" }],
-      });
-    await sweepScopePass(t.db, providers);
-    expect(calls).toHaveLength(0);
-    expect(await row(id)).toMatchObject({ status: "active", tags: ["shell"] });
-  });
-
-  test("a memory the person flagged before the release is skipped", async () => {
-    const flagged = await legacy(`${CHORE} flagged`);
-    await logEvent(
-      t.db,
-      flagged,
-      "flagged",
-      { actor: "person", principal: "alice", reason: "old" },
-      {},
-    );
-    reply = (p) =>
-      JSON.stringify({
-        results: [{ id: refOf(p, "DEV_VAULT"), action: "retire" }],
-      });
-    const [r] = await sweepScopePass(t.db, providers);
-    expect(r).toMatchObject({ skipped: 1 });
-    expect(calls).toHaveLength(0);
-    expect((await row(flagged))?.status).toBe("active");
-  });
-
-  test("a memory the person edits while its batch is with the model is left for the next batch", async () => {
-    const id = await legacy(CHORE);
+  test("a memory edited while its batch is with the model is left alone", async () => {
+    const chore = await legacy(CHORE);
+    const practice = await legacyPractice(NITPICK, await session());
     reply = async (p) => {
-      await t.db
-        .update(memories)
-        .set({ content: "Edited by alice.", updatedAt: new Date() })
-        .where(eq(memories.id, id));
-      await logEvent(
-        t.db,
-        id,
-        "edited",
-        { actor: "person", principal: "alice" },
-        { before: CHORE, after: "Edited by alice." },
-      );
+      for (const id of [chore, practice])
+        await t.db
+          .update(memories)
+          .set({ updatedAt: new Date(Date.now() + 1000) })
+          .where(eq(memories.id, id));
+      return JSON.stringify({
+        results: [
+          { id: refOf(p, "DEV_VAULT"), action: "retire" },
+          {
+            id: refOf(p, "/nitpick"),
+            action: "split",
+            practice: NITPICK_CUT,
+            fact: NITPICK_FACT,
+            project: SILK,
+          },
+        ],
+      });
+    };
+    const r = await pass();
+    expect(r.changes).toEqual([]);
+    expect(r.skipped).toEqual([
+      { memoryId: chore, owner: "alice", why: "changed" },
+      { memoryId: practice, owner: "alice", why: "changed" },
+    ]);
+    expect((await row(chore))?.status).toBe("active");
+    expect((await row(practice))?.status).toBe("active");
+    expect(await t.db.select().from(memories)).toHaveLength(2);
+    expect(await t.db.select().from(memoryEvents)).toHaveLength(0);
+  });
+});
+
+describe("--dry-run writes nothing and reports each proposed change", () => {
+  test("proposes the split, the fact's repo and the retire without changing anything", async () => {
+    const NEW = "github.com/alice/brand-new";
+    const practice = await legacyPractice(NITPICK, await session([NEW]));
+    const chore = await legacy(CHORE);
+    reply = (p) =>
+      JSON.stringify({
+        results: [
+          {
+            id: refOf(p, "/nitpick"),
+            action: "split",
+            practice: NITPICK_CUT,
+            fact: NITPICK_FACT,
+            project: NEW,
+          },
+          { id: refOf(p, "DEV_VAULT"), action: "retire", why: "a chore" },
+        ],
+      });
+    const state = async () => ({
+      memories: await t.db.select().from(memories).orderBy(memories.id),
+      events: await t.db.select().from(memoryEvents),
+      projects: await t.db.select().from(projects).orderBy(projects.id),
+    });
+    const before = await state();
+    const seen: unknown[] = [];
+    const r = await pass({ dryRun: true, onChange: (c) => seen.push(c) });
+    expect(r.changes).toEqual([
+      {
+        memoryId: practice,
+        owner: "alice",
+        old: NITPICK,
+        action: "split",
+        practice: NITPICK_CUT,
+        fact: { project: NEW, text: NITPICK_FACT },
+      },
+      {
+        memoryId: chore,
+        owner: "alice",
+        old: CHORE,
+        action: "retire",
+        why: "a chore",
+      },
+    ]);
+    expect(seen).toEqual(r.changes);
+    expect(await state()).toEqual(before);
+  });
+});
+
+describe("a reply the pass can't read is retried, then the batch is given up", () => {
+  test(`after ${SCOPE_PASS_MAX_ATTEMPTS} unreadable replies its memories are skipped and named`, async () => {
+    const id = await legacy(CHORE);
+    reply = () => "sorry, I can't help with that";
+    const r = await pass();
+    expect(calls).toHaveLength(SCOPE_PASS_MAX_ATTEMPTS);
+    expect(r.skipped).toEqual([
+      { memoryId: id, owner: "alice", why: "unreadable" },
+    ]);
+    expect((await row(id))?.status).toBe("active");
+    expect(await t.db.select().from(memoryEvents)).toHaveLength(0);
+  });
+
+  test("a readable reply within the attempts is used", async () => {
+    const id = await legacy(CHORE);
+    let n = 0;
+    reply = (p) => {
+      n++;
+      if (n === 1) return "not json";
+      if (n === 2) throw new Error("model went away");
       return JSON.stringify({
         results: [{ id: refOf(p, "DEV_VAULT"), action: "retire" }],
       });
     };
-    await sweepScopePass(t.db, providers, { maxBatches: 1 });
-    expect(await row(id)).toMatchObject({
-      status: "active",
-      content: "Edited by alice.",
-      scopeCheckedAt: null,
-    });
-    calls = [];
-    await sweepScopePass(t.db, providers);
-    expect(calls).toHaveLength(0);
-    expect((await row(id))?.status).toBe("active");
-    expect((await row(id))?.scopeCheckedAt).not.toBeNull();
-  });
-});
-
-describe("a reply the pass can't read is retried a few times, then given up", () => {
-  test("after the last unreadable reply the batch is marked checked unchanged and never billed again", async () => {
-    const id = await legacy(CHORE);
-    reply = () => "sorry, I can't help with that";
-    for (let i = 0; i < SCOPE_PASS_MAX_ATTEMPTS; i++) {
-      expect((await row(id))?.scopeCheckedAt).toBeNull();
-      await sweepScopePass(t.db, providers);
-    }
-    expect(calls).toHaveLength(SCOPE_PASS_MAX_ATTEMPTS);
-    expect(await row(id)).toMatchObject({
-      status: "active",
-      scopeAttempts: SCOPE_PASS_MAX_ATTEMPTS,
-    });
-    expect((await row(id))?.scopeCheckedAt).not.toBeNull();
-    expect(await t.db.select().from(memoryEvents)).toHaveLength(0);
-    calls = [];
-    expect(await sweepScopePass(t.db, providers)).toEqual([]);
-    expect(calls).toHaveLength(0);
+    const r = await pass();
+    expect(calls).toHaveLength(3);
+    expect(r.skipped).toEqual([]);
+    expect((await row(id))?.status).toBe("retired");
   });
 
-  test("one person's failing batch doesn't hold up anyone else's", async () => {
+  test("one owner's failing batch doesn't hold up anyone else's", async () => {
     const stuck = await legacy(`${CHORE} alice`);
-    await t.db.execute(
-      sql`UPDATE memories SET created_at = now() - interval '1 day' WHERE id = ${stuck}`,
-    );
     const bobs = await legacy(`${CHORE} bob`, {
       scope: "user",
       projectId: null,
@@ -850,14 +825,11 @@ describe("a reply the pass can't read is retried a few times, then given up", ()
         : JSON.stringify({
             results: [{ id: refOf(p, "DEV_VAULT"), action: "retire" }],
           });
-    await sweepScopePass(t.db, providers);
-    expect(calls).toHaveLength(2);
+    const r = await pass();
+    expect(calls).toHaveLength(SCOPE_PASS_MAX_ATTEMPTS + 1);
     expect((await row(bobs))?.status).toBe("retired");
-    expect(await row(stuck)).toMatchObject({
-      status: "active",
-      scopeCheckedAt: null,
-      scopeAttempts: 1,
-    });
+    expect((await row(stuck))?.status).toBe("active");
+    expect(r.skipped.map((s) => s.memoryId)).toEqual([stuck]);
   });
 });
 
@@ -877,7 +849,7 @@ describe("AC7: every model call of the pass records its operation, tokens and co
           },
         ],
       });
-    await sweepScopePass(t.db, providers);
+    await pass();
     await usage.flush();
     const rows = await t.db.select().from(usageEvents);
     expect(rows.length).toBeGreaterThanOrEqual(2);

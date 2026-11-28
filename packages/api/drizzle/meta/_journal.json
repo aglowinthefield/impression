@@ -148,20 +148,6 @@
       "when": 1795118211355,
       "tag": "0020_drop_pinned",
       "breakpoints": true
-    },
-    {
-      "idx": 21,
-      "version": "7",
-      "when": 1795820006837,
-      "tag": "0021_scope_pass",
-      "breakpoints": true
-    },
-    {
-      "idx": 22,
-      "version": "7",
-      "when": 1795820691888,
-      "tag": "0022_scope_pass_attempts",
-      "breakpoints": true
     }
   ]
 }
