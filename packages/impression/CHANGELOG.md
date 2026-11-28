@@ -2,6 +2,17 @@
 
 What changed in each release of `@aglowinthefield/impression`, for people who use it. pi shows the new entries once, at the first session after an update.
 
+## 0.12.0
+
+### Minor Changes
+
+- New `impression backfill` learns from a repo's past pi, Claude Code and Codex sessions, so your agents know the repo from day one. It shows the sessions, the estimated cost and your remaining backfill budget before it sends anything, `impression setup` offers it at the end, and `impression status` shows its progress.
+- Your practices no longer crowd a project's own memories out of session start: they get at most a quarter of its room, only the ones you learned in that project show up there, and a prompt no longer repeats a memory session start already gave.
+
+### Patch Changes
+
+- Memories saved before this release get the same cleanup once: a practice carrying one repo's details is replaced by one without them plus a memory in that repo, and chores are retired. Each change shows in Activity as the one-time cleanup and can be undone there.
+
 ## 0.11.1
 
 ### Patch Changes
