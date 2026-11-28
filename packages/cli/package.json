@@ -11,8 +11,7 @@
   "scripts": {
     "build": "tsrs -p tsconfig.build.json",
     "typecheck": "tsrs -p . --noEmit",
-    "test": "vitest run --passWithNoTests",
-    "seed": "tsx src/seed-cli.ts"
+    "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
     "@clack/prompts": "^1.9.0",

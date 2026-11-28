@@ -1,21 +1,14 @@
-import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import type { ApiClient } from "@impression/shared";
 import { describe, expect, test } from "vitest";
 import {
-  assertLocal,
   chunkTranscript,
   claudeDirName,
   discoverSessions,
-  main,
   piDirName,
   type Roots,
-  retryable,
-  type SeedItem,
-  seed,
-} from "./seed.js";
+} from "./transcripts.js";
 
 // `C:\Users\me\code\app` on Windows, as discoverSessions resolves it.
 const REPO = resolve("/Users/me/code/app");
@@ -25,7 +18,7 @@ const piMsg = (role: string, text: string) =>
   line({ type: "message", message: { role, content: text } });
 
 function roots(): Roots {
-  const base = mkdtempSync(join(tmpdir(), "imp-seed-"));
+  const base = mkdtempSync(join(tmpdir(), "imp-transcripts-"));
   const r = {
     pi: join(base, "pi"),
     claude: join(base, "claude"),
@@ -131,6 +124,26 @@ describe("discoverSessions", () => {
     ]);
   });
 
+  test("reads every dir it is given, such as a worktree outside the repo, once each", () => {
+    const r = roots();
+    const tree = resolve("/Users/me/trees/app-fix");
+    put(join(r.pi, piDirName(REPO), "a.jsonl"), [
+      piHeader(REPO, "2026-10-01T00:00:00Z", "a"),
+    ]);
+    put(join(r.claude, claudeDirName(tree), "w.jsonl"), [
+      line({ type: "user", cwd: tree, timestamp: "2026-10-02T00:00:00Z" }),
+    ]);
+    put(join(r.codex, "rollout-t.jsonl"), [
+      line({
+        timestamp: "2026-10-03T00:00:00Z",
+        type: "session_meta",
+        payload: { id: "t", cwd: `${tree}/src` },
+      }),
+    ]);
+    const found = discoverSessions([REPO, tree, REPO], { roots: r });
+    expect(found.map((s) => s.sessionKey)).toEqual(["a", "w", "t"]);
+  });
+
   test("orders all agents oldest first, falling back to mtime, and honours since", () => {
     const r = roots();
     put(join(r.pi, piDirName(REPO), "new.jsonl"), [
@@ -187,115 +200,5 @@ describe("chunkTranscript", () => {
     );
     expect(chunks).toHaveLength(1);
     expect(chunks[0]?.raw).toContain("toolResult");
-  });
-});
-
-describe("assertLocal", () => {
-  test("allows this machine, refuses others unless allowed", () => {
-    expect(() => assertLocal("http://localhost:3000")).not.toThrow();
-    expect(() => assertLocal("http://127.0.0.1:3000")).not.toThrow();
-    expect(() => assertLocal("https://impression.quest")).toThrow(
-      /--allow-remote/,
-    );
-    expect(() => assertLocal("https://impression.quest", true)).not.toThrow();
-  });
-
-  test("main refuses a remote server from env before sending anything", async () => {
-    const repo = gitRepo();
-    await expect(
-      main(["--repo", repo], {
-        IMPRESSION_URL: "https://impression.quest",
-        IMPRESSION_TOKEN: "imp_x",
-        XDG_CONFIG_HOME: repo,
-      }),
-    ).rejects.toThrow(/not localhost/);
-  });
-});
-
-test("retryable: network and 5xx yes, 4xx no", () => {
-  expect(retryable(new Error("fetch failed"))).toBe(true);
-  expect(retryable(new Error("Impression API 502: extraction failed"))).toBe(
-    true,
-  );
-  expect(retryable(new Error("Impression API 400: bad request"))).toBe(false);
-});
-
-function gitRepo(): string {
-  const dir = mkdtempSync(join(tmpdir(), "imp-seed-repo-"));
-  execFileSync("git", ["init", "-q"], { cwd: dir });
-  execFileSync(
-    "git",
-    [
-      "-c",
-      "user.name=t",
-      "-c",
-      "user.email=t@t",
-      "commit",
-      "-q",
-      "--allow-empty",
-      "-m",
-      "i",
-    ],
-    { cwd: dir },
-  );
-  return dir;
-}
-
-describe("seed", () => {
-  const item = (n: number): SeedItem => ({
-    session: { agent: "pi", path: `/x/s${n}.jsonl`, start: 0, sessionKey: "k" },
-    part: 1,
-    chunk: { raw: piMsg("user", `chunk ${n} `.repeat(80)), chars: 0 },
-  });
-
-  test("counts failures instead of throwing, and retries 5xx", async () => {
-    const repo = gitRepo();
-    const calls: string[] = [];
-    let extracts = 0;
-    const seen = new Set<string>();
-    const client: ApiClient = {
-      get: async () => ({}),
-      post: async (path, body) => {
-        calls.push(path);
-        const t = (body as { transcript?: string }).transcript ?? "";
-        if (path === "/sessions") {
-          if (t.includes("chunk 1 ")) throw new Error("Impression API 400: no");
-          if (t.includes("chunk 2 "))
-            return {
-              id: "00000000-0000-0000-0000-000000000002",
-              duplicate: true,
-            };
-          const duplicate = seen.has(t);
-          seen.add(t);
-          return { id: "00000000-0000-0000-0000-000000000003", duplicate };
-        }
-        // First extract fails with a 502, the retry works.
-        if (extracts++ === 0) throw new Error("Impression API 502: try again");
-        return { accepted: 2, skippedDuplicates: 1 };
-      },
-    };
-    const lines: string[] = [];
-    const totals = await seed(client, [item(1), item(2), item(3)], {
-      repo,
-      concurrency: 1,
-      log: (l) => lines.push(l),
-    });
-    expect(totals).toEqual({
-      chunks: 3,
-      uploaded: 0,
-      duplicates: 2,
-      failed: 1,
-      memories: 2,
-    });
-    expect(lines[0]).toMatch(/^\[1\/3\] pi 1970-01-01 s1\.jsonl#1 failed /);
-    expect(lines[1]).toBe("[2/3] pi 1970-01-01 s2.jsonl#1 dup");
-    // The retry finds its own chunk stored, and extracts it anyway.
-    expect(lines[2]).toBe(
-      "[3/3] pi 1970-01-01 s3.jsonl#1 extracted 2 skipped 1 (dup)",
-    );
-    expect(lines.at(-1)).toBe(
-      "done: chunks 3 uploaded 0 duplicates 2 failed 1 memories 2",
-    );
-    expect(calls.filter((c) => c === "/sessions")).toHaveLength(4);
   });
 });

@@ -1,6 +1,8 @@
+import { spawn } from "node:child_process";
 import { homedir } from "node:os";
 import * as p from "@clack/prompts";
 import { createClient } from "@impression/shared";
+import { offerBackfill, timedFetch } from "./backfill.js";
 import { openUrl } from "./browser.js";
 import { loadConfig, saveConfig } from "./config.js";
 import { usageLine } from "./cli-help.js";
@@ -126,8 +128,26 @@ export async function runSetup(
         : undefined,
     });
     if (cli) p.log.info(cli);
+    const saved = loadConfig();
+    if (saved.token && !dryRun)
+      await offerBackfill({
+        client: createClient(saved.url, saved.token, timedFetch(30_000)),
+        cwd: process.cwd(),
+        env: process.env,
+        now: Date.now,
+        interactive,
+        info: (text) => p.log.info(text),
+        ask: async (plan) => {
+          p.log.message(plan);
+          const yes = await p.confirm({
+            message: "Backfill now? It runs in the background.",
+          });
+          return yes === true;
+        },
+        start: startBackfill,
+      });
     p.outro(
-      loadConfig().token
+      saved.token
         ? "Done. Start a session in any repo the Impression GitHub app can reach."
         : "Not signed in yet. Run: impression login --github",
     );
@@ -135,4 +155,18 @@ export async function runSetup(
     p.cancel((e as Error).message);
     process.exit(1);
   }
+}
+
+/**
+ * Starts `impression backfill --yes` for a checkout in a detached process that
+ * outlives setup, with this CLI's own script and node, as the hooks hand off.
+ */
+function startBackfill(checkout: string) {
+  const child = spawn(
+    process.execPath,
+    [process.argv[1] as string, "backfill", "--yes", "--repo", checkout],
+    { detached: true, stdio: "ignore", cwd: checkout, windowsHide: true },
+  );
+  child.on("error", () => {});
+  child.unref();
 }
