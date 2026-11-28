@@ -4,7 +4,7 @@ import { z } from "zod";
 import { canReach, findProject, memoryVisible } from "./access.js";
 import type { AuthEnv } from "./auth.js";
 import type { Db } from "./db/client.js";
-import { memories, memoryServes, sessions } from "./db/schema.js";
+import { memories, sessions } from "./db/schema.js";
 import { PRACTICE_TAG } from "./extract.js";
 import { logServes } from "./serves.js";
 
@@ -77,14 +77,13 @@ export async function coreSet(
 }
 
 /**
- * Whether a practice fits the project: it was learned in a session there, or a
- * prompt search there returned it before. Memories that aren't practices always pass.
+ * Whether a practice fits the project: it was learned in a session there.
+ * Memories that aren't practices always pass.
  */
 export function practiceFits(projectId: string | null): SQL {
   if (!projectId) return sql`NOT (${PRACTICE_TAG} = ANY(${memories.tags}))`;
   return sql`(NOT (${PRACTICE_TAG} = ANY(${memories.tags}))
-    OR EXISTS (SELECT 1 FROM ${sessions} s WHERE s.id = ${memories.sessionId} AND s.project_id = ${projectId})
-    OR EXISTS (SELECT 1 FROM ${memoryServes} v WHERE v.memory_id = ${memories.id} AND v.source = 'prompt' AND v.project_id = ${projectId}))`;
+    OR EXISTS (SELECT 1 FROM ${sessions} s WHERE s.id = ${memories.sessionId} AND s.project_id = ${projectId}))`;
 }
 
 /**

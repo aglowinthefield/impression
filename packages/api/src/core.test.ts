@@ -154,33 +154,24 @@ describe("practices", () => {
     expect(split(await coreAs(key, 200))).toEqual({ practices: 1, others: 7 });
   });
 
-  test("only those learned here or found by a prompt search here are served", async () => {
+  test("only those learned in a session in this project are served", async () => {
     const here = "github.com/acme/here";
     const there = "github.com/acme/there";
     await facts(here, 1);
     await facts(there, 1);
     await practiceFrom(here, "learned here");
     await practiceFrom(there, "learned elsewhere");
-    // No words in common, so each search returns only its own practice.
-    const promptedHere = "always alphabetize imports";
-    const promptedThere = "never squash release commits";
-    const searchedHere = "prefer tabs inside makefiles";
-    for (const content of [promptedHere, promptedThere, searchedHere])
-      await addAs(carol, {
-        scope: "user",
-        tags: ["practice"],
-        content,
-        dedup: false,
-      });
-    const search = (query: string, project: string, source: string) =>
-      call("POST", "/search", { query, project, source, strict: true }, carol);
-    await search(promptedHere, here, "prompt");
-    await search(promptedThere, there, "prompt");
-    await search(searchedHere, here, "search");
+    // A practice with no session behind it fits no project.
+    await addAs(carol, {
+      scope: "user",
+      tags: ["practice"],
+      content: "learned nowhere",
+      dedup: false,
+    });
     const served = (await coreAs(here, 2000)).items
       .filter((i) => i.tags.includes("practice"))
       .map((i) => i.content);
-    expect(served.sort()).toEqual([promptedHere, "learned here"]);
+    expect(served).toEqual(["learned here"]);
   });
 });
 

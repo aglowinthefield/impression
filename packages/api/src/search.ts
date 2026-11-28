@@ -20,7 +20,6 @@ export const STRICT_EXTRA = 0.1;
 
 const body = z.object({
   query: z.string().trim().min(1).max(2000),
-  /** With a project and no scope, the person's user-scoped memories are searched too. "project" leaves them out. */
   scope: z.enum(["user", "project"]).optional(),
   project: z.string().min(1).optional(),
   tag: z.string().min(1).optional(),
@@ -76,13 +75,7 @@ export function searchRoutes(db: Db, providers: Providers) {
     if (q.project) {
       const p = await findProject(db, c.get("access"), q.project);
       projectId = p?.id ?? null;
-      const inProject = p ? sql`m.project_id = ${p.id}` : sql`false`;
-      // The person's own user-scoped memories (practices among them) apply in every project.
-      conds.push(
-        q.scope === "project"
-          ? inProject
-          : sql`(${inProject} OR (m.project_id IS NULL AND m.scope = 'user' AND m.owner = ${principal}))`,
-      );
+      conds.push(p ? sql`m.project_id = ${p.id}` : sql`false`);
     }
     // What session start already gave this session is in its context; don't repeat it.
     if (q.session)

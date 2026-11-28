@@ -3,7 +3,7 @@ import { createToken } from "../auth.js";
 import type { Providers } from "../providers/index.js";
 import { createTestDb } from "../test-db.js";
 import { memories, offTopic, pairs, queries } from "./fixture.js";
-import { noMemoryPrompts, prompts, userMemories } from "./prompts-fixture.js";
+import { noMemoryPrompts, prompts } from "./prompts-fixture.js";
 
 export interface SearchScores {
   /** Share of queries whose expected memory is in the top 3. */
@@ -114,21 +114,12 @@ export interface PromptScores {
   noiseRate: number;
   /** Mean memories injected per prompt, over all prompts. */
   injectedPerPrompt: number;
-  /** Mean injected memories per prompt that weren't expected, over all prompts. */
-  offTopicPerPrompt: number;
-  /** Share of prompts with a memory expected that have one in the top 3. */
-  hitAt3: number;
 }
 
-/**
- * Scores realistic prompts the way the per-prompt hook uses search: top 5 above the floor.
- * The person's user-scoped memories are always in the fixture; `userMemories: false`
- * searches project memories only, as prompt search did before it included them.
- */
+/** Scores realistic prompts the way the per-prompt hook uses search: top 5 above the floor. */
 export async function evalPrompts(
   providers: Providers,
   minSimilarities: number[],
-  opts: { userMemories?: boolean } = {},
 ): Promise<Map<number, PromptScores>> {
   const t = await createTestDb();
   try {
@@ -155,17 +146,6 @@ export async function evalPrompts(
       ).json()) as { id: string };
       ids.set(res.id, m.id);
     }
-    for (const m of userMemories) {
-      const res = (await (
-        await call("/memories", {
-          scope: "user",
-          tags: ["practice"],
-          content: m.content,
-          dedup: false,
-        })
-      ).json()) as { id: string };
-      ids.set(res.id, m.id);
-    }
     const search = async (q: string, minSimilarity: number) =>
       (
         (await (
@@ -174,7 +154,6 @@ export async function evalPrompts(
             project: "eval/fixture",
             limit: 5,
             minSimilarity,
-            ...(opts.userMemories === false ? { scope: "project" } : {}),
           })
         ).json()) as { results: { id: string }[] }
       ).results.map((r) => ids.get(r.id) as string);
@@ -185,11 +164,9 @@ export async function evalPrompts(
       let injected = 0;
       let correct = 0;
       let missed = 0;
-      let hits = 0;
       for (const { q, expect } of prompts) {
         const got = await search(q, min);
         injected += got.length;
-        if (got.slice(0, 3).some((g) => expect.includes(g))) hits++;
         correct += got.filter((g) => expect.includes(g)).length;
         recall += expect.filter((e) => got.includes(e)).length / expect.length;
         if (got.length === 0) missed++;
@@ -206,9 +183,6 @@ export async function evalPrompts(
         missed: missed / prompts.length,
         noiseRate: noisy / noMemoryPrompts.length,
         injectedPerPrompt: injected / (prompts.length + noMemoryPrompts.length),
-        offTopicPerPrompt:
-          (injected - correct) / (prompts.length + noMemoryPrompts.length),
-        hitAt3: hits / prompts.length,
       });
     }
     return out;

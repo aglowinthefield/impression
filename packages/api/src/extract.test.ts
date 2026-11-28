@@ -310,7 +310,7 @@ describe("repeat check", () => {
   });
 });
 
-test("a practice is accepted user-scoped and follows the user to other projects", async () => {
+test("a practice is accepted user-scoped and served at session start where it was learned", async () => {
   const llm = fakeProviders();
   llm.llm = {
     model: "fake",
@@ -381,18 +381,6 @@ test("a practice is accepted user-scoped and follows the user to other projects"
     expect.stringContaining("nitpick"),
   );
   expect(await core("github.com/acme/other")).not.toContainEqual(
-    expect.stringContaining("nitpick"),
-  );
-  // There a prompt search finds it when it comes up.
-  const found = (await (
-    await call("POST", "/search", {
-      query: "nitpick design session production data",
-      project: "github.com/acme/other",
-      strict: true,
-      source: "prompt",
-    })
-  ).json()) as { results: { content: string }[] };
-  expect(found.results.map((r) => r.content)).toContainEqual(
     expect.stringContaining("nitpick"),
   );
 

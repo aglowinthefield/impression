@@ -55,8 +55,6 @@ describe("mcp tools", () => {
       path: "/search",
       body: { query: "how to install", project: "github.com/acme/ex" },
     });
-    // No scope, so the API adds the person's user-scoped memories to the project's.
-    expect(calls[0]?.body).not.toHaveProperty("scope");
     expect(r.content[0]?.text).toBe(
       "- Use pnpm [1]\n- Fly deploy (May be out of date: gone) [2]",
     );

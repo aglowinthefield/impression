@@ -4,7 +4,7 @@ import { fakeProviders } from "../test-providers.js";
 import { runCase } from "./extraction.js";
 import { extractionCases } from "./extraction-fixture.js";
 import { memories, offTopic, pairs, queries } from "./fixture.js";
-import { noMemoryPrompts, prompts, userMemories } from "./prompts-fixture.js";
+import { noMemoryPrompts, prompts } from "./prompts-fixture.js";
 import { evalPairs, evalPrompts, evalSearch } from "./run.js";
 
 test("fixture is well formed", () => {
@@ -36,8 +36,6 @@ test("prompt fixture only expects memories that exist", () => {
   for (const { expect: e } of prompts)
     for (const id of e) expect(ids.has(id)).toBe(true);
   expect(noMemoryPrompts.length).toBeGreaterThan(0);
-  for (const u of userMemories) expect(ids.has(u.id)).toBe(false);
-  expect(new Set(userMemories.map((u) => u.id)).size).toBe(userMemories.length);
 });
 
 test("realistic prompts find something and the floor trims what is injected", async () => {
