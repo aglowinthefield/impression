@@ -40,6 +40,13 @@ const DAY = 24 * HOUR;
 const line = (o: unknown) => JSON.stringify(o);
 const PID = 4242;
 
+/** The status line, printed and then cleared as `impression status` does. */
+function statusLine(...args: Parameters<typeof backfillStatus>) {
+  const shown = backfillStatus(...args);
+  shown?.clear();
+  return shown?.text;
+}
+
 // ---------------------------------------------------------------- fixtures
 
 function git(cwd: string, args: string[], date?: string) {
@@ -563,14 +570,14 @@ describe("run", () => {
     const alive = (pid: number) => pid === PID && !dead;
     void run(w, api.client, {}, { alive }).done;
     await reached.promise;
-    expect(backfillStatus(w.repo, w.env, alive)).toBe(
+    expect(statusLine(w.repo, w.env, alive)).toBe(
       "Backfill:  running, 1 of 3 pieces done, 2 memories saved",
     );
     dead = true;
-    expect(backfillStatus(w.repo, w.env, alive)).toBe(
+    expect(statusLine(w.repo, w.env, alive)).toBe(
       "Backfill:  stopped at 1 of 3 pieces, 2 memories saved. Run impression backfill to send the rest.",
     );
-    expect(backfillStatus(w.repo, w.env, alive)).toBeUndefined();
+    expect(statusLine(w.repo, w.env, alive)).toBeUndefined();
 
     const api2 = stubApi();
     // The server kept what the first run finished.
@@ -585,10 +592,10 @@ describe("run", () => {
     expect(await next.done).toBe(0);
     expect(next.out()).toContain("1 piece already extracted");
     expect(api2.sent()).toEqual(["s1", "s2"]);
-    expect(backfillStatus(w.repo, w.env, () => false)).toBe(
+    expect(statusLine(w.repo, w.env, () => false)).toBe(
       "Backfill:  finished, 2 of 2 pieces, 2 memories saved, $0.08",
     );
-    expect(backfillStatus(w.repo, w.env, () => false)).toBeUndefined();
+    expect(statusLine(w.repo, w.env, () => false)).toBeUndefined();
   });
 
   test("AC11: a second backfill for the repo refuses while one runs", async () => {
@@ -667,6 +674,45 @@ describe("run", () => {
     expect(shaOf("middle")?.project).toEqual({ key: w.key, name: "app" });
   });
 
+  test("AC13: a side branch's commit merged after the session started is not its anchor", () => {
+    const w = world();
+    const onMain = commit(w.repo, "2026-11-05T00:00:00Z");
+    git(w.repo, ["checkout", "-q", "-b", "side", w.first]);
+    commit(w.repo, "2026-11-08T00:00:00Z");
+    git(w.repo, ["checkout", "-q", "main"]);
+    git(
+      w.repo,
+      ["merge", "-q", "--no-ff", "-m", "merge side", "side"],
+      "2026-11-15T00:00:00Z",
+    );
+    expect(commitBefore(w.repo, Date.parse("2026-11-10T00:00:00Z"))).toBe(
+      onMain,
+    );
+  });
+
+  test("AC13: before the branch's first commit, a merged unrelated history's older root is not the anchor", () => {
+    const w = world();
+    git(w.repo, ["checkout", "-q", "--orphan", "other"]);
+    commit(w.repo, "2026-07-01T00:00:00Z");
+    git(w.repo, ["checkout", "-q", "main"]);
+    git(
+      w.repo,
+      [
+        "merge",
+        "-q",
+        "--no-ff",
+        "--allow-unrelated-histories",
+        "-m",
+        "merge other",
+        "other",
+      ],
+      "2026-11-15T00:00:00Z",
+    );
+    expect(commitBefore(w.repo, Date.parse("2026-06-01T00:00:00Z"))).toBe(
+      w.first,
+    );
+  });
+
   test("AC14: --undo retires what backfills made and prints how many", async () => {
     const w = world();
     const api = stubApi({ undo: async () => ({ retired: 7 }) });
@@ -715,7 +761,7 @@ describe("run", () => {
 describe("setup's offer (AC15)", () => {
   const offer = (
     w: World,
-    client: ApiClient,
+    client: ApiClient | null,
     over: Record<string, unknown> = {},
   ) => {
     const info: string[] = [];
@@ -778,6 +824,19 @@ describe("setup's offer (AC15)", () => {
     expect(api.calls).toEqual([]);
   });
 
+  test("not signed in, or in a dry run, it prints the command in a repo, with a terminal or without", async () => {
+    const w = world();
+    piSession(w, w.repo, "s0", NOW - DAY);
+    for (const interactive of [true, false]) {
+      const o = offer(w, null, { interactive });
+      await o.done;
+      expect(o.info).toEqual([
+        "To learn from this repo's past sessions, run: impression backfill",
+      ]);
+      expect(o.asked).toEqual([]);
+    }
+  });
+
   test("agents/I1: a failing plan prints one line and setup goes on", async () => {
     const w = world();
     piSession(w, w.repo, "s0", NOW - DAY);
@@ -795,12 +854,21 @@ describe("setup's offer (AC15)", () => {
     expect(o.started).toEqual([]);
   });
 
-  test("with nothing new it says nothing, and with a backfill running it says so", async () => {
+  test("with nothing new, the budget used up or a backfill running, it says which in one line", async () => {
     const w = world();
     const quiet = offer(w, stubApi().client);
     await quiet.done;
-    expect(quiet.info).toEqual([]);
+    expect(quiet.info).toEqual(["Nothing new to backfill in this repo."]);
     expect(quiet.asked).toEqual([]);
+    piSession(w, w.repo, "s1", NOW - 2 * DAY);
+    // $0.02 left, less than one piece's $0.04.
+    const broke = offer(w, stubApi({ budget: 10, spent: 9.98 }).client);
+    await broke.done;
+    expect(broke.info).toEqual([
+      "Nothing to backfill: the budget is used up ($9.98 of $10.00 spent), and 1 new piece won't fit.",
+    ]);
+    expect(broke.asked).toEqual([]);
+    expect(broke.started).toEqual([]);
     piSession(w, w.repo, "s0", NOW - DAY);
     expect(acquireLock(w.env, w.key, 77, () => true)).toBe(true);
     const busy = offer(w, stubApi().client, { alive: () => true });
@@ -891,6 +959,25 @@ describe("lock (AC11)", () => {
       readdirSync(backfillDir(w.env)).filter((f) => f.includes(".lock")),
     ).toHaveLength(1);
   });
+
+  test.skipIf(!existsSync("/proc/self/stat"))(
+    "AC10: a lock whose pid now belongs to a process started at another time is stale",
+    () => {
+      const w = world();
+      const lock = progressPath(w.env, w.key).replace(/\.json$/, ".lock");
+      // This test's own process holds it, as recorded when it took the lock.
+      expect(acquireLock(w.env, w.key, process.pid)).toBe(true);
+      expect(lockHolder(w.env, w.key)).toBe(process.pid);
+      // A lock left by an earlier process with this pid, which started at another time.
+      writeFileSync(lock, `${process.pid} 1\n`);
+      expect(lockHolder(w.env, w.key)).toBeUndefined();
+      expect(acquireLock(w.env, w.key, process.pid)).toBe(true);
+      expect(lockHolder(w.env, w.key)).toBe(process.pid);
+      // A lock from before start times were kept counts on its pid alone.
+      writeFileSync(lock, `${process.pid}\n`);
+      expect(lockHolder(w.env, w.key)).toBe(process.pid);
+    },
+  );
 });
 
 describe("cost (AC7, AC9)", () => {
@@ -1183,16 +1270,23 @@ describe("status (AC15)", () => {
       startedAt: "2026-11-21T00:00:00.000Z",
       finishedAt: null,
     };
-    const shown = backfillStatus(
-      w.repo,
-      w.env,
-      () => false,
-      () =>
-        // A new run starts between the read and the clear.
-        writeFileSync(progressPath(w.env, w.key), JSON.stringify(next)),
-    );
-    expect(shown).toContain("Backfill:  finished, 1 of 1 pieces");
+    const shown = backfillStatus(w.repo, w.env, () => false);
+    expect(shown?.text).toContain("Backfill:  finished, 1 of 1 pieces");
+    // A new run starts between the read and the clear.
+    writeFileSync(progressPath(w.env, w.key), JSON.stringify(next));
+    shown?.clear();
     expect(readProgress(w.env, w.key)).toEqual(next);
+  });
+
+  test("keeps a finished run's progress until the line is printed", async () => {
+    const w = world();
+    piSession(w, w.repo, "s0", NOW - DAY);
+    expect(await run(w, stubApi().client).done).toBe(0);
+    const shown = backfillStatus(w.repo, w.env, () => false);
+    expect(shown?.text).toContain("Backfill:  finished, 1 of 1 pieces");
+    expect(readProgress(w.env, w.key)?.finishedAt).toEqual(expect.any(String));
+    shown?.clear();
+    expect(readProgress(w.env, w.key)).toBeNull();
   });
 
   test("shows backfill progress when the server status request fails", async () => {
@@ -1202,7 +1296,7 @@ describe("status (AC15)", () => {
     const back = backfillStatus(w.repo, w.env, () => false);
     const r = await statusReport(
       () => Promise.reject(new Error("Impression API 502: bad gateway")),
-      back ? [back] : [],
+      back ? [back.text] : [],
     );
     expect(r.text).toContain("Backfill:  finished, 1 of 1 pieces");
     expect(r.error?.message).toBe("Impression API 502: bad gateway");

@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { createApp } from "./app.js";
 import { createToken } from "./auth.js";
-import { memories, proposals } from "./db/schema.js";
+import { memories, memoryEvents, proposals } from "./db/schema.js";
 import { parseExtraction } from "./extract.js";
 import { createTestDb } from "./test-db.js";
 import { fakeProviders } from "./test-providers.js";
@@ -24,6 +24,8 @@ let app: ReturnType<typeof createApp>;
 let token: string;
 let reply = "";
 let prompts: string[] = [];
+/** The answer to the dedup check. */
+let verdict = (_prompt: string) => '{"action":"add"}';
 beforeAll(async () => {
   t = await createTestDb();
   const providers = fakeProviders();
@@ -33,7 +35,7 @@ beforeAll(async () => {
       prompts.push(prompt);
       // The dedup check has its own system prompt.
       return system?.includes("maintain a developer's project memory")
-        ? '{"action":"add"}'
+        ? verdict(prompt)
         : reply;
     },
   };
@@ -408,4 +410,128 @@ test("extract passes scrubbed instructions to the model, only when sent", async 
   expect(prompts[0]).toContain("never push");
   expect(prompts[0]).not.toContain("AKIAIOSFODNN7EXAMPLE");
   expect(prompts[0]).toMatch(/Transcript:\nsome transcript$/);
+});
+
+test("a later item finds the memory an earlier item merged into by its merged text", async () => {
+  const repo = { key: "github.com/acme/merge-chain" };
+  const created = await call("POST", "/memories", {
+    scope: "project",
+    project: repo,
+    content: "Releases ship from qqm1 qqm2",
+    dedup: false,
+  });
+  const m = (await created.json()) as { id: string };
+  const merged =
+    "Releases ship from qqm1 qqm2 weekly qqn1 qqn2 qqn3 qqn4 qqn5 qqn6";
+  // The second item shares no word with M's old text, only with the merged one.
+  reply = JSON.stringify({
+    memories: [
+      { content: "Releases ship from qqm1 qqm2 weekly", confidence: 0.9 },
+      { content: "qqn1 qqn2 qqn3 qqn4 qqn5 qqn6", confidence: 0.9 },
+    ],
+  });
+  const before = verdict;
+  verdict = (prompt) => {
+    if (!prompt.includes(`[${m.id}]`)) return '{"action":"add"}';
+    const fresh = prompt.split("New memory:\n")[1] ?? "";
+    return JSON.stringify(
+      fresh.includes("weekly")
+        ? { action: "duplicate", id: m.id, merged }
+        : { action: "duplicate", id: m.id },
+    );
+  };
+  try {
+    const res = await call("POST", "/sessions", {
+      project: repo,
+      transcript: "merge chain transcript",
+      commitSha: "abc1234",
+    });
+    const { id } = (await res.json()) as { id: string };
+    expect(
+      await (await call("POST", `/sessions/${id}/extract`)).json(),
+    ).toEqual({
+      accepted: 0,
+      skippedDuplicates: 2,
+      skippedEmpty: 0,
+      skippedRepeats: 0,
+      skippedBelowFloor: 0,
+      skippedNoAccess: 0,
+    });
+    const p = await t.db.query.projects.findFirst({
+      where: (x, { eq }) => eq(x.key, repo.key),
+    });
+    const active = await t.db
+      .select({ id: memories.id, content: memories.content })
+      .from(memories)
+      .where(eq(memories.projectId, p?.id ?? ""));
+    expect(active).toEqual([{ id: m.id, content: merged }]);
+    const events = await t.db
+      .select({ memoryId: memoryEvents.memoryId, kind: memoryEvents.kind })
+      .from(memoryEvents)
+      .where(eq(memoryEvents.sessionId, id));
+    expect(events).toEqual([{ memoryId: m.id, kind: "merged" }]);
+  } finally {
+    verdict = before;
+  }
+});
+
+test("a memory an earlier item merged into still competes for the five candidate places", async () => {
+  const repo = { key: "github.com/acme/merge-rank" };
+  const make = async (content: string) =>
+    (
+      (await (
+        await call("POST", "/memories", {
+          scope: "project",
+          project: repo,
+          content,
+          dedup: false,
+        })
+      ).json()) as { id: string }
+    ).id;
+  const m = await make("rrm1 rrm2");
+  // Five memories closer to the second item than M's merged text will be.
+  for (const z of ["rrz1", "rrz2", "rrz3", "rrz4", "rrz5"])
+    await make(`rrq1 rrq2 rrq3 rrq4 ${z}`);
+  // Only the merged text shares words with the second item, and fewer than the five do.
+  const merged = "rrm1 rrm2 rrq1 rrq2";
+  reply = JSON.stringify({
+    memories: [
+      { content: "rrm1 rrm2 often", confidence: 0.9 },
+      { content: "rrq1 rrq2 rrq3 rrq4", confidence: 0.9 },
+    ],
+  });
+  const before = verdict;
+  const counts: number[] = [];
+  // Both items name M; the second's verdict counts only if M is a candidate.
+  verdict = (prompt) => {
+    const list = prompt.split("\n\nNew memory:\n")[0] ?? "";
+    counts.push(list.split("\n").length - 1);
+    const fresh = prompt.split("New memory:\n")[1] ?? "";
+    return JSON.stringify(
+      fresh.includes("often")
+        ? { action: "duplicate", id: m, merged }
+        : { action: "duplicate", id: m },
+    );
+  };
+  try {
+    const res = await call("POST", "/sessions", {
+      project: repo,
+      transcript: "merge rank transcript",
+      commitSha: "abc1234",
+    });
+    const { id } = (await res.json()) as { id: string };
+    expect(
+      await (await call("POST", `/sessions/${id}/extract`)).json(),
+    ).toEqual({
+      accepted: 1,
+      skippedDuplicates: 1,
+      skippedEmpty: 0,
+      skippedRepeats: 0,
+      skippedBelowFloor: 0,
+      skippedNoAccess: 0,
+    });
+    expect(counts).toEqual([1, 5]);
+  } finally {
+    verdict = before;
+  }
 });

@@ -18,6 +18,24 @@ export interface Candidate {
   content: string;
 }
 
+/** A candidate with its cosine similarity to the new memory's vector. */
+export interface ScoredCandidate extends Candidate {
+  similarity: number;
+}
+
+/**
+ * The candidates the LLM is shown, picked the way `findCandidates` picks them:
+ * at least the similarity floor, closest first, at most five. Ties keep their
+ * order in `list`.
+ */
+export function rankCandidates(list: ScoredCandidate[]): Candidate[] {
+  return list
+    .filter((c) => c.similarity >= CANDIDATE_MIN_SIMILARITY)
+    .sort((a, b) => b.similarity - a.similarity)
+    .slice(0, MAX_CANDIDATES)
+    .map(({ id, content }) => ({ id, content }));
+}
+
 const verdictSchema = z.union([
   z.object({ action: z.literal("add") }),
   z.object({
@@ -74,37 +92,53 @@ export interface Target {
   owner: string;
 }
 
-/** Active memories in the same scope and project that are close to the new vector. */
+/**
+ * Active memories in the same scope and project that are close to the new
+ * vector, closest first. `extra` fetches that many more than the LLM is shown,
+ * for a caller that drops some before ranking them again.
+ */
 export async function findCandidates(
   db: Queryer,
   target: Target,
   vector: number[],
-): Promise<Candidate[]> {
+  extra = 0,
+): Promise<ScoredCandidate[]> {
   const literal = JSON.stringify(vector);
   const scopeMatch =
     target.scope === "user"
       ? sql`m.scope = 'user' AND m.owner = ${target.owner}`
       : sql`m.scope = 'project' AND m.owner = ${target.owner} AND m.project_id = ${target.projectId}`;
-  const rows = await db.execute<{ id: string; content: string }>(sql`
-    SELECT m.id, m.content FROM memories m
+  const rows = await db.execute<{
+    id: string;
+    content: string;
+    similarity: number;
+  }>(sql`
+    SELECT m.id, m.content, 1 - (m.embedding <=> ${literal}::vector) AS similarity
+    FROM memories m
     WHERE ${scopeMatch}
       AND m.status IN ('active', 'possibly_stale')
       AND m.embedding IS NOT NULL
       AND 1 - (m.embedding <=> ${literal}::vector) >= ${CANDIDATE_MIN_SIMILARITY}
     ORDER BY m.embedding <=> ${literal}::vector
-    LIMIT ${MAX_CANDIDATES}`);
-  return rows.map((r) => ({ id: r.id, content: r.content }));
+    LIMIT ${MAX_CANDIDATES + extra}`);
+  return rows.map((r) => ({
+    id: r.id,
+    content: r.content,
+    similarity: Number(r.similarity),
+  }));
 }
 
 /**
  * Asks the LLM what to do with a new memory. Fails open: any error means "add".
  * With `strict`, an LLM error or a reply that isn't a verdict throws instead.
+ * Past `signal`'s deadline it throws whatever the options, so a caller that
+ * must write nothing after its deadline doesn't take the abort for "add".
  */
 export async function decide(
   llm: LlmProvider,
   content: string,
   candidates: Candidate[],
-  opts: { strict?: boolean } = {},
+  opts: { strict?: boolean; signal?: AbortSignal } = {},
 ): Promise<Verdict> {
   if (candidates.length === 0) return { action: "add" };
   try {
@@ -112,12 +146,13 @@ export async function decide(
       system: SYSTEM,
       prompt: buildPrompt(content, candidates),
       maxTokens: 300,
+      ...(opts.signal ? { signal: opts.signal } : {}),
     });
     if (opts.strict && !readVerdict(reply))
       throw new Error("dedup check gave no verdict");
     return parseVerdict(reply, candidates);
   } catch (err) {
-    if (opts.strict) throw err;
+    if (opts.strict || opts.signal?.aborted) throw err;
     console.error(
       "dedup check failed:",
       err instanceof Error ? err.message : err,

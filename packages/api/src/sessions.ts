@@ -277,8 +277,9 @@ export function sessionRoutes(
   /**
    * Extracts a backfill piece on the backfill model, once. Refuses when the
    * person's spend plus the estimates of their pieces in flight and this one
-   * would pass the budget. The model call is aborted at the deadline, and the
-   * writes happen only while the claim is still this request's.
+   * would pass the budget. The model, embedding and dedup calls are aborted at
+   * the deadline, and the writes happen only while the claim is still this
+   * request's.
    */
   async function extractPiece(
     c: Context<AuthEnv>,
@@ -334,7 +335,11 @@ export function sessionRoutes(
             ...input,
             llm: providers.backfillLlm,
             signal: AbortSignal.timeout(opts.backfillDeadlineMs),
-            writeWith: writeUnderClaim(db, s.owner, s.id, claim),
+            // The piece's spend must be recorded before its claim stops
+            // counting against the budget.
+            writer: writeUnderClaim(db, s.owner, s.id, claim, () =>
+              Promise.all(inserts),
+            ),
           }),
       );
     } catch (err) {

@@ -129,23 +129,26 @@ export async function runSetup(
     });
     if (cli) p.log.info(cli);
     const saved = loadConfig();
-    if (saved.token && !dryRun)
-      await offerBackfill({
-        client: createClient(saved.url, saved.token, timedFetch(30_000)),
-        cwd: process.cwd(),
-        env: process.env,
-        now: Date.now,
-        interactive,
-        info: (text) => p.log.info(text),
-        ask: async (plan) => {
-          p.log.message(plan);
-          const yes = await p.confirm({
-            message: "Backfill now? It runs in the background.",
-          });
-          return yes === true;
-        },
-        start: startBackfill,
-      });
+    // Without a sign-in, or in a dry run, this only prints the command.
+    await offerBackfill({
+      client:
+        saved.token && !dryRun
+          ? createClient(saved.url, saved.token, timedFetch(30_000))
+          : null,
+      cwd: process.cwd(),
+      env: process.env,
+      now: Date.now,
+      interactive,
+      info: (text) => p.log.info(text),
+      ask: async (plan) => {
+        p.log.message(plan);
+        const yes = await p.confirm({
+          message: "Backfill now? It runs in the background.",
+        });
+        return yes === true;
+      },
+      start: startBackfill,
+    });
     p.outro(
       saved.token
         ? "Done. Start a session in any repo the Impression GitHub app can reach."

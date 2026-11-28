@@ -114,9 +114,17 @@ export function claudeDirName(cwd: string): string {
   return cwd.replace(/[/\\:.]/g, "-");
 }
 
-/** Complete JSON lines from the start of a file, up to a byte cap. */
-function headEntries(path: string, maxBytes = HEAD_BYTES): unknown[] {
-  const fd = openSync(path, "r");
+/**
+ * Complete JSON lines from the start of a file, up to a byte cap, or null when
+ * the file can't be read.
+ */
+function headEntries(path: string, maxBytes = HEAD_BYTES): unknown[] | null {
+  let fd: number;
+  try {
+    fd = openSync(path, "r");
+  } catch {
+    return null;
+  }
   try {
     const buf = Buffer.alloc(Math.min(maxBytes, statSync(path).size));
     const n = readSync(fd, buf, 0, buf.length, 0);
@@ -128,6 +136,8 @@ function headEntries(path: string, maxBytes = HEAD_BYTES): unknown[] {
       } catch {}
     }
     return out;
+  } catch {
+    return null;
   } finally {
     closeSync(fd);
   }
@@ -147,6 +157,15 @@ function field(entries: unknown[], key: string): string | undefined {
 function startOf(entries: unknown[], mtime: number): number {
   const ts = Date.parse(field(entries, "timestamp") ?? "");
   return Number.isNaN(ts) ? mtime : ts;
+}
+
+/** The entry's stats, following links, or null for a dangling or unreadable one. */
+function statOf(path: string) {
+  try {
+    return statSync(path);
+  } catch {
+    return null;
+  }
 }
 
 function listDir(dir: string): string[] {
@@ -172,8 +191,8 @@ function jsonlFiles(dir: string, w: Window): [string, number][] {
     .filter((f) => f.endsWith(".jsonl"))
     .map((f) => join(dir, f))
     .flatMap((f): [string, number][] => {
-      const s = statSync(f);
-      if (!s.isFile() || s.mtimeMs < w.since) return [];
+      const s = statOf(f);
+      if (!s?.isFile() || s.mtimeMs < w.since) return [];
       if (s.mtimeMs > w.until) {
         w.running?.add(f);
         return [];
@@ -205,6 +224,7 @@ function byDirName(
     // Only top-level files: Claude keeps subagent transcripts in subfolders.
     for (const [path, mtime] of jsonlFiles(join(root, name), w)) {
       const head = headEntries(path);
+      if (!head) continue;
       const cwd = field(head, "cwd");
       if (cwd ? !isUnder(cwd, repo) : name !== exact) continue;
       const sessionKey =
@@ -234,7 +254,8 @@ function byDirName(
 function walk(dir: string, w: Window, out: [string, number][] = []) {
   for (const name of listDir(dir)) {
     const p = join(dir, name);
-    const s = statSync(p);
+    const s = statOf(p);
+    if (!s) continue;
     if (s.isDirectory()) walk(p, w, out);
     else if (
       /^rollout-.*\.jsonl$/.test(name) &&
@@ -251,6 +272,7 @@ function codexSessions(files: [string, number][], repo: string): SessionFile[] {
   const out: SessionFile[] = [];
   for (const [path, mtime] of files) {
     const head = headEntries(path);
+    if (!head) continue;
     const meta = head.find(
       (e) => (e as { type?: string })?.type === "session_meta",
     ) as { payload?: { cwd?: unknown; id?: unknown } } | undefined;
