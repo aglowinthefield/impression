@@ -6,11 +6,11 @@ import { projectIdCond, upsertProject } from "./access.js";
 import type { AuthEnv } from "./auth.js";
 import {
   BACKFILL_OPERATION,
-  backfillSpentMicros,
-  claimPiece,
-  finishPiece,
+  ClaimLost,
+  admitPiece,
   releasePiece,
   extractionCounts,
+  writeUnderClaim,
 } from "./backfill.js";
 import type { Db } from "./db/client.js";
 import { projects, sessions } from "./db/schema.js";
@@ -85,7 +85,7 @@ function dto(
 export function sessionRoutes(
   db: Db,
   providers: Providers,
-  opts: { backfillBudgetUsd: number },
+  opts: { backfillBudgetUsd: number; backfillDeadlineMs: number },
 ) {
   const app = new Hono<AuthEnv>();
 
@@ -276,8 +276,9 @@ export function sessionRoutes(
 
   /**
    * Extracts a backfill piece on the backfill model, once. Refuses when the
-   * person's backfill spend has reached the budget. Three pieces in flight can
-   * pass the check together, so spend can pass the budget by at most three.
+   * person's spend plus the estimates of their pieces in flight and this one
+   * would pass the budget. The model call is aborted at the deadline, and the
+   * writes happen only while the claim is still this request's.
    */
   async function extractPiece(
     c: Context<AuthEnv>,
@@ -291,18 +292,24 @@ export function sessionRoutes(
     });
     if (s.extractedAt) return c.json(await earlier());
     const access = c.get("access");
-    const spent = await backfillSpentMicros(db, access, s.owner);
     const budget = Math.round(opts.backfillBudgetUsd * 1e6);
-    if (spent >= budget)
+    const admitted = await admitPiece(
+      db,
+      providers.backfillLlm,
+      access,
+      s,
+      budget,
+    );
+    if (admitted.claim === null && admitted.overBudget)
       return c.json(
         {
           error: "backfill budget used up",
-          spentUsd: spent / 1e6,
+          spentUsd: admitted.spentMicros / 1e6,
           budgetUsd: opts.backfillBudgetUsd,
         },
         402,
       );
-    const claim = await claimPiece(db, s.id);
+    const claim = admitted.claim;
     if (!claim) {
       const [now] = await db
         .select({ extractedAt: sessions.extractedAt })
@@ -326,10 +333,16 @@ export function sessionRoutes(
           extractProposals(db, providers, {
             ...input,
             llm: providers.backfillLlm,
+            signal: AbortSignal.timeout(opts.backfillDeadlineMs),
+            writeWith: writeUnderClaim(db, s.owner, s.id, claim),
           }),
       );
     } catch (err) {
       await Promise.all(inserts);
+      // A claim that expired mid-run belongs to another request now: leave the
+      // piece to it, and tell this client it isn't done, as for a live claim.
+      if (err instanceof ClaimLost)
+        return c.json({ error: "piece is being extracted" }, 409);
       await releasePiece(db, s.id, claim);
       console.error(
         "backfill extraction failed:",
@@ -339,10 +352,6 @@ export function sessionRoutes(
     }
     // The spend must be summable before the next piece's budget check.
     await Promise.all(inserts);
-    // A claim that expired mid-run belongs to another request now: leave the
-    // piece to it, and tell this client it isn't done, as for a live claim.
-    if (!(await finishPiece(db, s.id, claim)))
-      return c.json({ error: "piece is being extracted" }, 409);
     const cost = tally.reduce((sum, u) => sum + (costMicros(u) ?? 0), 0);
     return c.json({
       ...(await extractionCounts(db, s.id)),

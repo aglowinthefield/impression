@@ -11,6 +11,8 @@ export interface CompleteRequest {
   system?: string;
   prompt: string;
   maxTokens?: number;
+  /** Aborts the call, for a caller with a deadline. */
+  signal?: AbortSignal;
 }
 
 export interface LlmProvider {
@@ -47,11 +49,13 @@ export async function postJson(
   url: string,
   headers: Record<string, string>,
   body: unknown,
+  signal?: AbortSignal,
 ): Promise<unknown> {
   const res = await fetchFn(url, {
     method: "POST",
     headers: { "content-type": "application/json", ...headers },
     body: JSON.stringify(body),
+    ...(signal ? { signal } : {}),
   });
   if (!res.ok) {
     const text = (await res.text().catch(() => "")).slice(0, 300);

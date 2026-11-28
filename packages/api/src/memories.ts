@@ -278,15 +278,20 @@ export async function createMemory(
     } else {
       const name =
         b.project.name ?? b.project.key.split("/").pop() ?? b.project.key;
+      // Not DO UPDATE: that locks the project row exclusively, and inside a
+      // backfill's write transaction two pieces of one repo would deadlock.
       const [p] = await db
         .insert(projects)
         .values({ key: b.project.key, name })
-        .onConflictDoUpdate({
-          target: projects.key,
-          set: { key: b.project.key },
-        })
-        .returning();
-      projectId = p?.id ?? null;
+        .onConflictDoNothing({ target: projects.key })
+        .returning({ id: projects.id });
+      const [had] = p
+        ? [p]
+        : await db
+            .select({ id: projects.id })
+            .from(projects)
+            .where(eq(projects.key, b.project.key));
+      projectId = had?.id ?? null;
     }
   }
 

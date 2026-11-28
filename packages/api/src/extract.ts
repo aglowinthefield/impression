@@ -1,7 +1,7 @@
 import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { type Access, upsertProject } from "./access.js";
-import type { Db } from "./db/client.js";
+import type { Db, Queryer } from "./db/client.js";
 import { proposals } from "./db/schema.js";
 import { anchorInput, createMemory } from "./memories.js";
 import type { LlmProvider, Providers } from "./providers/index.js";
@@ -160,6 +160,14 @@ export interface ExtractInput {
   access?: Access;
   /** The model that reads the transcript. Defaults to `providers.llm`; backfill passes its own. */
   llm?: LlmProvider;
+  /** Aborts the model call; once aborted, nothing is written. */
+  signal?: AbortSignal;
+  /**
+   * Runs the writes, given the queryer to write with. Backfill runs them in a
+   * transaction that first checks its claim, so a request that lost its claim
+   * writes nothing. Defaults to writing straight to the database.
+   */
+  writeWith?: (work: (db: Queryer) => Promise<void>) => Promise<void>;
 }
 
 /** A repo a memory can be filed under. The session's own project comes first. */
@@ -285,6 +293,7 @@ export async function extractProposals(
     system: targets.length ? `${SYSTEM}\n${PROJECTS_SYSTEM}` : SYSTEM,
     prompt: parts.filter(Boolean).join("\n\n"),
     maxTokens: 2000,
+    ...(input.signal ? { signal: input.signal } : {}),
   });
   const floor = await getExtractionFloor(db, input.owner);
   const summary: ExtractSummary = {
@@ -305,95 +314,104 @@ export async function extractProposals(
     projectId: input.projectId,
   };
 
-  for (const item of parseExtraction(reply)) {
-    if (item.confidence < floor) {
-      summary.skippedBelowFloor++;
-      continue;
-    }
-    const clean = scrub(item.content);
-    if (isEmptyAfterScrub(clean.text)) {
-      summary.skippedEmpty++;
-      continue;
-    }
-    const practice = item.kind === "practice";
-    // Practices are user-scoped, so the session's project only records where they came from.
-    const target = practice
-      ? session
-      : (pickTarget(targets, item.project) ?? session);
-    if (target.projectId === undefined) {
-      const p = input.access
-        ? await upsertProject(db, input.access, {
-            key: target.key,
-            name: target.name,
-          })
-        : null;
-      target.projectId = p?.id ?? null;
-    }
-    const projectId = target.projectId;
-    if (!projectId) {
-      summary.skippedNoAccess++;
-      continue;
-    }
-    let vec: number[] | null = null;
-    try {
-      vec = (await providers.embeddings.embed([clean.text]))[0] ?? null;
-      if (vec && (await isRepeat(db, input.owner, projectId, practice, vec))) {
-        summary.skippedRepeats++;
+  const items = parseExtraction(reply);
+  const write = input.writeWith ?? ((work) => work(db));
+  await write(async (wdb) => {
+    // Past the deadline the request may have outlived its claim: write nothing.
+    input.signal?.throwIfAborted();
+    for (const item of items) {
+      if (item.confidence < floor) {
+        summary.skippedBelowFloor++;
         continue;
       }
-    } catch (err) {
-      console.error(
-        "extraction repeat check failed:",
-        err instanceof Error ? err.message : err,
+      const clean = scrub(item.content);
+      if (isEmptyAfterScrub(clean.text)) {
+        summary.skippedEmpty++;
+        continue;
+      }
+      const practice = item.kind === "practice";
+      // Practices are user-scoped, so the session's project only records where they came from.
+      const target = practice
+        ? session
+        : (pickTarget(targets, item.project) ?? session);
+      if (target.projectId === undefined) {
+        const p = input.access
+          ? await upsertProject(wdb, input.access, {
+              key: target.key,
+              name: target.name,
+            })
+          : null;
+        target.projectId = p?.id ?? null;
+      }
+      const projectId = target.projectId;
+      if (!projectId) {
+        summary.skippedNoAccess++;
+        continue;
+      }
+      let vec: number[] | null = null;
+      try {
+        vec = (await providers.embeddings.embed([clean.text]))[0] ?? null;
+        if (
+          vec &&
+          (await isRepeat(wdb, input.owner, projectId, practice, vec))
+        ) {
+          summary.skippedRepeats++;
+          continue;
+        }
+      } catch (err) {
+        console.error(
+          "extraction repeat check failed:",
+          err instanceof Error ? err.message : err,
+        );
+      }
+      // The recheck reads the anchor at this commit, so it must be the picked repo's HEAD.
+      const sha = target.headSha;
+      // A practice follows the user to other repos, so it has nothing to anchor to.
+      const anchors =
+        sha && !practice
+          ? item.anchors
+              .filter(
+                (a) =>
+                  !a.path.startsWith("/") && !a.path.split("/").includes(".."),
+              )
+              .map((a) => ({
+                path: a.path.replace(/^(\.\/)+/, ""),
+                ...(a.symbol ? { symbol: a.symbol } : {}),
+                commitSha: sha,
+              }))
+              .filter((a) => anchorFits(targets, target, a.path))
+          : [];
+      const [proposal] = await wdb
+        .insert(proposals)
+        .values({
+          projectId,
+          sessionId: input.sessionId,
+          content: clean.text,
+          scope: practice ? "user" : "project",
+          tags: practice ? [PRACTICE_TAG] : [],
+          confidence: item.confidence,
+          embedding: vec,
+          anchors,
+        })
+        .returning();
+      if (!proposal) continue;
+      const outcome = await acceptProposal(
+        wdb,
+        providers,
+        proposal.id,
+        input.owner,
+        {
+          projectKey: target.key,
+          sessionId: input.sessionId,
+          embedding: vec,
+        },
       );
+      if (outcome === "created" || outcome === "superseded") summary.accepted++;
+      else if (outcome === "duplicate" || outcome === "merged")
+        summary.skippedDuplicates++;
+      else if (outcome === "empty") summary.skippedEmpty++;
     }
-    // The recheck reads the anchor at this commit, so it must be the picked repo's HEAD.
-    const sha = target.headSha;
-    // A practice follows the user to other repos, so it has nothing to anchor to.
-    const anchors =
-      sha && !practice
-        ? item.anchors
-            .filter(
-              (a) =>
-                !a.path.startsWith("/") && !a.path.split("/").includes(".."),
-            )
-            .map((a) => ({
-              path: a.path.replace(/^(\.\/)+/, ""),
-              ...(a.symbol ? { symbol: a.symbol } : {}),
-              commitSha: sha,
-            }))
-            .filter((a) => anchorFits(targets, target, a.path))
-        : [];
-    const [proposal] = await db
-      .insert(proposals)
-      .values({
-        projectId,
-        sessionId: input.sessionId,
-        content: clean.text,
-        scope: practice ? "user" : "project",
-        tags: practice ? [PRACTICE_TAG] : [],
-        confidence: item.confidence,
-        embedding: vec,
-        anchors,
-      })
-      .returning();
-    if (!proposal) continue;
-    const outcome = await acceptProposal(
-      db,
-      providers,
-      proposal.id,
-      input.owner,
-      {
-        projectKey: target.key,
-        sessionId: input.sessionId,
-        embedding: vec,
-      },
-    );
-    if (outcome === "created" || outcome === "superseded") summary.accepted++;
-    else if (outcome === "duplicate" || outcome === "merged")
-      summary.skippedDuplicates++;
-    else if (outcome === "empty") summary.skippedEmpty++;
-  }
+  });
   return summary;
 }
 
@@ -403,7 +421,7 @@ export async function extractProposals(
  * checked within the project; practices follow the user, so across projects.
  */
 async function isRepeat(
-  db: Db,
+  db: Queryer,
   owner: string,
   projectId: string,
   practice: boolean,
@@ -448,7 +466,7 @@ export type AcceptOutcome =
  * proposal goes back to pending before the error is rethrown.
  */
 export async function acceptProposal(
-  db: Db,
+  db: Queryer,
   providers: Providers,
   id: string,
   principal: string,

@@ -1,10 +1,26 @@
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import {
+  and,
+  eq,
+  exists,
+  inArray,
+  isNull,
+  lte,
+  ne,
+  or,
+  sql,
+} from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import { type Access, findProject } from "./access.js";
 import type { AuthEnv } from "./auth.js";
-import type { Db } from "./db/client.js";
-import { memories, projects, sessions, usageEvents } from "./db/schema.js";
+import type { Db, Queryer } from "./db/client.js";
+import {
+  memories,
+  projects,
+  proposals,
+  sessions,
+  usageEvents,
+} from "./db/schema.js";
 import { logEvent } from "./events.js";
 import { MAX_PROMPT_CHARS, SYSTEM } from "./extract.js";
 import type { LlmProvider, Providers } from "./providers/index.js";
@@ -19,12 +35,19 @@ export const ESTIMATE_OUTPUT_TOKENS = 2000;
 /** A claim on a piece's extraction older than this is abandoned, by a crash or a lost request. */
 export const CLAIM_MINUTES = 15;
 
+/**
+ * How long a backfill extraction's model call may take before it is aborted
+ * and nothing is written. Well under `CLAIM_MINUTES`, so a live request never
+ * outlives its claim.
+ */
+export const EXTRACT_DEADLINE_MS = 5 * 60_000;
+
 /** Pieces in one plan request. A default run sends about 150. */
 const MAX_PLAN_PIECES = 5000;
 
 /** What a person has spent on backfill extraction, in millionths of a dollar. */
 export async function backfillSpentMicros(
-  db: Db,
+  db: Queryer,
   access: Access,
   principal: string,
 ): Promise<number> {
@@ -87,7 +110,10 @@ export async function extractionCounts(db: Db, sessionId: string) {
  * or null when the piece is extracted already or another request holds a live
  * claim on it.
  */
-export async function claimPiece(db: Db, id: string): Promise<string | null> {
+export async function claimPiece(
+  db: Queryer,
+  id: string,
+): Promise<string | null> {
   const [claimed] = await db
     .update(sessions)
     .set({ extractingAt: sql`now()` })
@@ -114,7 +140,7 @@ const holds = (id: string, claim: string) =>
  * False when the claim expired and another request took the piece over.
  */
 export async function finishPiece(
-  db: Db,
+  db: Queryer,
   id: string,
   claim: string,
 ): Promise<boolean> {
@@ -124,6 +150,99 @@ export async function finishPiece(
     .where(holds(id, claim))
     .returning({ id: sessions.id });
   return rows.length > 0;
+}
+
+/** Thrown inside the write transaction when the claim is no longer this request's. */
+export class ClaimLost extends Error {
+  constructor() {
+    super("backfill claim taken over");
+    this.name = "ClaimLost";
+  }
+}
+
+/**
+ * Runs extraction's writes in one transaction that first locks the piece's row
+ * and checks the claim is still `claim`, then marks the piece extracted. A
+ * request whose claim expired and was taken over writes nothing (`ClaimLost`).
+ * The row lock makes a takeover wait until this commits, by which time the
+ * piece is extracted and can't be claimed.
+ */
+export function writeUnderClaim(
+  db: Db,
+  owner: string,
+  id: string,
+  claim: string,
+) {
+  return (work: (db: Queryer) => Promise<void>) =>
+    db.transaction(async (tx) => {
+      // One piece's writes at a time per person: the memories are theirs, so
+      // two pieces could lock the same ones in turn, and each piece's dedup
+      // must see the memories the one before it wrote.
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtextextended(${`backfill-write:${owner}`}, 0))`,
+      );
+      const held = await tx
+        .select({ id: sessions.id })
+        .from(sessions)
+        .where(holds(id, claim))
+        .for("update");
+      if (held.length === 0) throw new ClaimLost();
+      await work(tx);
+      if (!(await finishPiece(tx, id, claim))) throw new ClaimLost();
+    });
+}
+
+export type Admission =
+  | { claim: string }
+  | { claim: null; overBudget: true; spentMicros: number }
+  | { claim: null; overBudget: false };
+
+/**
+ * Admits a backfill piece to extraction against the person's budget, and
+ * claims it. One transaction holding a per-person advisory lock, so two
+ * requests can't both pass on the same headroom: refuses when recorded spend,
+ * plus the estimates of the person's other unexpired claims, plus this piece's
+ * estimate, would pass the budget. Estimates are `estimateMicros`, as the plan
+ * prices pieces. `claim: null` without `overBudget` means the piece is
+ * extracted already or another request holds it.
+ */
+export async function admitPiece(
+  db: Db,
+  llm: LlmProvider,
+  access: Access,
+  s: { id: string; owner: string; transcript: string },
+  budgetMicros: number,
+): Promise<Admission> {
+  return db.transaction(async (tx) => {
+    // Spend follows a GitHub user across tokens, so the lock does too.
+    const who = access.userId ?? `principal:${s.owner}`;
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${`backfill:${who}`}, 0))`,
+    );
+    const spent = await backfillSpentMicros(tx, access, s.owner);
+    const inFlight = await tx
+      .select({ chars: sql<number>`char_length(${sessions.transcript})` })
+      .from(sessions)
+      .where(
+        and(
+          eq(sessions.owner, s.owner),
+          eq(sessions.source, "backfill"),
+          isNull(sessions.extractedAt),
+          ne(sessions.id, s.id),
+          sql`${sessions.extractingAt} >= now() - make_interval(mins => ${CLAIM_MINUTES})`,
+        ),
+      );
+    const committed =
+      spent +
+      estimateMicros(
+        llm,
+        inFlight.map((r) => Number(r.chars)),
+      );
+    if (committed + estimateMicros(llm, [s.transcript.length]) > budgetMicros)
+      return { claim: null, overBudget: true, spentMicros: spent };
+    const claim = await claimPiece(tx, s.id);
+    return claim ? { claim } : { claim: null, overBudget: false };
+  });
 }
 
 /** Gives a claim back after a failure, unless another request has taken the piece over. */
@@ -231,8 +350,9 @@ export function backfillRoutes(
   });
 
   /**
-   * Retires the caller's live memories that came from backfilled sessions of a
-   * project, each with an event so it can be undone. Superseded and retired
+   * Retires the caller's live memories that extraction wrote from backfilled
+   * sessions of a project and filed in that project (or as the person's own
+   * practices), each with an event so it can be undone. Superseded and retired
    * memories are history and stay as they are. 404 for a project the caller
    * can't see, as the other project routes answer.
    */
@@ -261,6 +381,29 @@ export function backfillRoutes(
             eq(sessions.projectId, p.id),
             eq(sessions.source, "backfill"),
             inArray(memories.status, ["active", "possibly_stale"]),
+            // Only memories filed in this repo, or the person's own practices;
+            // never ones extraction filed in another repo the session touched.
+            or(
+              eq(memories.projectId, p.id),
+              and(eq(memories.scope, "user"), isNull(memories.projectId)),
+            ),
+            // Only memories extraction wrote from this session, not a manual
+            // memory that names it. Only extraction writes proposals, and a
+            // memory one created is no older than the proposal; a memory one
+            // merged into is. (A memory event isn't proof: a manual memory
+            // with `agent: "extraction"` logs one too.)
+            exists(
+              tx
+                .select({ one: sql`1` })
+                .from(proposals)
+                .where(
+                  and(
+                    eq(proposals.memoryId, memories.id),
+                    eq(proposals.sessionId, memories.sessionId),
+                    lte(proposals.createdAt, memories.createdAt),
+                  ),
+                ),
+            ),
           ),
         )
         .for("update", { of: memories });

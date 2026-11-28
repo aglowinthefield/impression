@@ -22,7 +22,7 @@ export function anthropicLlm(opts: AnthropicOptions): LlmProvider {
   return {
     model,
     provider: "anthropic",
-    async complete({ system, prompt, maxTokens }) {
+    async complete({ system, prompt, maxTokens, signal }) {
       const json = (await postJson(
         "anthropic",
         fetchFn,
@@ -34,6 +34,7 @@ export function anthropicLlm(opts: AnthropicOptions): LlmProvider {
           ...(system ? { system } : {}),
           messages: [{ role: "user", content: prompt }],
         },
+        signal,
       )) as {
         content?: { type: string; text?: string }[];
         usage?: { input_tokens?: number; output_tokens?: number };

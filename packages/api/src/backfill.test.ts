@@ -8,6 +8,7 @@ import {
   memories,
   memoryEvents,
   projects,
+  proposals,
   sessions,
   usageEvents,
   users,
@@ -37,10 +38,17 @@ class FakeModel implements LlmProvider {
   prompts: string[] = [];
   /** The memory text for the next reply; a fresh one per call by default. */
   next: string | null = null;
+  /** The repo key the next reply files its memory under, if any. */
+  nextProject: string | null = null;
   fail = false;
   private held: {
     started: ReturnType<typeof deferred>;
     gate: ReturnType<typeof deferred>;
+  } | null = null;
+  /** Holds every call until released, from `holdAll`. */
+  private wall: {
+    gate: ReturnType<typeof deferred>;
+    onStart: () => void;
   } | null = null;
 
   constructor(
@@ -55,13 +63,40 @@ class FakeModel implements LlmProvider {
     return { started: h.started.promise, release: h.gate.resolve };
   }
 
+  /**
+   * Holds every call until `release`. `started` counts the calls that have
+   * reached the model so far; `onStart` is told each time one does.
+   */
+  holdAll(onStart: () => void) {
+    const gate = deferred();
+    this.wall = { gate, onStart };
+    return {
+      release: () => {
+        this.wall = null;
+        gate.resolve();
+      },
+    };
+  }
+
   async complete(req: CompleteRequest) {
     this.prompts.push(req.prompt);
+    const n = this.prompts.length;
     const held = this.held;
     this.held = null;
+    // A held call gives up when the caller's deadline aborts it, as fetch does.
+    const aborted = new Promise<never>((_, reject) => {
+      if (req.signal?.aborted) reject(req.signal.reason);
+      req.signal?.addEventListener("abort", () => reject(req.signal?.reason));
+    });
+    aborted.catch(() => {});
     if (held) {
       held.started.resolve();
-      await held.gate.promise;
+      await Promise.race([held.gate.promise, aborted]);
+    }
+    const wall = this.wall;
+    if (wall) {
+      wall.onStart();
+      await Promise.race([wall.gate.promise, aborted]);
     }
     if (this.fail) {
       this.fail = false;
@@ -74,11 +109,20 @@ class FakeModel implements LlmProvider {
       inputTokens: 10_000,
       outputTokens: 1_000,
     });
-    const content =
-      this.next ?? `Fact ${this.prompts.length} zz${this.prompts.length}`;
+    const content = this.next ?? `Fact ${n} zz${n}`;
+    const project = this.nextProject;
     this.next = null;
+    this.nextProject = null;
     return JSON.stringify({
-      memories: [{ kind: "fact", content, confidence: 0.9, anchors: [] }],
+      memories: [
+        {
+          kind: "fact",
+          content,
+          confidence: 0.9,
+          anchors: [],
+          ...(project ? { project } : {}),
+        },
+      ],
     });
   }
 }
@@ -89,6 +133,7 @@ let model: FakeModel;
 let live: FakeModel;
 let app: ReturnType<typeof createApp>;
 let tight: ReturnType<typeof createApp>;
+let providers: ReturnType<typeof fakeProviders>;
 /** The live model's answer to the dedup check. */
 let verdict = (_prompt: string) => '{"action":"add"}';
 const tokens: Record<string, string> = {};
@@ -105,10 +150,20 @@ beforeAll(async () => {
         ? Promise.resolve(verdict(req.prompt))
         : live.complete(req),
   };
-  const providers = { ...fakeProviders(), llm: liveLlm, backfillLlm: model };
+  providers = { ...fakeProviders(), llm: liveLlm, backfillLlm: model };
   app = createApp(t.db, providers);
-  tight = createApp(t.db, providers, { backfillBudgetUsd: 0.05 });
-  for (const name of ["alice", "bob", "carol", "dave", "erin", "fay"])
+  tight = createApp(t.db, providers, { backfillBudgetUsd: 0.07 });
+  for (const name of [
+    "alice",
+    "bob",
+    "carol",
+    "dave",
+    "erin",
+    "fay",
+    "hana",
+    "ivan",
+    "jun",
+  ])
     tokens[name] = await createToken(t.db, name);
 });
 afterAll(() => t.drop());
@@ -372,14 +427,15 @@ describe("backfill extraction", () => {
     const calls = model.prompts.length;
     const [a, b, c] = ids as [string, string, string];
     expect((await extract("carol", a, tight)).status).toBe(200);
-    // $0.03 spent of $0.05: still under, so this one runs and goes over.
+    // $0.03 spent of $0.07, and about $0.02 estimated for this piece: it fits.
+    // Then $0.06 spent: the next piece's estimate would pass the budget.
     expect((await extract("carol", b, tight)).status).toBe(200);
     expect(await extract("carol", c, tight)).toEqual({
       status: 402,
       body: {
         error: "backfill budget used up",
         spentUsd: 0.06,
-        budgetUsd: 0.05,
+        budgetUsd: 0.07,
       },
     });
     expect(model.prompts.length).toBe(calls + 2);
@@ -398,8 +454,119 @@ describe("backfill extraction", () => {
     );
     expect(await plan.json()).toMatchObject({
       spentUsd: 0.06,
-      budgetUsd: 0.05,
+      budgetUsd: 0.07,
     });
+  });
+});
+
+describe("backfill admission and claims", () => {
+  test("pieces extracted at once are admitted only while their estimates fit the budget", async () => {
+    const pieces = [
+      ["github.com/acme/backfill", "user: at once piece a1"],
+      ["github.com/acme/backfill", "user: at once piece a2"],
+      ["github.com/acme/second", "user: at once piece b1"],
+      ["github.com/acme/second", "user: at once piece b2"],
+    ] as const;
+    const ids: string[] = [];
+    for (const [key, transcript] of pieces) {
+      const res = await call("hana", "POST", "/sessions", {
+        project: { key },
+        transcript,
+        source: "backfill",
+      });
+      ids.push(((await res.json()) as { id: string }).id);
+    }
+    const each = estimateMicros(model, [pieces[0][1].length]);
+    // Room for two pieces' estimates and half of a third.
+    const budgeted = createApp(t.db, providers, {
+      backfillBudgetUsd: (2.5 * each) / 1e6,
+    });
+    // Every request either reaches the model, where it is held, or answers.
+    let started = 0;
+    let settled = 0;
+    let wake = () => {};
+    const allIn = new Promise<void>((resolve) => {
+      wake = () => {
+        if (started + settled >= pieces.length) resolve();
+      };
+    });
+    const calls = model.prompts.length;
+    const wall = model.holdAll(() => {
+      started++;
+      wake();
+    });
+    const runs = ids.map((id) =>
+      extract("hana", id, budgeted).then((r) => {
+        settled++;
+        wake();
+        return r;
+      }),
+    );
+    await allIn;
+    wall.release();
+    const results = await Promise.all(runs);
+    expect(results.map((r) => r.status).sort()).toEqual([200, 200, 402, 402]);
+    expect(results.filter((r) => r.status === 402)[0]?.body).toEqual({
+      error: "backfill budget used up",
+      spentUsd: 0,
+      budgetUsd: (2.5 * each) / 1e6,
+    });
+    expect(model.prompts.length).toBe(calls + 2);
+  });
+
+  test("a request whose claim expired writes nothing when it finishes after the new claim", async () => {
+    const { body } = await upload("alice", "user: outlived claim piece");
+    const a = model.hold();
+    const first = extract("alice", body.id);
+    await a.started;
+    await t.db
+      .update(sessions)
+      .set({ extractingAt: new Date(Date.now() - 16 * 60_000) })
+      .where(eq(sessions.id, body.id));
+    const b = model.hold();
+    const second = extract("alice", body.id);
+    await b.started;
+    const nB = model.prompts.length;
+    b.release();
+    expect(await second).toMatchObject({ status: 200, body: { saved: 1 } });
+    a.release();
+    expect(await first).toEqual({
+      status: 409,
+      body: { error: "piece is being extracted" },
+    });
+    const kept = await t.db
+      .select({ content: memories.content, status: memories.status })
+      .from(memories)
+      .where(eq(memories.sessionId, body.id));
+    expect(kept).toEqual([{ content: `Fact ${nB} zz${nB}`, status: "active" }]);
+    expect(
+      await t.db
+        .select()
+        .from(memoryEvents)
+        .where(eq(memoryEvents.sessionId, body.id)),
+    ).toHaveLength(1);
+    expect(
+      await t.db
+        .select()
+        .from(proposals)
+        .where(eq(proposals.sessionId, body.id)),
+    ).toHaveLength(1);
+  });
+
+  test("a model call past the deadline is aborted and writes nothing", async () => {
+    const quick = createApp(t.db, providers, { backfillDeadlineMs: 1 });
+    const { body } = await upload("alice", "user: slow model piece");
+    // Never released: only the deadline ends it.
+    const held = model.hold();
+    expect((await extract("alice", body.id, quick)).status).toBe(502);
+    held.release();
+    expect(await row(body.id)).toMatchObject({
+      extractedAt: null,
+      extractingAt: null,
+    });
+    expect(
+      await t.db.select().from(memories).where(eq(memories.sessionId, body.id)),
+    ).toEqual([]);
   });
 });
 
@@ -619,6 +786,106 @@ describe("POST /backfill/undo", () => {
       `/backfill/undo?project=github.com%2Facme%2Fother`,
     );
     expect(await bob.json()).toEqual({ retired: 0 });
+  });
+
+  test("leaves a manual memory that names a backfill session, even one extraction merged into", async () => {
+    const s = (await upload("ivan", "user: piece ivan names")).body;
+    // A memory written by hand that claims to be extraction's, from that session.
+    const res = await call("ivan", "POST", "/memories", {
+      scope: "project",
+      project,
+      content: "Ivan keeps the release notes in docs/releases",
+      agent: "extraction",
+      sessionId: s.id,
+      dedup: false,
+    });
+    expect(res.status).toBe(201);
+    const manual = (await res.json()) as { id: string };
+    // The session's extraction finds the same fact and dedups onto it.
+    model.next = "Ivan keeps the release notes in docs/releases";
+    verdict = () => JSON.stringify({ action: "duplicate", id: manual.id });
+    try {
+      expect((await extract("ivan", s.id)).status).toBe(200);
+    } finally {
+      verdict = () => '{"action":"add"}';
+    }
+    expect(
+      await t.db
+        .select({ memoryId: proposals.memoryId })
+        .from(proposals)
+        .where(eq(proposals.sessionId, s.id)),
+    ).toEqual([{ memoryId: manual.id }]);
+    const real = (await upload("ivan", "user: another ivan piece")).body;
+    model.next = "Ivan's builds run on a self-hosted runner";
+    expect((await extract("ivan", real.id)).body).toMatchObject({ saved: 1 });
+
+    const undo = await call(
+      "ivan",
+      "POST",
+      `/backfill/undo?project=${encodeURIComponent(project.key)}`,
+    );
+    expect(await undo.json()).toEqual({ retired: 1 });
+    const status = async (id: string) =>
+      (
+        await t.db
+          .select({ status: memories.status })
+          .from(memories)
+          .where(eq(memories.id, id))
+      )[0]?.status;
+    expect(await status(manual.id)).toBe("active");
+    const [fromReal] = await t.db
+      .select({ status: memories.status })
+      .from(memories)
+      .where(eq(memories.sessionId, real.id));
+    expect(fromReal?.status).toBe("retired");
+  });
+
+  test("leaves memories extraction filed in another repo the session touched", async () => {
+    const elsewhere = "github.com/acme/candidate";
+    const res = await call("jun", "POST", "/sessions", {
+      project,
+      transcript: "user: jun's piece that touched two repos",
+      source: "backfill",
+      candidates: [{ key: elsewhere, edits: 3, reads: 0, files: [] }],
+    });
+    const s = (await res.json()) as { id: string };
+    model.next = "The candidate repo pins node 22";
+    model.nextProject = elsewhere;
+    expect((await extract("jun", s.id)).body).toMatchObject({ saved: 1 });
+    const own = (await upload("jun", "user: jun's own repo piece")).body;
+    model.next = "Jun's repo deploys on tag";
+    expect((await extract("jun", own.id)).body).toMatchObject({ saved: 1 });
+
+    const undo = await call(
+      "jun",
+      "POST",
+      `/backfill/undo?project=${encodeURIComponent(project.key)}`,
+    );
+    expect(await undo.json()).toEqual({ retired: 1 });
+    const rows = await t.db
+      .select({
+        content: memories.content,
+        status: memories.status,
+        key: projects.key,
+      })
+      .from(memories)
+      .innerJoin(projects, eq(memories.projectId, projects.id))
+      .where(eq(memories.owner, "jun"));
+    expect(rows).toEqual(
+      expect.arrayContaining([
+        {
+          content: "The candidate repo pins node 22",
+          status: "active",
+          key: elsewhere,
+        },
+        {
+          content: "Jun's repo deploys on tag",
+          status: "retired",
+          key: project.key,
+        },
+      ]),
+    );
+    expect(rows).toHaveLength(2);
   });
 
   test("needs a project, and an unknown one is not found", async () => {

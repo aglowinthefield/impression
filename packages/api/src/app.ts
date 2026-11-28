@@ -3,7 +3,7 @@ import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
 import { activityRoutes } from "./activity.js";
 import { type AuthEnv, requireAuth } from "./auth.js";
-import { backfillRoutes } from "./backfill.js";
+import { EXTRACT_DEADLINE_MS, backfillRoutes } from "./backfill.js";
 import { BACKFILL_BUDGET_USD, type GithubConfig } from "./config.js";
 import { coreRoutes } from "./core.js";
 import type { Db } from "./db/client.js";
@@ -38,6 +38,8 @@ export function createApp(
     repoAccess?: RepoAccess;
     /** Lifetime backfill spend allowed per person, in US dollars. */
     backfillBudgetUsd?: number;
+    /** How long a backfill extraction's model call may take. Tests shorten it. */
+    backfillDeadlineMs?: number;
   } = {},
 ) {
   const backfillBudgetUsd = opts.backfillBudgetUsd ?? BACKFILL_BUDGET_USD;
@@ -81,7 +83,13 @@ export function createApp(
   api.route("/memories", memoryRoutes(db, providers));
   api.route("/core", coreRoutes(db));
   api.route("/search", searchRoutes(db, providers));
-  api.route("/sessions", sessionRoutes(db, providers, { backfillBudgetUsd }));
+  api.route(
+    "/sessions",
+    sessionRoutes(db, providers, {
+      backfillBudgetUsd,
+      backfillDeadlineMs: opts.backfillDeadlineMs ?? EXTRACT_DEADLINE_MS,
+    }),
+  );
   api.route(
     "/backfill",
     backfillRoutes(db, providers, { budgetUsd: backfillBudgetUsd }),
