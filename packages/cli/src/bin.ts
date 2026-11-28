@@ -14,7 +14,16 @@ import {
   unknownCommand,
   usageLine,
 } from "./cli-help.js";
-import { add, edit, keep, list, retire, search, status } from "./commands.js";
+import {
+  add,
+  edit,
+  keep,
+  list,
+  retire,
+  search,
+  status,
+  statusReport,
+} from "./commands.js";
 import { loadConfig, saveConfig } from "./config.js";
 import { pushEvalTurns } from "./eval-push.js";
 import { runCommand } from "./global-cli.js";
@@ -96,7 +105,7 @@ if (cmd === "hook") {
         : {}),
       pid: process.pid,
       ...(config.sendInstructions
-        ? { instructions: readInstructions(process.cwd()) }
+        ? { readInstructions: (checkout: string) => readInstructions(checkout) }
         : {}),
     });
     process.exit(code);
@@ -178,17 +187,23 @@ if (cmd === "hook") {
       list: () => list(client, cwd),
       status: async () => {
         const old = oldHookFiles();
-        const s = await status(client, cwd, url);
         const back = backfillStatus(cwd);
-        return [
-          s,
-          ...(back ? [back] : []),
-          ...(old.length
-            ? [
-                `Old hooks: ${old.join(", ")} (the plugin replaces them; run impression setup to remove them)`,
-              ]
-            : []),
-        ].join("\n");
+        const r = await statusReport(
+          () => status(client, cwd, url),
+          [
+            ...(back ? [back] : []),
+            ...(old.length
+              ? [
+                  `Old hooks: ${old.join(", ")} (the plugin replaces them; run impression setup to remove them)`,
+                ]
+              : []),
+          ],
+        );
+        if (r.error) {
+          if (r.text) console.log(r.text);
+          throw r.error;
+        }
+        return r.text;
       },
       retire: () => retire(client, cwd, id ?? ""),
       edit: () => edit(client, cwd, id ?? "", text),

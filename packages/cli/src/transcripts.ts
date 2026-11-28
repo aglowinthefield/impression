@@ -2,16 +2,19 @@
  * Finds a repo's past pi, Claude Code and Codex transcripts on this machine and
  * splits them into pieces for `impression backfill`.
  */
+import { execFileSync } from "node:child_process";
 import {
   closeSync,
+  existsSync,
   openSync,
   readdirSync,
   readFileSync,
   readSync,
+  realpathSync,
   statSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { transcriptText } from "./session-end.js";
 
 export const BACKFILL_AGENTS = ["pi", "claude", "codex"] as const;
@@ -70,6 +73,35 @@ export function isUnder(dir: string, repo: string): boolean {
   const d = dir.replaceAll("\\", "/");
   const r = repo.replaceAll("\\", "/").replace(/\/+$/, "");
   return d === r || d.startsWith(`${r}/`);
+}
+
+/**
+ * The git top level of `dir`, or of its nearest existing ancestor when `dir`
+ * is gone. Undefined outside any repo.
+ */
+export function gitTopLevel(dir: string): string | undefined {
+  let d = resolve(dir);
+  while (!existsSync(d) && dirname(d) !== d) d = dirname(d);
+  try {
+    return (
+      execFileSync("git", ["rev-parse", "--show-toplevel"], {
+        cwd: d,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+        windowsHide: true,
+      }).trim() || undefined
+    );
+  } catch {
+    return undefined;
+  }
+}
+
+function real(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
 }
 
 /** pi's session dir name: `/a/b.c` becomes `--a-b.c--`, `C:\a` becomes `--C--a--`. */
@@ -272,8 +304,21 @@ export function discoverSessions(
     if (agents.includes("claude")) add(byDirName("claude", roots.claude, r, w));
     if (agents.includes("codex")) add(codexSessions(codexFiles, r));
   }
+  // A session in another git repo nested under these dirs belongs to that repo.
+  const ours = new Set(
+    (typeof dirs === "string" ? [dirs] : dirs).map((d) => real(resolve(d))),
+  );
+  const tops = new Map<string, string | undefined>();
+  const inOtherRepo = (cwd: string) => {
+    if (!tops.has(cwd)) tops.set(cwd, gitTopLevel(cwd));
+    const top = tops.get(cwd);
+    if (top === undefined) return false;
+    const t = real(top);
+    return !ours.has(t) && [...ours].some((d) => isUnder(t, d));
+  };
   return [...found.values()]
     .filter((s) => s.start >= since)
+    .filter((s) => !s.cwd || !inOtherRepo(s.cwd))
     .sort((a, b) => a.start - b.start || a.path.localeCompare(b.path));
 }
 

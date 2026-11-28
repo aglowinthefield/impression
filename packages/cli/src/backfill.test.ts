@@ -30,6 +30,7 @@ import {
   readProgress,
   retryable,
 } from "./backfill.js";
+import { statusReport } from "./commands.js";
 import { startBackfill } from "./setup-cli.js";
 import { claudeDirName, piDirName } from "./transcripts.js";
 
@@ -903,25 +904,39 @@ describe("cost (AC7, AC9)", () => {
     expect(api.sent()).toEqual(["s0"]);
   });
 
-  test("the final cost is what the server recorded, a billed piece that failed included", async () => {
+  test("the final cost is the sum of what the server returned for this run's pieces, not the person's spend change", async () => {
     const w = world();
     piSession(w, w.repo, "s0", NOW - DAY);
     const api = stubApi({
-      extract: async (_s, n) => {
-        if (n === 0) {
-          api.record(0.03);
-          throw apiError(502, "extraction failed, try again");
-        }
-        return { saved: 1, updated: 0, costUsd: 0.04 };
+      extract: async () => {
+        // A backfill in another repo is billed while this piece extracts.
+        api.record(0.03);
+        return { saved: 1, updated: 0, costUsd: 0.03 };
       },
     });
     const r = run(w, api.client);
     expect(await r.done).toBe(0);
-    expect(r.out()).toContain("#1 saved 1, updated 0, $0.04");
     expect(r.lines.at(-1)).toBe(
-      "Done. Sessions read: 1. Memories saved: 1, updated: 0. Cost: $0.07.",
+      "Done. Sessions read: 1. Memories saved: 1, updated: 0. Cost: $0.03.",
     );
-    expect(readProgress(w.env, w.key)?.costUsd).toBeCloseTo(0.07, 6);
+    expect(readProgress(w.env, w.key)?.costUsd).toBeCloseTo(0.03, 6);
+  });
+
+  test("sessions read counts every session the run read, one whose piece failed included", async () => {
+    const w = world();
+    piSession(w, w.repo, "s0", NOW - 2 * DAY);
+    piSession(w, w.repo, "s1", NOW - DAY);
+    const api = stubApi({
+      extract: async (s) => {
+        if (s.body.sessionKey === "s1") throw apiError(400, "bad piece");
+        return { saved: 1, updated: 0, costUsd: 0.04 };
+      },
+    });
+    const r = run(w, api.client);
+    expect(await r.done).toBe(1);
+    expect(r.out()).toContain(
+      "Done. Sessions read: 2. Memories saved: 1, updated: 0. Cost: $0.04.",
+    );
   });
 });
 
@@ -1050,6 +1065,62 @@ describe("cross-repo anchors (AC13)", () => {
   });
 });
 
+describe("nested repos (AC1)", () => {
+  test("a session in another git repo nested in this one is left out, a deleted folder inside it too", async () => {
+    const w = world();
+    const nested = join(w.repo, "vendor", "lib");
+    mkdirSync(nested, { recursive: true });
+    git(nested, ["init", "-q", "-b", "main"]);
+    piSession(w, w.repo, "s0", NOW - 4 * DAY);
+    // A folder of this repo that no longer exists still belongs to it.
+    piSession(w, join(w.repo, "gone"), "sub", NOW - 3 * DAY);
+    piSession(w, nested, "n1", NOW - 2 * DAY);
+    codexSession(w, nested, "n2", NOW - 2 * DAY);
+    piSession(w, join(nested, "gone"), "n3", NOW - DAY);
+    const api = stubApi();
+    expect(await run(w, api.client).done).toBe(0);
+    expect(api.sent()).toEqual(["s0", "sub"]);
+  });
+});
+
+describe("nothing new (AC1)", () => {
+  test("prints the plan's counts and estimate before saying there is nothing new", async () => {
+    const w = world();
+    const r = run(w, stubApi().client);
+    expect(await r.done).toBe(0);
+    const counts = r.lines.indexOf(
+      "0 sessions, 0 pieces. Estimated cost $0.00 on claude-sonnet-5-5.",
+    );
+    expect(counts).toBeGreaterThan(-1);
+    expect(r.lines.indexOf("Nothing new to backfill.")).toBeGreaterThan(counts);
+  });
+});
+
+describe("instructions", () => {
+  test("are read from the backfilled repo, not the directory the command ran in", async () => {
+    const w = world();
+    piSession(w, w.repo, "s0", NOW - DAY);
+    const read: string[] = [];
+    const api = stubApi();
+    const r = run(
+      w,
+      api.client,
+      { repo: w.repo },
+      {
+        cwd: w.base,
+        readInstructions: (dir) => {
+          read.push(dir);
+          return `rules in ${dir}`;
+        },
+      },
+    );
+    expect(await r.done).toBe(0);
+    expect(read).toEqual([w.repo]);
+    const extract = api.calls.find((c) => c.path.endsWith("/extract"));
+    expect(extract?.body).toEqual({ instructions: `rules in ${w.repo}` });
+  });
+});
+
 describe("repo dirs (AC1)", () => {
   test("a separate git dir's parent isn't taken for a checkout", () => {
     const base = realpathSync(mkdtempSync(join(tmpdir(), "imp-backfill-")));
@@ -1122,6 +1193,19 @@ describe("status (AC15)", () => {
     );
     expect(shown).toContain("Backfill:  finished, 1 of 1 pieces");
     expect(readProgress(w.env, w.key)).toEqual(next);
+  });
+
+  test("shows backfill progress when the server status request fails", async () => {
+    const w = world();
+    piSession(w, w.repo, "s0", NOW - DAY);
+    expect(await run(w, stubApi().client).done).toBe(0);
+    const back = backfillStatus(w.repo, w.env, () => false);
+    const r = await statusReport(
+      () => Promise.reject(new Error("Impression API 502: bad gateway")),
+      back ? [back] : [],
+    );
+    expect(r.text).toContain("Backfill:  finished, 1 of 1 pieces");
+    expect(r.error?.message).toBe("Impression API 502: bad gateway");
   });
 });
 

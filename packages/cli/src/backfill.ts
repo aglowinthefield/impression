@@ -482,7 +482,7 @@ export function formatPlan(plan: Plan): string[] {
     out.push(
       `${plural(sessions.size, "session")}, ${plural(plan.send.length, "piece")}. Estimated cost ${usd(plan.estimateUsd)} on ${plan.model}.`,
     );
-  else if (plan.leftOut)
+  else
     out.push(
       `${plural(plan.newSessions, "session")}, ${plural(plan.leftOut, "piece")}. Estimated cost ${usd(plan.fullEstimateUsd)} on ${plan.model}.`,
     );
@@ -657,6 +657,7 @@ export async function runPlan(
 
   const one = async (i: number) => {
     const piece = items[i] as Piece;
+    read.add(piece.session.path);
     const tag = `[${String(i + 1).padStart(width)}/${items.length}] ${label(piece)}`;
     let outcome: Outcome = { kind: "failed", error: "" };
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -690,7 +691,6 @@ export async function runPlan(
         totals.done++;
         totals.saved += outcome.saved;
         totals.updated += outcome.updated;
-        read.add(piece.session.path);
         if (outcome.kind === "extracted") {
           totals.costUsd += outcome.costUsd;
           opts.log(
@@ -828,7 +828,8 @@ export interface BackfillDeps {
   pid: number;
   alive?: (pid: number) => boolean;
   concurrency?: number;
-  instructions?: string;
+  /** Instruction files to send with each extract, read from the backfilled repo's checkout. */
+  readInstructions?: (checkout: string) => string | undefined;
 }
 
 /** `impression backfill`. Returns the exit code. */
@@ -861,13 +862,11 @@ export async function backfill(
   }
   try {
     const plan = await makePlan(client, repo, args, env, deps.now());
+    for (const l of formatPlan(plan)) log(l);
     if (!plan.send.length && !plan.leftOut) {
-      const skipped = skipLine(plan);
-      if (skipped) log(skipped);
       log("Nothing new to backfill.");
       return 0;
     }
-    for (const l of formatPlan(plan)) log(l);
     if (!plan.send.length) {
       log("Nothing fits in what is left of the backfill budget.");
       return 0;
@@ -916,14 +915,13 @@ export async function backfill(
         null,
       ),
     );
+    const instructions = deps.readInstructions?.(repo.checkout);
     const totals = await runPlan(client, plan, {
       log,
       ...(deps.concurrency ? { concurrency: deps.concurrency } : {}),
-      ...(deps.instructions ? { instructions: deps.instructions } : {}),
+      ...(instructions ? { instructions } : {}),
       onProgress: (t) => writeProgress(env, repo.key, progress(t, null)),
     });
-    const recorded = await recordedCost(client, repo.key, plan.spentUsd);
-    if (recorded !== undefined) totals.costUsd = recorded;
     writeProgress(
       env,
       repo.key,
@@ -933,24 +931,6 @@ export async function backfill(
     return totals.failed ? 1 : 0;
   } finally {
     if (!args.dryRun) releaseLock(env, repo.key, deps.pid);
-  }
-}
-
-/**
- * What the run cost as the server recorded it: the person's spend now less
- * their spend at the plan. It counts a piece the server billed but answered
- * with an error. Undefined when the server can't be asked.
- */
-async function recordedCost(
-  client: ApiClient,
-  key: string,
-  spentBefore: number,
-): Promise<number | undefined> {
-  try {
-    const after = await askPlan(client, key, []);
-    return Math.max(0, micros(after.spentUsd) - micros(spentBefore)) / 1e6;
-  } catch {
-    return undefined;
   }
 }
 
