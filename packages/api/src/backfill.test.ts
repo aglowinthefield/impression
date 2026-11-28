@@ -1,9 +1,10 @@
 import { pieceHash } from "@impression/shared";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { createApp } from "./app.js";
 import { createToken } from "./auth.js";
 import { estimateMicros } from "./backfill.js";
+import type { Db } from "./db/client.js";
 import {
   memories,
   memoryEvents,
@@ -163,6 +164,10 @@ beforeAll(async () => {
     "hana",
     "ivan",
     "jun",
+    "kim",
+    "lee",
+    "mo",
+    "nia",
   ])
     tokens[name] = await createToken(t.db, name);
 });
@@ -567,6 +572,183 @@ describe("backfill admission and claims", () => {
     expect(
       await t.db.select().from(memories).where(eq(memories.sessionId, body.id)),
     ).toEqual([]);
+  });
+});
+
+describe("backfill writes and model calls", () => {
+  /** Holds the first call whose text has `marker` until `open`; `started` says it is held. */
+  function holdOn(marker: string) {
+    return { marker, started: deferred(), open: deferred() };
+  }
+  let embedHold: ReturnType<typeof holdOn> | null = null;
+  let dedupHold: ReturnType<typeof holdOn> | null = null;
+  const take = async (
+    which: "embed" | "dedup",
+    text: string,
+  ): Promise<void> => {
+    const h = which === "embed" ? embedHold : dedupHold;
+    if (!h || !text.includes(h.marker)) return;
+    if (which === "embed") embedHold = null;
+    else dedupHold = null;
+    h.started.resolve();
+    await h.open.promise;
+  };
+  const held = () =>
+    createApp(t.db, {
+      ...providers,
+      embeddings: {
+        ...providers.embeddings,
+        embed: async (texts) => {
+          await take("embed", texts.join("\n"));
+          return providers.embeddings.embed(texts);
+        },
+      },
+      llm: {
+        model: providers.llm.model,
+        complete: async (req) => {
+          if (req.system?.includes("maintain a developer's project memory"))
+            await take("dedup", req.prompt);
+          return providers.llm.complete(req);
+        },
+      },
+    });
+
+  /** Advisory locks held, and transactions open, in this test's database. */
+  const locksAndTransactions = async () => {
+    const [r] = await t.db.execute<{ locks: string; txs: string }>(sql`
+      SELECT
+        (SELECT count(*) FROM pg_locks
+          WHERE locktype = 'advisory'
+            AND database = (SELECT oid FROM pg_database WHERE datname = current_database())) AS locks,
+        (SELECT count(*) FROM pg_stat_activity
+          WHERE datname = current_database()
+            AND state LIKE 'idle in transaction%') AS txs`);
+    return { locks: Number(r?.locks), txs: Number(r?.txs) };
+  };
+
+  test.each(["embedding", "dedup"] as const)(
+    "another person's piece writes while one is held in its %s call, which holds no lock",
+    async (kind) => {
+      const on = held();
+      const marker = kind === "embedding" ? "qqheldembed" : "qqhelddedup";
+      // A close memory already there, so the dedup check asks the model.
+      const { body: earlier } = await upload("kim", `user: earlier ${marker}`);
+      model.next = `Deploys go through the ${marker} pipeline`;
+      expect((await extract("kim", earlier.id, on)).status).toBe(200);
+      const hold = holdOn(marker);
+      if (kind === "embedding") embedHold = hold;
+      else dedupHold = hold;
+      const { body: a } = await upload("kim", `user: held ${kind} piece`);
+      model.next = `Deploys go through the ${marker} pipeline on Fridays`;
+      const first = extract("kim", a.id, on);
+      await hold.started.promise;
+
+      expect(await locksAndTransactions()).toEqual({ locks: 0, txs: 0 });
+      const { body: b } = await upload("lee", `user: free ${kind} piece`);
+      expect(await extract("lee", b.id, on)).toMatchObject({
+        status: 200,
+        body: { saved: 1 },
+      });
+
+      hold.open.resolve();
+      expect(await first).toMatchObject({ status: 200 });
+      expect((await row(a.id))?.extractedAt).toBeInstanceOf(Date);
+    },
+  );
+
+  test("a piece whose dedup check ran before another of the person's pieces wrote checks again", async () => {
+    const on = held();
+    const marker = "qqstalededup";
+    const { body: p0 } = await upload("nia", "user: stale dedup first");
+    model.next = `Releases are tagged by the ${marker} bot`;
+    expect((await extract("nia", p0.id, on)).status).toBe(200);
+
+    // A's dedup check sees only the first memory, and is held.
+    const hold = holdOn(marker);
+    dedupHold = hold;
+    const { body: a } = await upload("nia", "user: stale dedup a");
+    model.next = `Releases are tagged by the ${marker} bot on main`;
+    const first = extract("nia", a.id, on);
+    await hold.started.promise;
+
+    // B writes the same fact meanwhile.
+    const { body: b } = await upload("nia", "user: stale dedup b");
+    model.next = `Releases are tagged by the ${marker} bot on main`;
+    expect(await extract("nia", b.id, on)).toMatchObject({
+      status: 200,
+      body: { saved: 1 },
+    });
+    const [mb] = await t.db
+      .select({ id: memories.id })
+      .from(memories)
+      .where(eq(memories.sessionId, b.id));
+    const before = verdict;
+    verdict = (prompt) =>
+      prompt.includes(`[${mb?.id}]`)
+        ? JSON.stringify({ action: "duplicate", id: mb?.id })
+        : '{"action":"add"}';
+    try {
+      hold.open.resolve();
+      // A checks again, sees B's memory and writes nothing new.
+      expect(await first).toMatchObject({
+        status: 200,
+        body: { saved: 0, updated: 0 },
+      });
+    } finally {
+      verdict = before;
+    }
+    expect(
+      await t.db.select().from(memories).where(eq(memories.sessionId, a.id)),
+    ).toEqual([]);
+  });
+
+  test("a piece's spend is recorded before its claim stops counting against the budget", async () => {
+    const { body: a } = await upload("mo", "user: spend order piece a");
+    const { body: b } = await upload("mo", "user: spend order piece b");
+    const each = estimateMicros(model, ["user: spend order piece a".length]);
+    // Room for one piece's estimate and half another's; less than one
+    // piece's $0.03 spend and another's estimate.
+    const opts = { backfillBudgetUsd: (1.5 * each) / 1e6 };
+    const insert = deferred();
+    const reached = deferred();
+    // Usage rows wait for the test, as a slow insert would.
+    const slowDb = {
+      insert: (table: typeof usageEvents) => ({
+        values: (v: typeof usageEvents.$inferInsert) => {
+          reached.resolve();
+          return insert.promise.then(() => t.db.insert(table).values(v));
+        },
+      }),
+    } as unknown as Db;
+    const slow = new FakeModel("claude-sonnet-5-5", new UsageRecorder(slowDb));
+    const onA = createApp(t.db, { ...providers, backfillLlm: slow }, opts);
+    const onB = createApp(t.db, providers, opts);
+
+    const first = extract("mo", a.id, onA);
+    await reached.promise;
+    // A's model call is done but its usage row isn't written: A's claim still counts.
+    expect(await extract("mo", b.id, onB)).toEqual({
+      status: 402,
+      body: {
+        error: "backfill budget used up",
+        spentUsd: 0,
+        budgetUsd: opts.backfillBudgetUsd,
+      },
+    });
+    insert.resolve();
+    expect(await first).toMatchObject({ status: 200 });
+    // The usage row was written before the transaction that gave up the claim began.
+    const [spend] = await t.db
+      .select({ at: usageEvents.createdAt })
+      .from(usageEvents)
+      .where(eq(usageEvents.principal, "mo"));
+    const finished = (await row(a.id))?.extractedAt as Date;
+    expect(spend?.at.getTime()).toBeLessThanOrEqual(finished.getTime());
+    // A's claim is gone and its spend counts instead.
+    expect(await extract("mo", b.id, onB)).toMatchObject({
+      status: 402,
+      body: { spentUsd: 0.03 },
+    });
   });
 });
 

@@ -99,12 +99,14 @@ export async function findCandidates(
 /**
  * Asks the LLM what to do with a new memory. Fails open: any error means "add".
  * With `strict`, an LLM error or a reply that isn't a verdict throws instead.
+ * Past `signal`'s deadline it throws whatever the options, so a caller that
+ * must write nothing after its deadline doesn't take the abort for "add".
  */
 export async function decide(
   llm: LlmProvider,
   content: string,
   candidates: Candidate[],
-  opts: { strict?: boolean } = {},
+  opts: { strict?: boolean; signal?: AbortSignal } = {},
 ): Promise<Verdict> {
   if (candidates.length === 0) return { action: "add" };
   try {
@@ -112,12 +114,13 @@ export async function decide(
       system: SYSTEM,
       prompt: buildPrompt(content, candidates),
       maxTokens: 300,
+      ...(opts.signal ? { signal: opts.signal } : {}),
     });
     if (opts.strict && !readVerdict(reply))
       throw new Error("dedup check gave no verdict");
     return parseVerdict(reply, candidates);
   } catch (err) {
-    if (opts.strict) throw err;
+    if (opts.strict || opts.signal?.aborted) throw err;
     console.error(
       "dedup check failed:",
       err instanceof Error ? err.message : err,

@@ -123,15 +123,54 @@ export function pidAlive(pid: number): boolean {
   }
 }
 
+/**
+ * When the process with this id started, in clock ticks since boot, from
+ * Linux's `/proc/<pid>/stat`; undefined where there is no `/proc`. A reused
+ * pid has a different start time, so it can't pass for the lock's holder.
+ */
+export function processStart(pid: number): string | undefined {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    // Field 22; the command name before it is in parentheses and may hold spaces.
+    const start = stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19];
+    return start && /^\d+$/.test(start) ? start : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Whether the lock's holder is still running: its pid is alive and, when the
+ * lock and the system both know start times, the process at that pid started
+ * when the holder did. Elsewhere only the pid is checked.
+ */
+export function holderAlive(pid: number, start?: string): boolean {
+  if (!pidAlive(pid)) return false;
+  if (start === undefined) return true;
+  const now = processStart(pid);
+  return now === undefined || now === start;
+}
+
+/** Tells whether the process that took a lock, by pid and start time, still runs. */
+export type Alive = (pid: number, start?: string) => boolean;
+
+/** A lock's holder: `<pid>` or `<pid> <start time>`. */
+function parseLock(text: string): { pid: number; start?: string } | undefined {
+  const [p, start] = text.trim().split(/\s+/);
+  const pid = Number(p);
+  if (!Number.isInteger(pid) || pid <= 0) return undefined;
+  return start ? { pid, start } : { pid };
+}
+
 /** The pid holding the repo's lock, if that process is still running. */
 export function lockHolder(
   env: NodeJS.ProcessEnv,
   key: string,
-  alive: (pid: number) => boolean = pidAlive,
+  alive: Alive = holderAlive,
 ): number | undefined {
   try {
-    const pid = Number(readFileSync(lockPath(env, key), "utf8").trim());
-    return Number.isInteger(pid) && pid > 0 && alive(pid) ? pid : undefined;
+    const h = parseLock(readFileSync(lockPath(env, key), "utf8"));
+    return h && alive(h.pid, h.start) ? h.pid : undefined;
   } catch {
     return undefined;
   }
@@ -155,8 +194,10 @@ function readLockFile(path: string): { text: string; ino: number } | undefined {
 const errCode = (e: unknown) => (e as NodeJS.ErrnoException).code;
 
 /**
- * Takes the repo's lock for `pid`. False when a running process holds it. A
- * lock whose process is gone (a crash, Ctrl-C, a closed terminal) is taken over.
+ * Takes the repo's lock for `pid`, noting the process's start time where the
+ * system tells it. False when a running process holds it. A lock whose process
+ * is gone (a crash, Ctrl-C, a closed terminal), or whose pid now belongs to a
+ * process that started at another time, is taken over.
  *
  * The lock is written whole under a unique name and hard-linked into place, an
  * exclusive create, so no one reads a half-written lock. A stale lock is moved
@@ -168,13 +209,14 @@ export function acquireLock(
   env: NodeJS.ProcessEnv,
   key: string,
   pid: number,
-  alive: (pid: number) => boolean = pidAlive,
+  alive: Alive = holderAlive,
   onStale?: () => void,
 ): boolean {
   const path = lockPath(env, key);
   mkdirSync(dirname(path), { recursive: true });
   const mine = `${path}.${pid}.${randomUUID()}.new`;
-  writeFileSync(mine, `${pid}\n`);
+  const start = processStart(pid);
+  writeFileSync(mine, `${pid}${start ? ` ${start}` : ""}\n`);
   try {
     for (let attempt = 0; attempt < 5; attempt++) {
       try {
@@ -185,8 +227,8 @@ export function acquireLock(
       }
       const held = readLockFile(path);
       if (!held) continue;
-      const holder = Number(held.text.trim());
-      if (Number.isInteger(holder) && holder > 0 && alive(holder)) return false;
+      const holder = parseLock(held.text);
+      if (holder && alive(holder.pid, holder.start)) return false;
       onStale?.();
       const aside = `${path}.${pid}.${randomUUID()}.stale`;
       try {
@@ -213,7 +255,7 @@ export function acquireLock(
 export function releaseLock(env: NodeJS.ProcessEnv, key: string, pid: number) {
   try {
     const path = lockPath(env, key);
-    if (Number(readFileSync(path, "utf8").trim()) === pid) rmSync(path);
+    if (parseLock(readFileSync(path, "utf8"))?.pid === pid) rmSync(path);
   } catch {}
 }
 
@@ -256,30 +298,39 @@ const plural = (n: number, one: string, many = `${one}s`) =>
 
 /**
  * The backfill line for `impression status`: progress while a backfill runs in
- * the repo, then once after it finishes or stops, after which it is cleared.
+ * the repo, then once after it finishes or stops. Call `clear` once the line
+ * is printed: it removes a finished or stopped run's progress, and only the
+ * run shown, since a new run may have started since it was read.
  */
 export function backfillStatus(
   cwd: string,
   env: NodeJS.ProcessEnv = process.env,
-  alive: (pid: number) => boolean = pidAlive,
-  /** Runs before the shown progress is cleared, for tests. */
-  beforeClear?: () => void,
-): string | undefined {
+  alive: Alive = holderAlive,
+): { text: string; clear: () => void } | undefined {
   const key = resolveProject(cwd).key;
   const p = readProgress(env, key);
   if (!p) return undefined;
   const memories = `${plural(p.saved, "memory", "memories")} saved${p.updated ? `, ${p.updated} updated` : ""}`;
   const failed = p.failed ? `, ${p.failed} failed` : "";
   if (!p.finishedAt && lockHolder(env, key, alive) !== undefined)
-    return `Backfill:  running, ${p.done} of ${p.total} pieces done, ${memories}${failed}`;
-  beforeClear?.();
-  // Only the run shown: a new run may have started since it was read.
-  const now = readProgress(env, key);
-  if (now?.startedAt === p.startedAt && now.finishedAt === p.finishedAt)
-    rmSync(progressPath(env, key), { force: true });
+    return {
+      text: `Backfill:  running, ${p.done} of ${p.total} pieces done, ${memories}${failed}`,
+      clear: () => {},
+    };
+  const clear = () => {
+    const now = readProgress(env, key);
+    if (now?.startedAt === p.startedAt && now.finishedAt === p.finishedAt)
+      rmSync(progressPath(env, key), { force: true });
+  };
   if (!p.finishedAt)
-    return `Backfill:  stopped at ${p.done} of ${p.total} pieces, ${memories}. Run impression backfill to send the rest.`;
-  return `Backfill:  finished, ${p.done} of ${p.total} pieces, ${memories}${failed}, ${usd(p.costUsd)}`;
+    return {
+      text: `Backfill:  stopped at ${p.done} of ${p.total} pieces, ${memories}. Run impression backfill to send the rest.`,
+      clear,
+    };
+  return {
+    text: `Backfill:  finished, ${p.done} of ${p.total} pieces, ${memories}${failed}, ${usd(p.costUsd)}`,
+    clear,
+  };
 }
 
 // ---------------------------------------------------------------- plan
@@ -826,7 +877,7 @@ export interface BackfillDeps {
   /** Asks the person; undefined without a terminal. */
   confirm?: (message: string) => Promise<boolean>;
   pid: number;
-  alive?: (pid: number) => boolean;
+  alive?: Alive;
   concurrency?: number;
   /** Instruction files to send with each extract, read from the backfilled repo's checkout. */
   readInstructions?: (checkout: string) => string | undefined;
@@ -853,7 +904,7 @@ export async function backfill(
 
   if (args.undo) return undo(client, repo, args, deps);
 
-  const alive = deps.alive ?? pidAlive;
+  const alive = deps.alive ?? holderAlive;
   if (!args.dryRun && !acquireLock(env, repo.key, deps.pid, alive)) {
     log(
       `A backfill is already running for ${repo.key}. impression status shows its progress.`,
@@ -951,7 +1002,7 @@ async function undo(
     );
     return 0;
   }
-  if (!acquireLock(env, repo.key, deps.pid, deps.alive ?? pidAlive)) {
+  if (!acquireLock(env, repo.key, deps.pid, deps.alive ?? holderAlive)) {
     log(
       `A backfill is already running for ${repo.key}. impression status shows its progress.`,
     );
@@ -996,7 +1047,8 @@ async function undo(
 // ---------------------------------------------------------------- setup's offer
 
 export interface OfferDeps {
-  client: ApiClient;
+  /** Null when setup can't offer: not signed in, or a dry run. The command is printed instead. */
+  client: ApiClient | null;
   cwd: string;
   env: NodeJS.ProcessEnv;
   now: () => number;
@@ -1007,14 +1059,15 @@ export interface OfferDeps {
   ask: (plan: string) => Promise<boolean>;
   /** Starts `impression backfill --yes` for the checkout, detached. Rejects when it couldn't. */
   start: (checkout: string) => Promise<void>;
-  alive?: (pid: number) => boolean;
+  alive?: Alive;
 }
 
 /**
  * The end of `impression setup`: in a git repo with past sessions, shows the
  * backfill plan and, if the person agrees, starts it in the background.
- * Outside a repo or without a terminal it prints the command instead. Never
- * throws: a failure here prints one line and setup finishes.
+ * Outside a repo, without a terminal, or with no client to plan with, it
+ * prints the command instead. Never throws: a failure here prints one line and
+ * setup finishes.
  */
 export async function offerBackfill(deps: OfferDeps): Promise<void> {
   try {
@@ -1025,7 +1078,7 @@ export async function offerBackfill(deps: OfferDeps): Promise<void> {
       );
       return;
     }
-    if (!deps.interactive) {
+    if (!deps.interactive || !deps.client) {
       deps.info(
         "To learn from this repo's past sessions, run: impression backfill",
       );

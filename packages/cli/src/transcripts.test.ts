@@ -1,4 +1,11 @@
-import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, test } from "vitest";
@@ -170,6 +177,53 @@ describe("discoverSessions", () => {
       }).map((s) => s.sessionKey),
     ).toEqual(["mid", "new"]);
   });
+});
+
+describe("discoverSessions with broken entries", () => {
+  // Root reads any file, so the unreadable one only bites as another user.
+  const asRoot = process.getuid?.() === 0;
+  test.skipIf(asRoot)(
+    "skips dangling links and unreadable files, and lists the rest of every agent",
+    () => {
+      const r = roots();
+      const piDir = join(r.pi, piDirName(REPO));
+      const claudeDir = join(r.claude, claudeDirName(REPO));
+      put(join(piDir, "a.jsonl"), [
+        piHeader(REPO, "2026-10-01T00:00:00Z", "a"),
+      ]);
+      put(join(claudeDir, "c.jsonl"), [
+        line({
+          type: "user",
+          cwd: REPO,
+          sessionId: "c",
+          timestamp: "2026-10-02Z",
+        }),
+      ]);
+      put(join(r.codex, "2026", "rollout-x.jsonl"), [
+        line({
+          timestamp: "2026-10-03T00:00:00Z",
+          type: "session_meta",
+          payload: { id: "x", cwd: REPO },
+        }),
+      ]);
+      // Dangling links in each store, a file nobody can read, and one in codex.
+      symlinkSync(join(piDir, "gone.jsonl"), join(piDir, "dead.jsonl"));
+      symlinkSync(join(claudeDir, "gone"), join(claudeDir, "dead.jsonl"));
+      symlinkSync(join(r.codex, "gone"), join(r.codex, "2026", "dead"));
+      symlinkSync(join(r.codex, "gone"), join(r.codex, "rollout-dead.jsonl"));
+      const locked = join(claudeDir, "locked.jsonl");
+      put(locked, [line({ type: "user", cwd: REPO, sessionId: "locked" })]);
+      chmodSync(locked, 0);
+      const lockedCodex = join(r.codex, "rollout-locked.jsonl");
+      put(lockedCodex, [
+        line({ type: "session_meta", payload: { cwd: REPO } }),
+      ]);
+      chmodSync(lockedCodex, 0);
+
+      const found = discoverSessions(REPO, { roots: r });
+      expect(found.map((s) => s.sessionKey)).toEqual(["a", "c", "x"]);
+    },
+  );
 });
 
 describe("chunkTranscript", () => {

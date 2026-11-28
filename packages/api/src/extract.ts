@@ -3,8 +3,16 @@ import { z } from "zod";
 import { type Access, upsertProject } from "./access.js";
 import type { Db, Queryer } from "./db/client.js";
 import { proposals } from "./db/schema.js";
-import { anchorInput, createMemory } from "./memories.js";
+import {
+  anchorInput,
+  type CreateInput,
+  createMemory,
+  type MemoryPlan,
+  planMemory,
+  storeMemory,
+} from "./memories.js";
 import type { LlmProvider, Providers } from "./providers/index.js";
+import { CANDIDATE_MIN_SIMILARITY, type Candidate } from "./reconcile.js";
 import { isEmptyAfterScrub, scrub } from "./scrub.js";
 import { getExtractionFloor } from "./settings.js";
 
@@ -157,12 +165,33 @@ export interface ExtractInput {
   /** Aborts the model call; once aborted, nothing is written. */
   signal?: AbortSignal;
   /**
-   * Runs the writes, given the queryer to write with. Backfill runs them in a
-   * transaction that first checks its claim, so a request that lost its claim
-   * writes nothing. Defaults to writing straight to the database.
+   * Starts a write attempt and returns the function that runs its writes,
+   * given the queryer to write with. Called before the dedup reads, so it can
+   * note what they will see. Backfill writes in a transaction that first
+   * checks its claim, so a request that lost its claim writes nothing, and
+   * throws `StaleDedup` when another of the person's pieces wrote since.
+   * Defaults to writing straight to the database.
    */
-  writeWith?: (work: (db: Queryer) => Promise<void>) => Promise<void>;
+  writer?: () => Promise<Writer>;
 }
+
+/** Runs extraction's writes. */
+export type Writer = (work: (db: Queryer) => Promise<void>) => Promise<void>;
+
+/**
+ * Thrown by a writer when the dedup decisions it was given may be out of date:
+ * another write it must see landed after they were made. Extraction makes them
+ * again and retries.
+ */
+export class StaleDedup extends Error {
+  constructor() {
+    super("memories changed since the dedup check");
+    this.name = "StaleDedup";
+  }
+}
+
+/** Write attempts before extraction gives up on a person whose memories keep changing. */
+const WRITE_ATTEMPTS = 3;
 
 /** A repo a memory can be filed under. The session's own project comes first. */
 interface Target {
@@ -267,7 +296,9 @@ export interface ExtractSummary {
  * owner's confidence floor is scrubbed, recorded as a proposal and accepted,
  * which dedups it against active memories. Anchors without a session commit are
  * dropped, since they can't be verified later. When the session touched other
- * repos, each fact goes to the one the model picks from that list.
+ * repos, each fact goes to the one the model picks from that list. Every
+ * embedding and model call is made before the writes start, so none runs
+ * inside the writer's transaction.
  */
 export async function extractProposals(
   db: Db,
@@ -290,14 +321,6 @@ export async function extractProposals(
     ...(input.signal ? { signal: input.signal } : {}),
   });
   const floor = await getExtractionFloor(db, input.owner);
-  const summary: ExtractSummary = {
-    accepted: 0,
-    skippedDuplicates: 0,
-    skippedEmpty: 0,
-    skippedRepeats: 0,
-    skippedBelowFloor: 0,
-    skippedNoAccess: 0,
-  };
   const session: Target = targets[0] ?? {
     key: input.projectKey,
     name: input.projectKey,
@@ -309,83 +332,227 @@ export async function extractProposals(
   };
 
   const items = parseExtraction(reply);
-  const write = input.writeWith ?? ((work) => work(db));
-  await write(async (wdb) => {
-    // Past the deadline the request may have outlived its claim: write nothing.
-    input.signal?.throwIfAborted();
-    for (const item of items) {
-      if (item.confidence < floor) {
-        summary.skippedBelowFloor++;
+  const writer = input.writer ?? (async () => (work) => work(db));
+  for (let attempt = 1; ; attempt++) {
+    const write = await writer();
+    const run = await prepareItems(db, providers, input, items, {
+      floor,
+      targets,
+      session,
+    });
+    try {
+      await write(async (wdb) => {
+        // Past the deadline the request may have outlived its claim: write nothing.
+        input.signal?.throwIfAborted();
+        await run.store(wdb);
+      });
+      return run.summary;
+    } catch (err) {
+      if (err instanceof StaleDedup && attempt < WRITE_ATTEMPTS) continue;
+      throw err;
+    }
+  }
+}
+
+const cosine = (a: number[], b: number[]) => {
+  let dot = 0;
+  let na = 0;
+  let nb = 0;
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i] ?? 0;
+    const y = b[i] ?? 0;
+    dot += x * y;
+    na += x * x;
+    nb += y * y;
+  }
+  return na && nb ? dot / Math.sqrt(na * nb) : 0;
+};
+
+/** One extracted item, worked out and ready to write. */
+interface Prepared {
+  /** What the dedup check calls this item's memory before it exists. */
+  key: string;
+  projectId: string;
+  target: Target;
+  practice: boolean;
+  content: string;
+  confidence: number;
+  vec: number[] | null;
+  anchors: { path: string; symbol?: string; commitSha: string }[];
+  planned: Awaited<ReturnType<typeof planMemory>>;
+}
+
+/**
+ * Does every embedding and model call extraction's items need, before any
+ * write: the repeat check and each memory's dedup check. An item's dedup check
+ * also sees the memories this piece's earlier items will write or change, as
+ * it would if they were written first. Returns the summary so far and `store`,
+ * which makes only database writes.
+ */
+async function prepareItems(
+  db: Db,
+  providers: Providers,
+  input: ExtractInput,
+  items: Extracted[],
+  ctx: { floor: number; targets: Target[]; session: Target },
+) {
+  const { floor, targets, session } = ctx;
+  const summary: ExtractSummary = {
+    accepted: 0,
+    skippedDuplicates: 0,
+    skippedEmpty: 0,
+    skippedRepeats: 0,
+    skippedBelowFloor: 0,
+    skippedNoAccess: 0,
+  };
+  const prepared: Prepared[] = [];
+  // Earlier items' effects, for later items' dedup checks.
+  const gone = new Set<string>();
+  const text = new Map<string, string>();
+  const checked = () => input.signal?.throwIfAborted();
+  for (const [i, item] of items.entries()) {
+    if (item.confidence < floor) {
+      summary.skippedBelowFloor++;
+      continue;
+    }
+    const clean = scrub(item.content);
+    if (isEmptyAfterScrub(clean.text)) {
+      summary.skippedEmpty++;
+      continue;
+    }
+    const practice = item.kind === "practice";
+    // Practices are user-scoped, so the session's project only records where they came from.
+    const target = practice
+      ? session
+      : (pickTarget(targets, item.project) ?? session);
+    if (target.projectId === undefined) {
+      const p = input.access
+        ? await upsertProject(db, input.access, {
+            key: target.key,
+            name: target.name,
+          })
+        : null;
+      target.projectId = p?.id ?? null;
+    }
+    const projectId = target.projectId;
+    if (!projectId) {
+      summary.skippedNoAccess++;
+      continue;
+    }
+    let vec: number[] | null = null;
+    try {
+      vec = (await providers.embeddings.embed([clean.text]))[0] ?? null;
+      checked();
+      if (vec && (await isRepeat(db, input.owner, projectId, practice, vec))) {
+        summary.skippedRepeats++;
         continue;
       }
-      const clean = scrub(item.content);
-      if (isEmptyAfterScrub(clean.text)) {
-        summary.skippedEmpty++;
-        continue;
-      }
-      const practice = item.kind === "practice";
-      // Practices are user-scoped, so the session's project only records where they came from.
-      const target = practice
-        ? session
-        : (pickTarget(targets, item.project) ?? session);
-      if (target.projectId === undefined) {
-        const p = input.access
-          ? await upsertProject(wdb, input.access, {
-              key: target.key,
-              name: target.name,
-            })
-          : null;
-        target.projectId = p?.id ?? null;
-      }
-      const projectId = target.projectId;
-      if (!projectId) {
-        summary.skippedNoAccess++;
-        continue;
-      }
-      let vec: number[] | null = null;
-      try {
-        vec = (await providers.embeddings.embed([clean.text]))[0] ?? null;
-        if (
-          vec &&
-          (await isRepeat(wdb, input.owner, projectId, practice, vec))
-        ) {
-          summary.skippedRepeats++;
-          continue;
-        }
-      } catch (err) {
-        console.error(
-          "extraction repeat check failed:",
-          err instanceof Error ? err.message : err,
-        );
-      }
-      // The recheck reads the anchor at this commit, so it must be the picked repo's HEAD.
-      const sha = target.headSha;
-      // A practice follows the user to other repos, so it has nothing to anchor to.
-      const anchors =
-        sha && !practice
-          ? item.anchors
-              .filter(
-                (a) =>
-                  !a.path.startsWith("/") && !a.path.split("/").includes(".."),
-              )
-              .map((a) => ({
-                path: a.path.replace(/^(\.\/)+/, ""),
-                ...(a.symbol ? { symbol: a.symbol } : {}),
-                commitSha: sha,
-              }))
-              .filter((a) => anchorFits(targets, target, a.path))
-          : [];
+    } catch (err) {
+      if (input.signal?.aborted) throw err;
+      console.error(
+        "extraction repeat check failed:",
+        err instanceof Error ? err.message : err,
+      );
+    }
+    // The recheck reads the anchor at this commit, so it must be the picked repo's HEAD.
+    const sha = target.headSha;
+    // A practice follows the user to other repos, so it has nothing to anchor to.
+    const anchors =
+      sha && !practice
+        ? item.anchors
+            .filter(
+              (a) =>
+                !a.path.startsWith("/") && !a.path.split("/").includes(".."),
+            )
+            .map((a) => ({
+              path: a.path.replace(/^(\.\/)+/, ""),
+              ...(a.symbol ? { symbol: a.symbol } : {}),
+              commitSha: sha,
+            }))
+            .filter((a) => anchorFits(targets, target, a.path))
+        : [];
+    const key = `new-${i + 1}`;
+    const scope = practice ? "user" : "project";
+    const memoryInput = proposalMemory(
+      {
+        scope,
+        tags: practice ? [PRACTICE_TAG] : [],
+        content: clean.text,
+        confidence: item.confidence,
+        anchors,
+        sessionId: input.sessionId,
+      },
+      { projectKey: target.key, sessionId: input.sessionId },
+    );
+    const planned = await planMemory(
+      db,
+      providers,
+      input.owner,
+      memoryInput,
+      undefined,
+      {
+        embedding: vec,
+        ...(input.signal ? { signal: input.signal } : {}),
+        candidates: (found, v) => [
+          ...prepared
+            .filter(
+              (p) =>
+                "plan" in p.planned &&
+                p.planned.plan.verdict.action === "add" &&
+                !gone.has(p.key) &&
+                p.practice === practice &&
+                (practice || p.projectId === projectId) &&
+                p.planned.plan.vector &&
+                cosine(p.planned.plan.vector, v) >= CANDIDATE_MIN_SIMILARITY,
+            )
+            .map((p) => ({
+              id: p.key,
+              content: text.get(p.key) ?? p.content,
+            })),
+          ...found
+            .filter((c) => !gone.has(c.id))
+            .map((c): Candidate => ({
+              ...c,
+              content: text.get(c.id) ?? c.content,
+            })),
+        ],
+      },
+    );
+    checked();
+    if ("plan" in planned) {
+      const v = planned.plan.verdict;
+      if (v.action === "add") for (const id of v.supersedes) gone.add(id);
+      else if (v.merged) text.set(v.id, v.merged);
+    }
+    prepared.push({
+      key,
+      projectId,
+      target,
+      practice,
+      content: clean.text,
+      confidence: item.confidence,
+      vec,
+      anchors,
+      planned,
+    });
+  }
+
+  /** Writes the prepared items, each through its proposal, as extraction always has. */
+  async function store(wdb: Queryer) {
+    // The memory each earlier item wrote, by the key later dedup checks knew it by.
+    const written = new Map<string, string>();
+    for (const p of prepared) {
       const [proposal] = await wdb
         .insert(proposals)
         .values({
-          projectId,
+          projectId: p.projectId,
           sessionId: input.sessionId,
-          content: clean.text,
-          scope: practice ? "user" : "project",
-          tags: practice ? [PRACTICE_TAG] : [],
-          confidence: item.confidence,
-          embedding: vec,
-          anchors,
+          content: p.content,
+          scope: p.practice ? "user" : "project",
+          tags: p.practice ? [PRACTICE_TAG] : [],
+          confidence: p.confidence,
+          embedding: p.vec,
+          anchors: p.anchors,
         })
         .returning();
       if (!proposal) continue;
@@ -395,9 +562,14 @@ export async function extractProposals(
         proposal.id,
         input.owner,
         {
-          projectKey: target.key,
+          projectKey: p.target.key,
           sessionId: input.sessionId,
-          embedding: vec,
+          embedding: p.vec,
+          planned:
+            "plan" in p.planned
+              ? { plan: resolveKeys(p.planned.plan, written) }
+              : p.planned,
+          onMemory: (id) => written.set(p.key, id),
         },
       );
       if (outcome === "created" || outcome === "superseded") summary.accepted++;
@@ -405,8 +577,56 @@ export async function extractProposals(
         summary.skippedDuplicates++;
       else if (outcome === "empty") summary.skippedEmpty++;
     }
-  });
-  return summary;
+  }
+  return { summary, store };
+}
+
+/** A plan with earlier items' keys swapped for the memories they wrote. */
+function resolveKeys(plan: MemoryPlan, written: Map<string, string>) {
+  const v = plan.verdict;
+  if (v.action === "add") {
+    const supersedes = v.supersedes.flatMap((id) =>
+      id.startsWith("new-") ? (written.get(id) ?? []) : [id],
+    );
+    return { ...plan, verdict: { ...v, supersedes } };
+  }
+  if (!v.id.startsWith("new-")) return plan;
+  const id = written.get(v.id);
+  // The earlier item wrote nothing after all, so this one is new.
+  return {
+    ...plan,
+    verdict: id
+      ? { ...v, id }
+      : ({ action: "add", supersedes: [] } as MemoryPlan["verdict"]),
+  };
+}
+
+/** The memory a proposal becomes, as acceptance stores it. */
+function proposalMemory(
+  p: {
+    scope: string;
+    tags: string[];
+    content: string;
+    confidence: number;
+    anchors: unknown;
+    sessionId: string | null;
+  },
+  opts: { projectKey: string; sessionId?: string | null },
+): CreateInput {
+  const user = p.scope === "user";
+  return {
+    scope: user ? "user" : "project",
+    // A user-scoped memory follows the person, so it carries no project.
+    project: user ? undefined : { key: opts.projectKey },
+    tags: p.tags,
+    content: p.content,
+    confidence: p.confidence,
+    agent: "extraction",
+    sessionId: opts.sessionId ?? p.sessionId ?? undefined,
+    dedup: true,
+    // A user-scoped memory isn't tied to a repo, so its anchors would go stale.
+    anchors: user ? [] : z.array(anchorInput).catch([]).parse(p.anchors),
+  };
 }
 
 /**
@@ -471,6 +691,10 @@ export async function acceptProposal(
     requireDedup?: boolean;
     /** The proposal content's vector, if the caller already has it. */
     embedding?: number[] | null;
+    /** What `planMemory` worked out for this proposal, so storing makes no model call. */
+    planned?: Awaited<ReturnType<typeof planMemory>>;
+    /** Told the memory the proposal was stored as. */
+    onMemory?: (id: string) => void;
   },
 ): Promise<AcceptOutcome | null> {
   const [claimed] = await db
@@ -479,32 +703,21 @@ export async function acceptProposal(
     .where(and(eq(proposals.id, id), eq(proposals.status, "pending")))
     .returning();
   if (!claimed) return null;
-  const user = claimed.scope === "user";
-  // A user-scoped memory isn't tied to a repo, so its anchors would go stale.
-  const anchors = user
-    ? []
-    : z.array(anchorInput).catch([]).parse(claimed.anchors);
   let result: Awaited<ReturnType<typeof createMemory>>;
   try {
-    result = await createMemory(
-      db,
-      providers,
-      principal,
-      {
-        scope: user ? "user" : "project",
-        // A user-scoped memory follows the person, so it carries no project.
-        project: user ? undefined : { key: opts.projectKey },
-        tags: claimed.tags,
-        content: claimed.content,
-        confidence: claimed.confidence,
-        agent: "extraction",
-        sessionId: opts.sessionId ?? claimed.sessionId ?? undefined,
-        dedup: true,
-        anchors,
-      },
-      undefined,
-      { requireDedup: opts.requireDedup, embedding: opts.embedding },
-    );
+    const planned = opts.planned;
+    result = !planned
+      ? await createMemory(
+          db,
+          providers,
+          principal,
+          proposalMemory(claimed, opts),
+          undefined,
+          { requireDedup: opts.requireDedup, embedding: opts.embedding },
+        )
+      : "plan" in planned
+        ? await storeMemory(db, providers, principal, planned.plan)
+        : planned;
   } catch (err) {
     await db
       .update(proposals)
@@ -520,6 +733,7 @@ export async function acceptProposal(
     return "empty";
   }
   const body = result.body as { id: string; outcome?: string };
+  opts.onMemory?.(body.id);
   await db
     .update(proposals)
     .set({ memoryId: body.id })

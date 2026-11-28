@@ -178,6 +178,8 @@ if (cmd === "hook") {
     if (["retire", "edit", "keep"].includes(cmd) && !id)
       throw new Error(usageLine(cli, cmd));
     if (cmd === "edit" && !text) throw new Error(usageLine(cli, cmd));
+    /** Runs once the command's output is printed. */
+    let printed: (() => void) | undefined;
     const run = {
       search: () => search(client, cwd, words),
       add: () =>
@@ -188,10 +190,12 @@ if (cmd === "hook") {
       status: async () => {
         const old = oldHookFiles();
         const back = backfillStatus(cwd);
+        // A finished run's progress is cleared only once it has been printed.
+        if (back) printed = back.clear;
         const r = await statusReport(
           () => status(client, cwd, url),
           [
-            ...(back ? [back] : []),
+            ...(back ? [back.text] : []),
             ...(old.length
               ? [
                   `Old hooks: ${old.join(", ")} (the plugin replaces them; run impression setup to remove them)`,
@@ -201,6 +205,7 @@ if (cmd === "hook") {
         );
         if (r.error) {
           if (r.text) console.log(r.text);
+          printed?.();
           throw r.error;
         }
         return r.text;
@@ -210,6 +215,7 @@ if (cmd === "hook") {
       keep: () => keep(client, cwd, id ?? ""),
     }[cmd as "search"];
     console.log(await run());
+    printed?.();
   } catch (e) {
     console.error((e as Error).message);
     process.exit(1);

@@ -32,8 +32,13 @@ import {
 } from "./db/schema.js";
 import { type EventSource, logEvent } from "./events.js";
 import type { Providers } from "./providers/index.js";
-import { decide, findCandidates, markSuperseded } from "./reconcile.js";
-import { isEmptyAfterScrub, scrub } from "./scrub.js";
+import {
+  type Candidate,
+  decide,
+  findCandidates,
+  markSuperseded,
+} from "./reconcile.js";
+import { isEmptyAfterScrub, type Redaction, scrub } from "./scrub.js";
 
 // Same value as PRACTICE_TAG in extract.ts, which imports this file.
 const PRACTICE_TAG = "practice";
@@ -253,22 +258,51 @@ export interface CreateOptions {
    * and to the principal otherwise. False when the caller logs its own entry.
    */
   event?: EventSource | false;
+  /** Changes the dedup candidates before the LLM sees them. Extraction adds the memories its earlier items will write. */
+  candidates?: (found: Candidate[], vector: number[]) => Candidate[];
+  /** Aborts the dedup check's model call. */
+  signal?: AbortSignal;
 }
 
 /**
- * Stores a memory: scrub, embed, dedup, insert, anchors. Shared by the create
- * route and proposal acceptance. The caller validates scope and project. Pass
- * `access` to refuse projects the caller can't see; internal callers that act on a
- * project they already checked omit it.
+ * What storing a memory will write, worked out with every embedding and model
+ * call done, so `storeMemory` only touches the database.
  */
-export async function createMemory(
+export interface MemoryPlan {
+  projectId: string | null;
+  /** The input, its content scrubbed. */
+  b: CreateInput;
+  redactions: Redaction[];
+  event: EventSource | false;
+  vector: number[] | null;
+  verdict:
+    | {
+        action: "duplicate";
+        id: string;
+        /** The existing memory's text, as the dedup check saw it. */
+        before: string;
+        merged: string | null;
+        /** The merged text's vector; null when there is no merge or embedding failed. */
+        mergedVector: number[] | null;
+      }
+    | { action: "add"; supersedes: string[] };
+}
+
+/**
+ * Works out what storing a memory will do: resolve the project, scrub, embed,
+ * and run the dedup check. Writes nothing but a missing project row, and holds
+ * no transaction, so the model and embedding calls never wait inside one.
+ */
+export async function planMemory(
   db: Queryer,
   providers: Providers,
   principal: string,
   b: CreateInput,
   access?: Access,
   opts: CreateOptions = {},
-) {
+): Promise<
+  { plan: MemoryPlan } | { status: 404 | 422; body: ReturnType<typeof bad> }
+> {
   let projectId: string | null = null;
   if (b.project) {
     if (access) {
@@ -311,7 +345,7 @@ export async function createMemory(
           sessionId: b.sessionId ?? null,
         }
       : opts.event;
-  b.content = clean.text;
+  b = { ...b, content: clean.text };
 
   // Embed first, so similar memories can be found before anything is written.
   let vector: number[] | null =
@@ -329,66 +363,122 @@ export async function createMemory(
   if (opts.requireDedup && b.dedup && !vector)
     throw new Error("no embedding, so the dedup check could not run");
 
-  let supersedes: string[] = [];
-  if (b.dedup && vector) {
-    const candidates = await findCandidates(
-      db,
-      { scope: b.scope, projectId, owner: principal },
+  const plan = (verdict: MemoryPlan["verdict"]): { plan: MemoryPlan } => ({
+    plan: {
+      projectId,
+      b,
+      redactions: clean.redactions,
+      event,
       vector,
-    );
-    const verdict = await decide(providers.llm, b.content, candidates, {
-      strict: opts.requireDedup,
-    });
-    if (verdict.action === "duplicate") {
-      const existing = candidates.find((c) => c.id === verdict.id);
-      const merged =
-        verdict.merged && verdict.merged !== existing?.content
-          ? verdict.merged
-          : null;
-      const row = await db.transaction(async (tx) => {
-        if (merged) {
-          await tx
-            .update(memories)
-            .set({ content: merged, updatedAt: new Date() })
-            .where(eq(memories.id, verdict.id));
-          if (event)
-            await logEvent(tx, verdict.id, "merged", event, {
-              before: existing?.content ?? "",
-              after: merged,
-            });
-        } else {
-          await tx
-            .update(memories)
-            .set({ updatedAt: new Date() })
-            .where(eq(memories.id, verdict.id));
-        }
-        // The caller's anchors describe the same fact at a newer commit, so keep them.
-        if (b.anchors.length > 0) {
-          await tx
-            .insert(anchors)
-            .values(b.anchors.map((a) => ({ ...a, memoryId: verdict.id })));
-        }
-        const [r] = await tx
-          .select()
-          .from(memories)
-          .where(eq(memories.id, verdict.id));
-        return r;
-      });
-      if (merged) await embedMemory(db, providers, verdict.id, merged);
-      const [withA] = await withAnchors(db, [
-        toDto(row as MemoryRow, b.project?.key ?? null),
-      ]);
-      return {
-        status: 200 as const,
-        body: {
-          ...withA,
-          outcome: merged ? "merged" : "duplicate",
-          redactions: clean.redactions,
-        },
-      };
+      verdict,
+    },
+  });
+  if (!(b.dedup && vector)) return plan({ action: "add", supersedes: [] });
+  const found = await findCandidates(
+    db,
+    { scope: b.scope, projectId, owner: principal },
+    vector,
+  );
+  const candidates = opts.candidates?.(found, vector) ?? found;
+  const verdict = await decide(providers.llm, b.content, candidates, {
+    strict: opts.requireDedup,
+    ...(opts.signal ? { signal: opts.signal } : {}),
+  });
+  if (verdict.action === "duplicate") {
+    const before = candidates.find((c) => c.id === verdict.id)?.content ?? "";
+    const merged =
+      verdict.merged && verdict.merged !== before ? verdict.merged : null;
+    let mergedVector: number[] | null = null;
+    if (merged) {
+      try {
+        mergedVector = (await providers.embeddings.embed([merged]))[0] ?? null;
+      } catch (err) {
+        console.error(
+          `embedding failed for memory ${verdict.id}:`,
+          err instanceof Error ? err.message : err,
+        );
+      }
     }
-    if (verdict.action === "supersede") supersedes = verdict.ids;
+    return plan({
+      action: "duplicate",
+      id: verdict.id,
+      before,
+      merged,
+      mergedVector,
+    });
   }
+  return plan({
+    action: "add",
+    supersedes: verdict.action === "supersede" ? verdict.ids : [],
+  });
+}
+
+/**
+ * Writes what `planMemory` worked out: the merge into a duplicate, or the new
+ * memory with its anchors and the memories it supersedes. Makes no model or
+ * embedding call, so it is safe inside a transaction holding locks.
+ */
+export async function storeMemory(
+  db: Queryer,
+  providers: Providers,
+  principal: string,
+  plan: MemoryPlan,
+) {
+  const { b, projectId, event, vector, verdict } = plan;
+  if (verdict.action === "duplicate") {
+    const { merged } = verdict;
+    const row = await db.transaction(async (tx) => {
+      if (merged) {
+        await tx
+          .update(memories)
+          .set({
+            content: merged,
+            updatedAt: new Date(),
+            ...(verdict.mergedVector
+              ? {
+                  embedding: verdict.mergedVector,
+                  embeddingModel: providers.embeddings.model,
+                  embeddingDim: providers.embeddings.dimensions,
+                }
+              : {}),
+          })
+          .where(eq(memories.id, verdict.id));
+        if (event)
+          await logEvent(tx, verdict.id, "merged", event, {
+            before: verdict.before,
+            after: merged,
+          });
+      } else {
+        await tx
+          .update(memories)
+          .set({ updatedAt: new Date() })
+          .where(eq(memories.id, verdict.id));
+      }
+      // The caller's anchors describe the same fact at a newer commit, so keep them.
+      if (b.anchors.length > 0) {
+        await tx
+          .insert(anchors)
+          .values(b.anchors.map((a) => ({ ...a, memoryId: verdict.id })));
+      }
+      const [r] = await tx
+        .select()
+        .from(memories)
+        .where(eq(memories.id, verdict.id));
+      return r;
+    });
+    const [withA] = await withAnchors(db, [
+      toDto(row as MemoryRow, b.project?.key ?? null),
+    ]);
+    return {
+      status: 200 as const,
+      body: {
+        ...withA,
+        outcome: merged ? "merged" : "duplicate",
+        redactions: plan.redactions,
+      },
+    };
+  }
+  const { supersedes } = verdict;
 
   const created = await db.transaction(async (tx) => {
     const [m] = await tx
@@ -462,9 +552,28 @@ export async function createMemory(
       ...createdDto,
       outcome: supersedes.length > 0 ? "superseded" : "created",
       supersedes,
-      redactions: clean.redactions,
+      redactions: plan.redactions,
     },
   };
+}
+
+/**
+ * Stores a memory: scrub, embed, dedup, insert, anchors. Shared by the create
+ * route and proposal acceptance. The caller validates scope and project. Pass
+ * `access` to refuse projects the caller can't see; internal callers that act on a
+ * project they already checked omit it.
+ */
+export async function createMemory(
+  db: Queryer,
+  providers: Providers,
+  principal: string,
+  b: CreateInput,
+  access?: Access,
+  opts: CreateOptions = {},
+) {
+  const planned = await planMemory(db, providers, principal, b, access, opts);
+  if (!("plan" in planned)) return planned;
+  return storeMemory(db, providers, principal, planned.plan);
 }
 
 export function memoryRoutes(db: Db, providers: Providers) {

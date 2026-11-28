@@ -1,14 +1,4 @@
-import {
-  and,
-  eq,
-  exists,
-  inArray,
-  isNull,
-  lte,
-  ne,
-  or,
-  sql,
-} from "drizzle-orm";
+import { and, eq, exists, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import { type Access, findProject } from "./access.js";
@@ -22,7 +12,12 @@ import {
   usageEvents,
 } from "./db/schema.js";
 import { logEvent } from "./events.js";
-import { MAX_PROMPT_CHARS, SYSTEM } from "./extract.js";
+import {
+  MAX_PROMPT_CHARS,
+  SYSTEM,
+  StaleDedup,
+  type Writer,
+} from "./extract.js";
 import type { LlmProvider, Providers } from "./providers/index.js";
 import { costMicros } from "./usage.js";
 
@@ -59,13 +54,18 @@ export async function backfillSpentMicros(
     .where(
       and(
         eq(usageEvents.operation, BACKFILL_OPERATION),
-        // A GitHub user's spend follows them across tokens; an admin token has only its name.
-        access.userId
-          ? eq(usageEvents.userId, access.userId)
-          : eq(usageEvents.principal, principal),
+        spenderIs(access, principal),
       ),
     );
   return Number(row?.total ?? 0);
+}
+
+/** Usage rows that are this person's spend. */
+function spenderIs(access: Access, principal: string) {
+  // A GitHub user's spend follows them across tokens; an admin token has only its name.
+  return access.userId
+    ? eq(usageEvents.userId, access.userId)
+    : eq(usageEvents.principal, principal);
 }
 
 /**
@@ -160,36 +160,62 @@ export class ClaimLost extends Error {
   }
 }
 
+/** How many of the person's backfill pieces are extracted: it grows each time one writes. */
+async function piecesWritten(db: Queryer, owner: string) {
+  const [r] = await db
+    .select({ n: sql<string>`count(*)` })
+    .from(sessions)
+    .where(
+      and(
+        eq(sessions.owner, owner),
+        eq(sessions.source, "backfill"),
+        sql`${sessions.extractedAt} IS NOT NULL`,
+      ),
+    );
+  return Number(r?.n ?? 0);
+}
+
 /**
- * Runs extraction's writes in one transaction that first locks the piece's row
- * and checks the claim is still `claim`, then marks the piece extracted. A
- * request whose claim expired and was taken over writes nothing (`ClaimLost`).
- * The row lock makes a takeover wait until this commits, by which time the
- * piece is extracted and can't be claimed.
+ * Extraction's writer for a backfill piece. Each attempt notes how many of
+ * the person's pieces are written before extraction's dedup reads, which run
+ * outside any transaction with every model and embedding call. The writes then
+ * run in one transaction holding a per-person lock, one piece's at a time:
+ * it locks the piece's row and checks the claim is still `claim`, throws
+ * `StaleDedup` when another piece wrote since the attempt began (so extraction
+ * checks again against that piece's memories), runs the writes and marks the
+ * piece extracted. A request whose claim expired and was taken over writes
+ * nothing (`ClaimLost`). The row lock makes a takeover wait until this
+ * commits, by which time the piece is extracted and can't be claimed.
+ * `settle` runs before the transaction: extraction passes its usage inserts,
+ * so the piece's spend is recorded before its claim stops counting.
  */
 export function writeUnderClaim(
   db: Db,
   owner: string,
   id: string,
   claim: string,
-) {
-  return (work: (db: Queryer) => Promise<void>) =>
-    db.transaction(async (tx) => {
-      // One piece's writes at a time per person: the memories are theirs, so
-      // two pieces could lock the same ones in turn, and each piece's dedup
-      // must see the memories the one before it wrote.
-      await tx.execute(
-        sql`SELECT pg_advisory_xact_lock(hashtextextended(${`backfill-write:${owner}`}, 0))`,
-      );
-      const held = await tx
-        .select({ id: sessions.id })
-        .from(sessions)
-        .where(holds(id, claim))
-        .for("update");
-      if (held.length === 0) throw new ClaimLost();
-      await work(tx);
-      if (!(await finishPiece(tx, id, claim))) throw new ClaimLost();
-    });
+  settle?: () => Promise<unknown>,
+): () => Promise<Writer> {
+  return async () => {
+    const seen = await piecesWritten(db, owner);
+    return async (work) => {
+      await settle?.();
+      await db.transaction(async (tx) => {
+        await tx.execute(
+          sql`SELECT pg_advisory_xact_lock(hashtextextended(${`backfill-write:${owner}`}, 0))`,
+        );
+        const held = await tx
+          .select({ id: sessions.id })
+          .from(sessions)
+          .where(holds(id, claim))
+          .for("update");
+        if (held.length === 0) throw new ClaimLost();
+        if ((await piecesWritten(tx, owner)) !== seen) throw new StaleDedup();
+        await work(tx);
+        if (!(await finishPiece(tx, id, claim))) throw new ClaimLost();
+      });
+    };
+  };
 }
 
 export type Admission =
@@ -200,7 +226,8 @@ export type Admission =
 /**
  * Admits a backfill piece to extraction against the person's budget, and
  * claims it. One transaction holding a per-person advisory lock, so two
- * requests can't both pass on the same headroom: refuses when recorded spend,
+ * requests can't both pass on the same headroom, reading spend and claims in
+ * one statement: refuses when recorded spend,
  * plus the estimates of the person's other unexpired claims, plus this piece's
  * estimate, would pass the budget. Estimates are `estimateMicros`, as the plan
  * prices pieces. `claim: null` without `overBudget` means the piece is
@@ -219,24 +246,29 @@ export async function admitPiece(
     await tx.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${`backfill:${who}`}, 0))`,
     );
-    const spent = await backfillSpentMicros(tx, access, s.owner);
-    const inFlight = await tx
-      .select({ chars: sql<number>`char_length(${sessions.transcript})` })
-      .from(sessions)
-      .where(
-        and(
-          eq(sessions.owner, s.owner),
-          eq(sessions.source, "backfill"),
-          isNull(sessions.extractedAt),
-          ne(sessions.id, s.id),
-          sql`${sessions.extractingAt} >= now() - make_interval(mins => ${CLAIM_MINUTES})`,
-        ),
-      );
+    // One statement, so spend and claims are read at one moment: a piece
+    // that finishes meanwhile counts as one or the other, since it records
+    // its spend before it gives up its claim.
+    const [row] = await tx.execute<{
+      spent: string | null;
+      chars: number[] | null;
+    }>(sql`
+      SELECT
+        (SELECT sum(${usageEvents.costMicros}) FROM ${usageEvents}
+          WHERE ${usageEvents.operation} = ${BACKFILL_OPERATION}
+            AND ${spenderIs(access, s.owner)}) AS spent,
+        (SELECT array_agg(char_length(${sessions.transcript})) FROM ${sessions}
+          WHERE ${sessions.owner} = ${s.owner}
+            AND ${sessions.source} = 'backfill'
+            AND ${sessions.extractedAt} IS NULL
+            AND ${sessions.id} <> ${s.id}
+            AND ${sessions.extractingAt} >= now() - make_interval(mins => ${CLAIM_MINUTES})) AS chars`);
+    const spent = Number(row?.spent ?? 0);
     const committed =
       spent +
       estimateMicros(
         llm,
-        inFlight.map((r) => Number(r.chars)),
+        (row?.chars ?? []).map((c) => Number(c)),
       );
     if (committed + estimateMicros(llm, [s.transcript.length]) > budgetMicros)
       return { claim: null, overBudget: true, spentMicros: spent };
