@@ -154,6 +154,15 @@ describe("practices", () => {
     expect(split(await coreAs(key, 200))).toEqual({ practices: 1, others: 7 });
   });
 
+  test("many practices can't push the other memories out of the set", async () => {
+    const key = "github.com/acme/crowd";
+    await facts(key, 1);
+    // More confident practices than one ranked query would read.
+    for (let i = 0; i < 201; i++)
+      await practiceFrom(key, `crowd practice ${i}`);
+    expect(split(await coreAs(key, 200)).others).toBe(1);
+  });
+
   test("only those learned in a session in this project are served", async () => {
     const here = "github.com/acme/here";
     const there = "github.com/acme/there";

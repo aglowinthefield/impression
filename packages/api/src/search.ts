@@ -80,7 +80,7 @@ export function searchRoutes(db: Db, providers: Providers) {
     // What session start already gave this session is in its context; don't repeat it.
     if (q.session)
       conds.push(
-        sql`NOT EXISTS (SELECT 1 FROM memory_serves v WHERE v.memory_id = m.id AND v.session_key = ${q.session} AND v.source = 'core')`,
+        sql`NOT EXISTS (SELECT 1 FROM memory_serves v WHERE v.memory_id = m.id AND v.session_key = ${q.session} AND v.principal = ${principal} AND v.source = 'core')`,
       );
     if (q.path) {
       const path = q.path.replace(/^\/+|\/+$/g, "");

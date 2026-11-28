@@ -43,16 +43,24 @@ export async function coreSet(
   where: SQL[],
   budget: number,
 ): Promise<{ items: CoreItem[]; tokens: number }> {
-  const rows = await db
-    .select()
-    .from(memories)
-    .where(and(...where))
-    .orderBy(
-      sql`coalesce(${memories.confidence}, 0.5) desc`,
-      desc(memories.createdAt),
-      desc(memories.id),
-    )
-    .limit(200);
+  // Each group gets its own row limit, so many practices can't push every other memory past it.
+  const ranked = (group: SQL) =>
+    db
+      .select()
+      .from(memories)
+      .where(and(...where, group))
+      .orderBy(
+        sql`coalesce(${memories.confidence}, 0.5) desc`,
+        desc(memories.createdAt),
+        desc(memories.id),
+      )
+      .limit(200);
+  const isPracticeSql = sql`${PRACTICE_TAG} = ANY(${memories.tags})`;
+  const [practiceRows, otherRows] = await Promise.all([
+    ranked(isPracticeSql),
+    ranked(sql`NOT (${isPracticeSql})`),
+  ]);
+  const rows = [...otherRows, ...practiceRows];
   const isPractice = (m: (typeof rows)[number]) =>
     m.tags.includes(PRACTICE_TAG);
   const chosen = new Set<(typeof rows)[number]>();

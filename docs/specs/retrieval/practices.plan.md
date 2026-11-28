@@ -21,7 +21,7 @@ One task: the budget split, the fit rule and the skip are one change to what rea
 - `GET /core`: same request and response. The items change per AC1 and AC2.
 - `POST /search`: with a `session`, memories served to that session with source `core` are left out. Otherwise unchanged: with a `project`, it returns that project's memories only.
 - The fit rule in AC2 uses data already stored: the session a memory was extracted from. No schema change.
-- retrieval/I6 is reworded to: "The session-start set fits its token budget: 800 by default, 50 to 20,000. It sits in every session's context. Practices take at most a quarter of it, and only those learned in this project; the rest goes by confidence, then newest."
+- retrieval/I6 is reworded to: "The session-start set fits its token budget: 800 by default, 50 to 20,000. It sits in every session's context. Practices take at most a quarter of it while other memories want the room, and only those learned in this project; the rest goes by confidence, then newest."
 
 ## Invariants
 
