@@ -45,6 +45,9 @@ const PRACTICE_TAG = "practice";
 
 type MemoryRow = typeof memories.$inferSelect;
 
+/** Statuses a memory can still be merged into; the others are history. */
+const LIVE: MemoryRow["status"][] = ["active", "possibly_stale"];
+
 const projectRef = z.object({
   key: z.string().min(1),
   name: z.string().min(1).optional(),
@@ -424,59 +427,72 @@ export async function storeMemory(
   principal: string,
   plan: MemoryPlan,
 ) {
-  const { b, projectId, event, vector, verdict } = plan;
+  const { b, projectId, event, vector } = plan;
+  let { verdict } = plan;
   if (verdict.action === "duplicate") {
-    const { merged } = verdict;
+    const dup = verdict;
+    const { merged } = dup;
     const row = await db.transaction(async (tx) => {
+      // The target may have been superseded or retired since the plan was made.
+      // History is never edited, so the memory is stored as new instead.
+      const [target] = await tx
+        .select({ status: memories.status })
+        .from(memories)
+        .where(eq(memories.id, dup.id))
+        .for("update");
+      if (!target || !LIVE.includes(target.status)) return null;
       if (merged) {
         await tx
           .update(memories)
           .set({
             content: merged,
             updatedAt: new Date(),
-            ...(verdict.mergedVector
+            ...(dup.mergedVector
               ? {
-                  embedding: verdict.mergedVector,
+                  embedding: dup.mergedVector,
                   embeddingModel: providers.embeddings.model,
                   embeddingDim: providers.embeddings.dimensions,
                 }
               : {}),
           })
-          .where(eq(memories.id, verdict.id));
+          .where(eq(memories.id, dup.id));
         if (event)
-          await logEvent(tx, verdict.id, "merged", event, {
-            before: verdict.before,
+          await logEvent(tx, dup.id, "merged", event, {
+            before: dup.before,
             after: merged,
           });
       } else {
         await tx
           .update(memories)
           .set({ updatedAt: new Date() })
-          .where(eq(memories.id, verdict.id));
+          .where(eq(memories.id, dup.id));
       }
       // The caller's anchors describe the same fact at a newer commit, so keep them.
       if (b.anchors.length > 0) {
         await tx
           .insert(anchors)
-          .values(b.anchors.map((a) => ({ ...a, memoryId: verdict.id })));
+          .values(b.anchors.map((a) => ({ ...a, memoryId: dup.id })));
       }
       const [r] = await tx
         .select()
         .from(memories)
-        .where(eq(memories.id, verdict.id));
+        .where(eq(memories.id, dup.id));
       return r;
     });
-    const [withA] = await withAnchors(db, [
-      toDto(row as MemoryRow, b.project?.key ?? null),
-    ]);
-    return {
-      status: 200 as const,
-      body: {
-        ...withA,
-        outcome: merged ? "merged" : "duplicate",
-        redactions: plan.redactions,
-      },
-    };
+    if (row) {
+      const [withA] = await withAnchors(db, [
+        toDto(row as MemoryRow, b.project?.key ?? null),
+      ]);
+      return {
+        status: 200 as const,
+        body: {
+          ...withA,
+          outcome: merged ? "merged" : "duplicate",
+          redactions: plan.redactions,
+        },
+      };
+    }
+    verdict = { action: "add", supersedes: [] };
   }
   const { supersedes } = verdict;
 

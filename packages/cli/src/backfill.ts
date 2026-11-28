@@ -1091,7 +1091,14 @@ export async function offerBackfill(deps: OfferDeps): Promise<void> {
       return;
     }
     const plan = await makePlan(deps.client, repo, {}, deps.env, deps.now());
-    if (!plan.send.length) return;
+    if (!plan.send.length) {
+      deps.info(
+        plan.leftOut > 0
+          ? `Nothing to backfill: the budget is used up (${usd(plan.spentUsd)} of ${usd(plan.budgetUsd)} spent), and ${plural(plan.leftOut, "new piece")} won't fit.`
+          : "Nothing new to backfill in this repo.",
+      );
+      return;
+    }
     const lines = [
       ...formatPlan(plan),
       "",

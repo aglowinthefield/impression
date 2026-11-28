@@ -690,6 +690,29 @@ describe("run", () => {
     );
   });
 
+  test("AC13: before the branch's first commit, a merged unrelated history's older root is not the anchor", () => {
+    const w = world();
+    git(w.repo, ["checkout", "-q", "--orphan", "other"]);
+    commit(w.repo, "2026-07-01T00:00:00Z");
+    git(w.repo, ["checkout", "-q", "main"]);
+    git(
+      w.repo,
+      [
+        "merge",
+        "-q",
+        "--no-ff",
+        "--allow-unrelated-histories",
+        "-m",
+        "merge other",
+        "other",
+      ],
+      "2026-11-15T00:00:00Z",
+    );
+    expect(commitBefore(w.repo, Date.parse("2026-06-01T00:00:00Z"))).toBe(
+      w.first,
+    );
+  });
+
   test("AC14: --undo retires what backfills made and prints how many", async () => {
     const w = world();
     const api = stubApi({ undo: async () => ({ retired: 7 }) });
@@ -831,12 +854,21 @@ describe("setup's offer (AC15)", () => {
     expect(o.started).toEqual([]);
   });
 
-  test("with nothing new it says nothing, and with a backfill running it says so", async () => {
+  test("with nothing new, the budget used up or a backfill running, it says which in one line", async () => {
     const w = world();
     const quiet = offer(w, stubApi().client);
     await quiet.done;
-    expect(quiet.info).toEqual([]);
+    expect(quiet.info).toEqual(["Nothing new to backfill in this repo."]);
     expect(quiet.asked).toEqual([]);
+    piSession(w, w.repo, "s1", NOW - 2 * DAY);
+    // $0.02 left, less than one piece's $0.04.
+    const broke = offer(w, stubApi({ budget: 10, spent: 9.98 }).client);
+    await broke.done;
+    expect(broke.info).toEqual([
+      "Nothing to backfill: the budget is used up ($9.98 of $10.00 spent), and 1 new piece won't fit.",
+    ]);
+    expect(broke.asked).toEqual([]);
+    expect(broke.started).toEqual([]);
     piSession(w, w.repo, "s0", NOW - DAY);
     expect(acquireLock(w.env, w.key, 77, () => true)).toBe(true);
     const busy = offer(w, stubApi().client, { alive: () => true });

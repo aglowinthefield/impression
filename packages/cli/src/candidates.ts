@@ -268,7 +268,8 @@ function gitOut(cwd: string, ...args: string[]): string | null {
 /**
  * The last commit on the checkout's branch before `ms`, following first
  * parents only (a side branch's commit merged later wasn't on the branch
- * then), or the repo's first commit when `ms` predates it. Memories from a past session are anchored
+ * then), or the branch's first commit when `ms` predates it (also on first
+ * parents, so a merged unrelated history's root isn't it). Memories from a past session are anchored
  * there, so the staleness check rechecks them when their files have moved on.
  */
 export function commitBefore(checkout: string, ms: number): string | undefined {
@@ -282,7 +283,15 @@ export function commitBefore(checkout: string, ms: number): string | undefined {
   );
   const sha =
     before ||
-    (gitOut(checkout, "rev-list", "--max-parents=0", "HEAD") ?? "")
+    (
+      gitOut(
+        checkout,
+        "rev-list",
+        "--first-parent",
+        "--max-parents=0",
+        "HEAD",
+      ) ?? ""
+    )
       .split("\n")
       .at(-1);
   return sha && /^[0-9a-f]{7,40}$/i.test(sha) ? sha : undefined;

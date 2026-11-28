@@ -168,6 +168,7 @@ beforeAll(async () => {
     "lee",
     "mo",
     "nia",
+    "oz",
   ])
     tokens[name] = await createToken(t.db, name);
 });
@@ -700,6 +701,76 @@ describe("backfill writes and model calls", () => {
     expect(
       await t.db.select().from(memories).where(eq(memories.sessionId, a.id)),
     ).toEqual([]);
+  });
+
+  test("a merge planned into a memory that is superseded before the write leaves it alone and stores the piece's memory as new", async () => {
+    const on = held();
+    const marker = "qqsupersedeplanned";
+    const res = await call("oz", "POST", "/memories", {
+      scope: "project",
+      project,
+      content: `Builds run on the ${marker} runner`,
+      dedup: false,
+    });
+    const m = (await res.json()) as { id: string };
+    const before = verdict;
+    verdict = (prompt) => {
+      const fresh = prompt.split("New memory:\n")[1] ?? "";
+      if (!prompt.includes(`[${m.id}]`)) return '{"action":"add"}';
+      return fresh.includes("moved off")
+        ? JSON.stringify({ action: "supersede", ids: [m.id] })
+        : JSON.stringify({
+            action: "duplicate",
+            id: m.id,
+            merged: `Builds run on the ${marker} runner nightly`,
+          });
+    };
+    try {
+      // The piece's dedup check found M, and is held before it answers.
+      const hold = holdOn(`${marker} runner nightly`);
+      dedupHold = hold;
+      const { body: a } = await upload("oz", "user: supersede planned piece");
+      model.next = `Builds run on the ${marker} runner nightly`;
+      const first = extract("oz", a.id, on);
+      await hold.started.promise;
+
+      // Another request supersedes M meanwhile.
+      const sup = await call("oz", "POST", "/memories", {
+        scope: "project",
+        project,
+        content: `Builds moved off the ${marker} runner`,
+        dedup: true,
+      });
+      expect(await sup.json()).toMatchObject({ outcome: "superseded" });
+
+      hold.open.resolve();
+      expect(await first).toMatchObject({ status: 200, body: { saved: 1 } });
+      const [after] = await t.db
+        .select()
+        .from(memories)
+        .where(eq(memories.id, m.id));
+      expect(after).toMatchObject({
+        status: "superseded",
+        content: `Builds run on the ${marker} runner`,
+      });
+      const events = await t.db
+        .select({ kind: memoryEvents.kind })
+        .from(memoryEvents)
+        .where(eq(memoryEvents.memoryId, m.id));
+      expect(events.map((e) => e.kind)).not.toContain("merged");
+      const mine = await t.db
+        .select()
+        .from(memories)
+        .where(eq(memories.sessionId, a.id));
+      expect(mine).toMatchObject([
+        {
+          status: "active",
+          content: `Builds run on the ${marker} runner nightly`,
+        },
+      ]);
+    } finally {
+      verdict = before;
+    }
   });
 
   test("a piece's spend is recorded before its claim stops counting against the budget", async () => {

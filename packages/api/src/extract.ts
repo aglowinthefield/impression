@@ -368,6 +368,10 @@ const cosine = (a: number[], b: number[]) => {
   return na && nb ? dot / Math.sqrt(na * nb) : 0;
 };
 
+/** Whether a vector is close enough to `v` to be a dedup candidate. */
+const near = (a: number[] | null, v: number[]) =>
+  !!a && cosine(a, v) >= CANDIDATE_MIN_SIMILARITY;
+
 /** One extracted item, worked out and ready to write. */
 interface Prepared {
   /** What the dedup check calls this item's memory before it exists. */
@@ -409,6 +413,11 @@ async function prepareItems(
   // Earlier items' effects, for later items' dedup checks.
   const gone = new Set<string>();
   const text = new Map<string, string>();
+  // Merged memories' new vectors, which their stored embeddings don't have yet.
+  const moved = new Map<
+    string,
+    { vec: number[]; practice: boolean; projectId: string }
+  >();
   const checked = () => input.signal?.throwIfAborted();
   for (const [i, item] of items.entries()) {
     if (item.confidence < floor) {
@@ -502,15 +511,25 @@ async function prepareItems(
                 !gone.has(p.key) &&
                 p.practice === practice &&
                 (practice || p.projectId === projectId) &&
-                p.planned.plan.vector &&
-                cosine(p.planned.plan.vector, v) >= CANDIDATE_MIN_SIMILARITY,
+                near(moved.get(p.key)?.vec ?? p.planned.plan.vector, v),
             )
             .map((p) => ({
               id: p.key,
               content: text.get(p.key) ?? p.content,
             })),
+          // A memory an earlier item merged into is found by its new text's vector.
+          ...[...moved]
+            .filter(
+              ([id, m]) =>
+                !id.startsWith("new-") &&
+                !gone.has(id) &&
+                m.practice === practice &&
+                (practice || m.projectId === projectId) &&
+                near(m.vec, v),
+            )
+            .map(([id]) => ({ id, content: text.get(id) ?? "" })),
           ...found
-            .filter((c) => !gone.has(c.id))
+            .filter((c) => !gone.has(c.id) && !moved.has(c.id))
             .map((c): Candidate => ({
               ...c,
               content: text.get(c.id) ?? c.content,
@@ -522,7 +541,11 @@ async function prepareItems(
     if ("plan" in planned) {
       const v = planned.plan.verdict;
       if (v.action === "add") for (const id of v.supersedes) gone.add(id);
-      else if (v.merged) text.set(v.id, v.merged);
+      else if (v.merged) {
+        text.set(v.id, v.merged);
+        if (v.mergedVector)
+          moved.set(v.id, { vec: v.mergedVector, practice, projectId });
+      }
     }
     prepared.push({
       key,
