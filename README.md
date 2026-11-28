@@ -193,6 +193,7 @@ impression add "Migrations run via db:migrate" [--user]
 impression search "how do migrations run"
 impression list
 impression status
+impression backfill                   # learn from this repo's past sessions (see Backfill)
 impression dashboard                  # opens this project's memories in the browser
 impression edit <id> <text>
 impression retire <id>               # kept as history
@@ -205,30 +206,25 @@ Ids are the 8-character prefixes that `list` and `search` print.
 
 Set `"sendInstructions": true` in the saved config (or `IMPRESSION_SEND_INSTRUCTIONS=1`) to send your AGENTS.md and CLAUDE.md files (project and global) with each extraction, so it skips rules those files already state. Off by default. The text is scrubbed, cut to a cap, and not stored.
 
-## Seeding a local server
+## Backfill
 
-A dev script fills a local server with memories extracted from your old pi, Claude Code and Codex transcripts for one repo. Start Postgres, apply the schema and create a token:
-
-```sh
-docker compose up -d --wait postgres
-pnpm --filter @impression/api db:migrate
-pnpm --filter @impression/api token:create <your-name>
-```
-
-Start the API with Anthropic extraction and Ollama embeddings (see [Local embeddings](#local-embeddings)). `pnpm dev` doesn't read `.env`, so pass the settings in the shell, with `ANTHROPIC_API_KEY` already exported:
+New sessions teach Impression as they end; `impression backfill` teaches it from the sessions you ran before you installed it. Run it in a repo:
 
 ```sh
-LLM_PROVIDER=anthropic EMBEDDING_PROVIDER=ollama EMBEDDING_MODEL=nomic-embed-text EMBEDDING_DIMENSIONS=768 pnpm dev
+impression backfill             # shows the plan, asks, then sends
+impression backfill --dry-run   # the plan only
+impression backfill --undo      # retires every memory a backfill made in this repo
 ```
 
-Then, in another shell:
+It finds the repo's past sessions under `~/.pi/agent/sessions`, `~/.claude/projects` and `~/.codex/sessions`, including ones run in its subdirectories and worktrees, splits each into pieces of about 55,000 characters of conversation, and asks the server which pieces are new and what they would cost. It prints the sessions per agent, the session and piece counts, the estimated cost and what is left of your backfill budget, and sends nothing until you say yes. Without a terminal it sends only with `--yes`.
 
-```sh
-pnpm --filter @impression/cli seed -- --repo ~/code/my-repo --token imp_... --dry-run
-pnpm --filter @impression/cli seed -- --repo ~/code/my-repo --token imp_...
-```
+By default it takes the sessions that started in the last 30 days, at most 50, newest kept; `--since 2026-10-01` and `--limit <sessions>` change that, and `--agents pi,claude,codex` picks the agents. It skips sessions the hooks already sent, sessions changed in the last hour (they may still be running), and pieces a backfill already extracted, so a rerun sends only what is new. Pieces go oldest first, three at a time, one line each, and the run ends with the sessions read, the memories saved and updated, and the cost the server recorded. A piece the server fails on is retried once and otherwise reported, and the next run sends it again. A run stopped midway keeps what it finished. Only one backfill runs per repo at a time.
 
-It finds the repo's sessions (including ones run in subdirectories and `.worktrees/*`) under `~/.pi/agent/sessions`, `~/.claude/projects` and `~/.codex/sessions`, oldest first, splits each into pieces of about 55,000 characters of conversation, and uploads each piece with extraction, three at a time. Each piece prints one line, and the run ends with totals. `--dry-run` lists sessions and piece counts without sending anything. Other flags: `--agents pi,claude,codex`, `--since 2026-10-01`, `--limit <sessions>`, `--concurrency 3`, `--timeout <seconds per request>`. The URL and token come from `--url`/`--token`, then `IMPRESSION_URL`/`IMPRESSION_TOKEN`, then the saved config, and it refuses any host other than localhost unless you pass `--allow-remote`. The server keeps one copy of a piece sent twice within a day and doesn't extract it again, so a rerun soon after a partial run only extracts the new pieces. `IMPRESSION_SEED_PI_DIR`, `IMPRESSION_SEED_CLAUDE_DIR` and `IMPRESSION_SEED_CODEX_DIR` point it at other transcript folders.
+The server sets the model (`BACKFILL_MODEL`, Sonnet by default) and each person's lifetime budget (`BACKFILL_BUDGET_USD`, $10 by default). A run whose estimate passes what is left sends the oldest pieces that fit, and a run that hits the budget midway stops and says how many pieces it didn't send. Each memory is anchored at the last commit before its session started, so the staleness check rechecks it once its files change.
+
+`impression setup` run in a repo ends by offering the same plan and, if you accept, runs the backfill in the background; `impression status` shows its progress. Its lock and progress files live in `~/.config/impression/backfill/`.
+
+To fill a local dev server, start it (with `BACKFILL_MODEL` set to whatever model you want to pay for), sign in to it with `impression login --url http://localhost:3000 --token imp_...`, and run `impression backfill` in a repo. `IMPRESSION_BACKFILL_PI_DIR`, `IMPRESSION_BACKFILL_CLAUDE_DIR` and `IMPRESSION_BACKFILL_CODEX_DIR` point it at other transcript folders.
 
 ## Dreaming
 

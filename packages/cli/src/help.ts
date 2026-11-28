@@ -96,6 +96,31 @@ export const help = (version?: string): CliHelp => ({
       details: `Retired memories aren't extracted again. ID is ${ID}.`,
     },
     {
+      name: "backfill",
+      group: "Memories",
+      full: "[--since DATE] [--limit N] [--agents LIST] [--repo PATH] [--yes] [--dry-run] [--undo]",
+      summary: "learn this repo's memories from your past sessions",
+      details:
+        "Finds this repo's past pi, Claude Code and Codex sessions, including ones run in its subdirectories and worktrees, and shows how many sessions and pieces it would send and what that would cost before it sends anything. It sends nothing until you say yes.\nBy default it takes the sessions that started in the last 30 days, at most 50, newest kept. It skips sessions your agents already sent, sessions changed in the last hour, and pieces a backfill already extracted, so running it again only sends what is new. Backfill has a budget on the server; a run that would pass it sends the oldest pieces that fit.\nIt prints a line per piece. If it stops midway, run it again to send the rest. impression status shows a backfill's progress while it runs.",
+      options: [
+        ["--since DATE", "sessions that started on or after this date"],
+        ["--limit N", "at most this many sessions, newest kept (default 50)"],
+        ["--agents LIST", "agents to read, comma-separated: pi, claude, codex"],
+        ["--repo PATH", "the repo to backfill (default: the one you're in)"],
+        ["-y, --yes", "send without asking"],
+        ["--dry-run", "show the plan, send nothing"],
+        ["--undo", "retire every memory a backfill made in this repo"],
+      ],
+      examples: [
+        ["impression backfill", "see the plan, then confirm"],
+        [
+          "impression backfill --since 2026-09-01 --limit 100",
+          "a wider window",
+        ],
+        ["impression backfill --undo", ""],
+      ],
+    },
+    {
       name: "login",
       group: "Account",
       full: "[--github] [--url URL] [--token TOKEN]",
@@ -123,7 +148,7 @@ export const help = (version?: string): CliHelp => ({
       group: "Account",
       summary: "the server, your sign-in and this repo's project",
       details:
-        "Also says how many memories may be stale, and warns when Impression can't reach this repo, which means its sessions won't be saved.",
+        "Also says how many memories may be stale, and warns when Impression can't reach this repo, which means its sessions won't be saved. While a backfill runs in this repo it shows its progress, and once more after it finishes.",
     },
     {
       name: "dashboard",
@@ -137,7 +162,7 @@ export const help = (version?: string): CliHelp => ({
       full: "[--agent LIST] [--yes] [--dry-run]",
       summary: "install Impression into your agents",
       details:
-        "Signs you in if needed, asks which of the agents it found (Claude Code, pi, Codex, oh-my-pi) should use Impression, and installs each one's plugin. When the impression command isn't on your PATH it offers to install it.\nIt backs up each file it changes and is safe to run again.",
+        "Signs you in if needed, asks which of the agents it found (Claude Code, pi, Codex, oh-my-pi) should use Impression, and installs each one's plugin. When the impression command isn't on your PATH it offers to install it. Run in a git repo with past sessions, it ends by offering to backfill them in the background.\nIt backs up each file it changes and is safe to run again.",
       options: [
         [
           "--agent LIST",

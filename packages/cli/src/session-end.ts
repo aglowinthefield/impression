@@ -179,9 +179,14 @@ function headSha(cwd: string): string | undefined {
 }
 
 /** Candidates are a bonus: if working them out fails, the session still uploads. */
-function safeCandidates(raw: string, cwd: string, key: string) {
+export function safeCandidates(
+  raw: string,
+  cwd: string,
+  key: string,
+  at?: number,
+) {
   try {
-    return projectCandidates(entries(raw), cwd, key);
+    return projectCandidates(entries(raw), cwd, key, undefined, at);
   } catch {
     return [];
   }

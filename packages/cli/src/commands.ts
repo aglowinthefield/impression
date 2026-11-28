@@ -82,6 +82,25 @@ export async function status(client: ApiClient, cwd: string, url: string) {
   ].join("\n");
 }
 
+/**
+ * `impression status`'s output: the server's lines, then lines read on this
+ * machine (backfill progress, old hooks). The local lines are kept when the
+ * server can't answer, with its error beside them.
+ */
+export async function statusReport(
+  server: () => Promise<string>,
+  local: string[],
+): Promise<{ text: string; error?: Error }> {
+  try {
+    return { text: [await server(), ...local].join("\n") };
+  } catch (e) {
+    return {
+      text: local.join("\n"),
+      error: e instanceof Error ? e : new Error(String(e)),
+    };
+  }
+}
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Resolves the 8-character ids shown by `list` and `search` to full ids. */

@@ -1,5 +1,12 @@
 #!/usr/bin/env node
+import * as p from "@clack/prompts";
 import { createClient, resolveProject } from "@impression/shared";
+import {
+  backfill,
+  backfillStatus,
+  parseBackfillArgs,
+  timedFetch,
+} from "./backfill.js";
 import { dashboardUrl, openUrl } from "./browser.js";
 import {
   commandHelp,
@@ -7,13 +14,23 @@ import {
   unknownCommand,
   usageLine,
 } from "./cli-help.js";
-import { add, edit, keep, list, retire, search, status } from "./commands.js";
+import {
+  add,
+  edit,
+  keep,
+  list,
+  retire,
+  search,
+  status,
+  statusReport,
+} from "./commands.js";
 import { loadConfig, saveConfig } from "./config.js";
 import { pushEvalTurns } from "./eval-push.js";
 import { runCommand } from "./global-cli.js";
 import { HIDDEN, help } from "./help.js";
 import { runHook } from "./hook-run.js";
 import { login } from "./login.js";
+import { readInstructions } from "./session-end.js";
 import { oldHookFiles } from "./setup.js";
 import { runSetup } from "./setup-cli.js";
 import { checkForUpdate, PACKAGE, VERSION } from "./update-check.js";
@@ -64,6 +81,38 @@ if (cmd === "hook") {
     stdio: "inherit",
   });
   if (r.status !== 0) process.exit(1);
+} else if (cmd === "backfill") {
+  let args: ReturnType<typeof parseBackfillArgs>;
+  try {
+    args = parseBackfillArgs(process.argv.slice(3));
+  } catch (e) {
+    console.error(`${(e as Error).message}\n${usageLine(cli, "backfill")}`);
+    process.exit(2);
+  }
+  try {
+    const code = await backfill(args, {
+      // Backfill extraction runs on the server's stronger model; give it time.
+      client: token ? createClient(url, token, timedFetch(360_000)) : null,
+      cwd: process.cwd(),
+      env: process.env,
+      now: Date.now,
+      log: (l) => console.log(l),
+      ...(process.stdin.isTTY
+        ? {
+            confirm: async (message: string) =>
+              (await p.confirm({ message })) === true,
+          }
+        : {}),
+      pid: process.pid,
+      ...(config.sendInstructions
+        ? { readInstructions: (checkout: string) => readInstructions(checkout) }
+        : {}),
+    });
+    process.exit(code);
+  } catch (e) {
+    console.error((e as Error).message);
+    process.exit(1);
+  }
 } else if (cmd === "setup") {
   await runSetup(process.argv.slice(3), { token, url });
 } else if (cmd === "login") {
@@ -138,10 +187,23 @@ if (cmd === "hook") {
       list: () => list(client, cwd),
       status: async () => {
         const old = oldHookFiles();
-        const s = await status(client, cwd, url);
-        return old.length
-          ? `${s}\nOld hooks: ${old.join(", ")} (the plugin replaces them; run impression setup to remove them)`
-          : s;
+        const back = backfillStatus(cwd);
+        const r = await statusReport(
+          () => status(client, cwd, url),
+          [
+            ...(back ? [back] : []),
+            ...(old.length
+              ? [
+                  `Old hooks: ${old.join(", ")} (the plugin replaces them; run impression setup to remove them)`,
+                ]
+              : []),
+          ],
+        );
+        if (r.error) {
+          if (r.text) console.log(r.text);
+          throw r.error;
+        }
+        return r.text;
       },
       retire: () => retire(client, cwd, id ?? ""),
       edit: () => edit(client, cwd, id ?? "", text),
