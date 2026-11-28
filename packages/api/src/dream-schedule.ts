@@ -69,7 +69,7 @@ export async function runDream(
 }
 
 /** The GitHub user behind a principal, for usage attribution. */
-async function userOf(db: Db, owner: string): Promise<string | null> {
+export async function userOf(db: Db, owner: string): Promise<string | null> {
   const [row] = await db
     .select({ userId: apiTokens.userId })
     .from(apiTokens)

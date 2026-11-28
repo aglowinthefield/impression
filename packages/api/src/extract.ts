@@ -14,6 +14,18 @@ const MAX_CANDIDATES = 15;
 /** Tag on memories that record how the user likes work done. */
 export const PRACTICE_TAG = "practice";
 
+/**
+ * The rule against storing to-dos. Shared by extraction and the one-time pass
+ * over stored memories (scope-pass.ts), so both apply the same wording.
+ */
+export const TODO_RULE = `To-dos: anything the user or the assistant still has to do, fix, update, install or clean up, whether in this repo, another repo or the user's own machine (shell config, environment variables, dotfiles, local tools). "$X points to a stale path, update it in the shell config" is a chore, not knowledge: once done it is no longer true. Keep only the lasting rule or reason behind it, if the user stated one.`;
+
+/**
+ * The rule that keeps one repo's specifics out of a practice. Shared by
+ * extraction and the one-time pass over stored memories (scope-pass.ts).
+ */
+export const PRACTICE_SPECIFICS_RULE = `A practice reaches every repo the user works in, so it holds only what applies in all of them. When the rule comes with one repo's specifics (ports, hosts, URLs, service, app or repo names, paths), write the practice without them, and keep the specifics as a separate fact about that repo. For example, "before a release, smoke-test the checkout flow on staging at checkout.acme.dev:8443" becomes the practice "Before a release, smoke-test the main user flow on staging." and the fact "In acme-shop, staging is checkout.acme.dev:8443." Keep the practice even when there is no room for the fact.`;
+
 export const SYSTEM = `You extract durable project knowledge from a coding-session transcript, for a memory that future sessions will read.
 Be strict. Most sessions have nothing worth keeping, and an empty list is the usual right answer. Return at most 3 facts even for a long session: pick the ones that matter most.
 Keep only what will still be true and useful next month, and that a developer could not get by reading the code: decisions with their reasons, conventions, gotchas, working commands, and the user's stated preferences.
@@ -25,7 +37,7 @@ Never record any of these:
 - Snapshots that will change: counts, sizes, costs, prices, timings, dates, how many of something exist, how the UI currently looks, what a file contains right now.
 - Explanations of how code works, including answers to the user's "how does X work" questions. A reader gets these from the code. Keep an explanation only when it states a trap that would surprise someone, and a list of implementation details is never a trap.
 - One-off run parameters, such as "run 200 cards first".
-- To-dos: anything the user or the assistant still has to do, fix, update, install or clean up, whether in this repo, another repo or the user's own machine (shell config, environment variables, dotfiles, local tools). "$X points to a stale path, update it in the shell config" is a chore, not knowledge: once done it is no longer true. Keep only the lasting rule or reason behind it, if the user stated one.
+- ${TODO_RULE}
 - Rules from project instruction files (AGENTS.md, CLAUDE.md, README conventions), or that the assistant read from one, even when the user agrees. Those files are already loaded into every session.
 - Anything secret.
 A user's instruction on how to build something ("use deterministic ids so retries don't double count", "keep it behind a gate") is a decision with a reason: keep it, without the surrounding task.
@@ -40,7 +52,7 @@ Then keep a practice only when the user:
 - corrects the assistant for doing it a different way, or
 - asks for the same thing again after having asked before (the transcript shows it was repeated).
 Write a practice as an instruction with its trigger and the reason if the user gave one: "When doing a /nitpick design session, run the app against a fork of production data, so the design is judged on real content." Name the trigger (a command, a kind of task, a tool) so a later session can tell when it applies.
-A practice reaches every repo the user works in, so it holds only what applies in all of them. When the rule comes with one repo's specifics (ports, hosts, URLs, service, app or repo names, paths), write the practice without them, and keep the specifics as a separate fact about that repo. For example, "before a release, smoke-test the checkout flow on staging at checkout.acme.dev:8443" becomes the practice "Before a release, smoke-test the main user flow on staging." and the fact "In acme-shop, staging is checkout.acme.dev:8443." Keep the practice even when there is no room for the fact. A request for one thing right now ("run the tests", "make that button blue") is not a practice, even if phrased as a demand. Practices don't count toward the limit of 3, but at most 2 per session.
+${PRACTICE_SPECIFICS_RULE} A request for one thing right now ("run the tests", "make that button blue") is not a practice, even if phrased as a demand. Practices don't count toward the limit of 3, but at most 2 per session.
 Everything above still applies to practices: never one the assistant invented, and never one the assistant quoted or paraphrased from AGENTS.md, CLAUDE.md or another instruction file. If the user only confirms a rule the assistant just read out ("yes, always"), that rule is already loaded in every session, so drop it.
 Reply with one JSON object and nothing else:
 {"memories":[{"kind":"fact","otherRepos":false,"content":"...","confidence":0.8,"anchors":[{"path":"src/x.ts","symbol":"fn"}]}]}

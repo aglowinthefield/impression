@@ -1,11 +1,11 @@
-import { and, eq, inArray, isNull, type SQL, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, ne, type SQL, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import { type Access, findProject, memoryVisible } from "./access.js";
 import type { AuthEnv } from "./auth.js";
 import type { Db, Tx } from "./db/client.js";
 import { anchors, memories, memoryEvents } from "./db/schema.js";
-import { logEvent } from "./events.js";
+import { logEvent, PASS_BY } from "./events.js";
 import { embedMemory } from "./memories.js";
 import type { Providers } from "./providers/index.js";
 
@@ -23,7 +23,7 @@ const UNDOABLE = new Set([
   "edited",
 ]);
 
-const sources = ["extraction", "check", "dream", "person"] as const;
+const sources = ["extraction", "check", "dream", "person", "pass"] as const;
 
 const listQuery = z.object({
   /** Leave out for every project you can see. */
@@ -40,7 +40,7 @@ export interface Entry {
   id: string;
   at: string;
   kind: string;
-  actor: "extraction" | "check" | "person" | "dream";
+  actor: "extraction" | "check" | "person" | "dream" | "pass";
   principal: string | null;
   memory: {
     id: string;
@@ -72,7 +72,7 @@ interface EventRow extends Record<string, unknown> {
   id: string;
   at: string;
   kind: string;
-  actor: "extraction" | "check" | "person";
+  actor: "extraction" | "check" | "person" | "pass";
   principal: string | null;
   reason: string;
   detail: Record<string, unknown>;
@@ -107,6 +107,9 @@ function inProject(projectId: string | null): SQL {
     : sql`(m.scope = 'user' AND m.project_id IS NULL)`;
 }
 
+/** The event's actor as Activity shows it: the scope pass's events are stored as extraction's (events.ts). */
+const actorOf = sql`CASE WHEN e.detail->>'by' = ${PASS_BY} THEN 'pass' ELSE e.actor::text END`;
+
 async function eventRows(
   db: Db,
   access: Access,
@@ -116,7 +119,7 @@ async function eventRows(
 ): Promise<EventRow[]> {
   const visible = await memoryVisible(db, access, principal, "m");
   return db.execute<EventRow>(sql`
-    SELECT e.id, ${atText("e.created_at")} AS at, e.kind, e.actor, e.principal, e.reason,
+    SELECT e.id, ${atText("e.created_at")} AS at, e.kind, ${actorOf} AS actor, e.principal, e.reason,
       e.detail, e.undone_by, u.kind AS undoes_kind,
       m.id AS memory_id, m.content, m.scope, m.status, m.owner,
       s.id AS session_id, s.owner AS session_owner, s.agent AS session_agent
@@ -262,7 +265,9 @@ async function reverse(
     case "edited": {
       const content = String(d.before ?? "");
       if (!content) throw new Refused(409, "this entry has no earlier text");
-      await tx
+      // Superseded memories are history (memories/I4). A supersede may be logged
+      // only on its replacement, so the later-change check can miss it.
+      const [live] = await tx
         .update(memories)
         .set({
           content,
@@ -274,7 +279,15 @@ async function reverse(
             ? { status: prev.status, staleReason: prev.staleReason ?? null }
             : {}),
         })
-        .where(eq(memories.id, e.memoryId));
+        .where(
+          and(eq(memories.id, e.memoryId), ne(memories.status, "superseded")),
+        )
+        .returning({ id: memories.id });
+      if (!live)
+        throw new Refused(
+          409,
+          "the memory changed since this entry; undo the later change first",
+        );
       return [{ id: e.memoryId, content }];
     }
     case "rewritten": {
@@ -347,7 +360,7 @@ export function activityRoutes(db: Db, providers: Providers) {
     let events: EventRow[] = [];
     if (q.source !== "dream") {
       const where: SQL[] = [q.project ? inProject(p?.id ?? null) : sql`true`];
-      if (q.source) where.push(sql`e.actor = ${q.source}`);
+      if (q.source) where.push(sql`${actorOf} = ${q.source}`);
       if (cursor)
         where.push(
           sql`(e.created_at, e.id::text) < (${cursor.at}::timestamptz, ${cursor.id})`,
