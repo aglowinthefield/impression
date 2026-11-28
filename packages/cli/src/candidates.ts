@@ -265,6 +265,27 @@ function gitOut(cwd: string, ...args: string[]): string | null {
   }
 }
 
+/**
+ * The last commit on the checkout's branch before `ms`, or the repo's first
+ * commit when `ms` predates it. Memories from a past session are anchored
+ * there, so the staleness check rechecks them when their files have moved on.
+ */
+export function commitBefore(checkout: string, ms: number): string | undefined {
+  const before = gitOut(
+    checkout,
+    "rev-list",
+    "-1",
+    `--before=${new Date(ms).toISOString()}`,
+    "HEAD",
+  );
+  const sha =
+    before ||
+    (gitOut(checkout, "rev-list", "--max-parents=0", "HEAD") ?? "")
+      .split("\n")
+      .at(-1);
+  return sha && /^[0-9a-f]{7,40}$/i.test(sha) ? sha : undefined;
+}
+
 /** The nearest existing directory at or above `p`, real path, plus the rest of `p` below it. */
 function existingDir(p: string): { dir: string; rest: string } | null {
   let cur = p;
@@ -290,12 +311,15 @@ function existingDir(p: string): { dir: string; rest: string } | null {
  * Repos the session touched, by git remote key. `path:` projects never count:
  * work outside a repo with a remote stays with the session's project. Empty
  * when the session never left `sessionKey`, so single-repo uploads don't change.
+ * Each repo's `headSha` is its HEAD, or with `at` (a past session's start, ms)
+ * its last commit before then.
  */
 export function projectCandidates(
   entries: unknown[],
   cwd: string,
   sessionKey: string,
   home: string = homedir(),
+  at?: number,
 ): ProjectCandidate[] {
   const toplevels = new Map<string, string | null>();
   const keys = new Map<string, { key: string; name: string } | null>();
@@ -364,7 +388,11 @@ export function projectCandidates(
       const top =
         [...tops.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ??
         [...toplevels.values()].find((v) => v && keys.get(v)?.key === c.key);
-      const sha = top ? gitOut(top, "rev-parse", "HEAD") : null;
+      const sha = !top
+        ? null
+        : at === undefined
+          ? gitOut(top, "rev-parse", "HEAD")
+          : commitBefore(top, at);
       const files = [...new Set([...edited, ...read])].slice(0, MAX_FILES);
       return {
         ...c,

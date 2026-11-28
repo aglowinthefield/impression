@@ -1,8 +1,10 @@
 import { execFileSync } from "node:child_process";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   realpathSync,
   utimesSync,
   writeFileSync,
@@ -16,15 +18,19 @@ import {
   type BackfillArgs,
   type BackfillDeps,
   backfill,
+  backfillDir,
   backfillStatus,
   commitBefore,
   findRepo,
+  lockHolder,
   NOT_SIGNED_IN,
   offerBackfill,
   parseBackfillArgs,
   progressPath,
+  readProgress,
   retryable,
 } from "./backfill.js";
+import { startBackfill } from "./setup-cli.js";
 import { claudeDirName, piDirName } from "./transcripts.js";
 
 const NOW = Date.parse("2026-11-20T12:00:00Z");
@@ -175,7 +181,9 @@ type ExtractReply = {
 /**
  * A stand-in for the server: dedupes pieces by hash for good, marks the hooks'
  * session keys live, prices each new piece at `perPiece`, and extracts with
- * `extract`, which a test can hold on a promise.
+ * `extract`, which a test can hold on a promise. A finished extract records
+ * its cost as spend; `record` adds spend a test's `extract` bills and fails.
+ * `upload` can hold a piece's upload.
  */
 function stubApi(
   opts: {
@@ -184,10 +192,15 @@ function stubApi(
     perPiece?: number;
     live?: string[];
     extract?: (s: Stored, n: number) => Promise<ExtractReply>;
+    upload?: (body: Record<string, unknown>) => Promise<void>;
     undo?: () => Promise<unknown>;
   } = {},
 ) {
   const perPiece = opts.perPiece ?? 0.04;
+  let spent = opts.spent ?? 0;
+  const record = (usd: number) => {
+    spent += usd;
+  };
   const byHash = new Map<string, Stored>();
   const byId = new Map<string, Stored>();
   const calls: { path: string; body: Record<string, unknown> }[] = [];
@@ -214,11 +227,12 @@ function stubApi(
           pieces: out,
           estimateUsd: out.filter((p) => p.status === "new").length * perPiece,
           budgetUsd: opts.budget ?? 10,
-          spentUsd: opts.spent ?? 0,
+          spentUsd: spent,
           model: "claude-sonnet-5-5",
         };
       }
       if (path === "/sessions") {
+        await opts.upload?.(body);
         const hash = pieceHash(body.transcript as string);
         const had = byHash.get(hash);
         if (had)
@@ -235,6 +249,7 @@ function stubApi(
           return { saved: 0, updated: 0, costUsd: 0, alreadyExtracted: true };
         const r = await extract(s, extracts++);
         s.extracted = true;
+        record(r.costUsd);
         return r;
       }
       if (path.startsWith("/backfill/undo"))
@@ -248,7 +263,7 @@ function stubApi(
       .map((c) => c.body.sessionKey as string);
   const extractCalls = () =>
     calls.filter((c) => c.path.endsWith("/extract")).length;
-  return { client, calls, sent, extractCalls, byHash, byId };
+  return { client, calls, sent, extractCalls, byHash, byId, record };
 }
 
 function deferred<T>() {
@@ -474,6 +489,10 @@ describe("run", () => {
     expect(await r.done).toBe(0);
     expect(r.out()).toContain(
       "Nothing fits in what is left of the backfill budget.",
+    );
+    // AC1: the counts and estimate still show when nothing fits.
+    expect(r.out()).toContain(
+      "1 session, 1 piece. Estimated cost $0.04 on claude-sonnet-5-5.",
     );
     expect(api.sent()).toEqual([]);
   });
@@ -712,7 +731,9 @@ describe("setup's offer (AC15)", () => {
         asked.push(plan);
         return true;
       },
-      start: (c) => started.push(c),
+      start: async (c) => {
+        started.push(c);
+      },
       alive: () => false,
       ...over,
     });
@@ -784,5 +805,358 @@ describe("setup's offer (AC15)", () => {
     const busy = offer(w, stubApi().client, { alive: () => true });
     await busy.done;
     expect(busy.info[0]).toContain("already running");
+  });
+});
+
+// ---------------------------------------------------------------- regressions from review
+
+describe("undo asks first and holds the lock (AC3, AC14)", () => {
+  test("--dry-run --undo retires nothing", async () => {
+    const w = world();
+    const api = stubApi({ undo: async () => ({ retired: 7 }) });
+    const r = run(w, api.client, { undo: true, dryRun: true });
+    expect(await r.done).toBe(0);
+    expect(r.out()).toContain("Nothing retired.");
+    expect(api.calls).toEqual([]);
+  });
+
+  test("without --yes it asks, and without a terminal it refuses", async () => {
+    const w = world();
+    const api = stubApi({ undo: async () => ({ retired: 7 }) });
+    const noTty = run(w, api.client, { undo: true, yes: false });
+    expect(await noTty.done).toBe(1);
+    expect(noTty.out()).toContain("run it with --yes");
+    const asked: string[] = [];
+    const no = run(
+      w,
+      api.client,
+      { undo: true, yes: false },
+      {
+        confirm: async (m) => {
+          asked.push(m);
+          return false;
+        },
+      },
+    );
+    expect(await no.done).toBe(0);
+    expect(asked).toEqual([`Retire every memory backfills made in ${w.key}?`]);
+    expect(api.calls).toEqual([]);
+    const yes = run(
+      w,
+      api.client,
+      { undo: true, yes: false },
+      { confirm: async () => true },
+    );
+    expect(await yes.done).toBe(0);
+    expect(yes.out()).toBe(
+      `Retired 7 memories that backfills made in ${w.key}.`,
+    );
+    // The lock is released afterwards.
+    expect(lockHolder(w.env, w.key, () => true)).toBeUndefined();
+  });
+
+  test("refuses while a backfill runs in the repo", async () => {
+    const w = world();
+    expect(acquireLock(w.env, w.key, 99, (p) => p === 99)).toBe(true);
+    const api = stubApi({ undo: async () => ({ retired: 7 }) });
+    const r = run(
+      w,
+      api.client,
+      { undo: true },
+      { alive: (p) => p === 99 || p === PID },
+    );
+    expect(await r.done).toBe(1);
+    expect(r.out()).toContain("A backfill is already running");
+    expect(api.calls).toEqual([]);
+  });
+});
+
+describe("lock (AC11)", () => {
+  test("two contenders on a stale lock: exactly one wins", () => {
+    const w = world();
+    expect(acquireLock(w.env, w.key, 99, () => true)).toBe(true);
+    // 99 is gone; 101 and 102 both find its lock stale, and 101 takes it over
+    // after 102 read it and before 102 moves it.
+    const alive = (p: number) => p === 101 || p === 102;
+    let first: boolean | undefined;
+    const second = acquireLock(w.env, w.key, 102, alive, () => {
+      first = acquireLock(w.env, w.key, 101, alive);
+    });
+    expect(first).toBe(true);
+    expect(second).toBe(false);
+    expect(lockHolder(w.env, w.key, alive)).toBe(101);
+    // No stray files left behind.
+    expect(
+      readdirSync(backfillDir(w.env)).filter((f) => f.includes(".lock")),
+    ).toHaveLength(1);
+  });
+});
+
+describe("cost (AC7, AC9)", () => {
+  test("a piece that just fits the budget left is sent", async () => {
+    const w = world();
+    piSession(w, w.repo, "s0", NOW - DAY);
+    // $10 - $9.96 is a hair under $0.04 in floating point.
+    const api = stubApi({ budget: 10, spent: 9.96, perPiece: 0.04 });
+    const r = run(w, api.client);
+    expect(await r.done).toBe(0);
+    expect(api.sent()).toEqual(["s0"]);
+  });
+
+  test("the final cost is what the server recorded, a billed piece that failed included", async () => {
+    const w = world();
+    piSession(w, w.repo, "s0", NOW - DAY);
+    const api = stubApi({
+      extract: async (_s, n) => {
+        if (n === 0) {
+          api.record(0.03);
+          throw apiError(502, "extraction failed, try again");
+        }
+        return { saved: 1, updated: 0, costUsd: 0.04 };
+      },
+    });
+    const r = run(w, api.client);
+    expect(await r.done).toBe(0);
+    expect(r.out()).toContain("#1 saved 1, updated 0, $0.04");
+    expect(r.lines.at(-1)).toBe(
+      "Done. Sessions read: 1. Memories saved: 1, updated: 0. Cost: $0.07.",
+    );
+    expect(readProgress(w.env, w.key)?.costUsd).toBeCloseTo(0.07, 6);
+  });
+});
+
+describe("budget refusal (AC8)", () => {
+  test("after a 402 no worker starts another extract or retry", async () => {
+    const w = world();
+    for (let i = 0; i < 4; i++)
+      piSession(w, w.repo, `s${i}`, NOW - (4 - i) * DAY);
+    const reached = {
+      s0: deferred<void>(),
+      s1: deferred<void>(),
+      s2: deferred<void>(),
+    };
+    const refuse = deferred<void>();
+    const upload = deferred<void>();
+    const fail = deferred<ExtractReply>();
+    const extracted: string[] = [];
+    const api = stubApi({
+      upload: async (body) => {
+        if (body.sessionKey !== "s1") return;
+        reached.s1.resolve();
+        await upload.promise;
+      },
+      extract: async (s) => {
+        const key = s.body.sessionKey as string;
+        extracted.push(key);
+        if (key === "s0") {
+          reached.s0.resolve();
+          await refuse.promise;
+          throw apiError(402, "backfill budget used up");
+        }
+        reached.s2.resolve();
+        return fail.promise;
+      },
+    });
+    const stopped = deferred<void>();
+    const lines: string[] = [];
+    const done = backfill(
+      { yes: true, dryRun: false, undo: false },
+      {
+        client: api.client,
+        cwd: w.repo,
+        env: w.env,
+        now: () => NOW,
+        log: (l) => {
+          lines.push(l);
+          if (/s0\.jsonl#1 not sent/.test(l)) stopped.resolve();
+        },
+        pid: PID,
+        alive: (p) => p === PID,
+        concurrency: 3,
+      },
+    );
+    await Promise.all([
+      reached.s0.promise,
+      reached.s1.promise,
+      reached.s2.promise,
+    ]);
+    refuse.resolve();
+    await stopped.promise;
+    upload.resolve();
+    fail.reject(apiError(502, "extraction failed, try again"));
+    expect(await done).toBe(0);
+    // s1 is uploaded but never extracted; s2 isn't retried; s3 never starts.
+    expect(extracted).toEqual(["s0", "s2"]);
+    expect(api.sent()).toEqual(["s0", "s1", "s2"]);
+    expect(lines.join("\n")).toContain(
+      "The backfill budget ran out: 4 pieces not sent.",
+    );
+  });
+});
+
+describe("cross-repo anchors (AC13)", () => {
+  test("another repo the session touched is anchored at its commit when the session started", async () => {
+    const w = world();
+    const other = join(w.base, "other");
+    mkdirSync(other);
+    git(other, ["init", "-q", "-b", "main"]);
+    git(other, [
+      "remote",
+      "add",
+      "origin",
+      "https://github.com/acme/other.git",
+    ]);
+    const then = commit(other, "2026-11-01T00:00:00Z");
+    const today = commit(other, "2026-11-19T00:00:00Z");
+    writeFileSync(join(other, "lib.ts"), "x");
+    const start = Date.parse("2026-11-12T00:00:00Z");
+    writeFile(
+      join(w.env.IMPRESSION_BACKFILL_PI_DIR, piDirName(w.repo), "x.jsonl"),
+      [
+        line({
+          type: "session",
+          id: "x",
+          timestamp: new Date(start).toISOString(),
+          cwd: w.repo,
+        }),
+        line({
+          type: "message",
+          message: { role: "user", content: text("ask-x") },
+        }),
+        line({
+          type: "message",
+          message: {
+            role: "assistant",
+            content: [
+              {
+                type: "toolCall",
+                name: "edit",
+                arguments: { path: join(other, "lib.ts") },
+              },
+            ],
+          },
+        }),
+      ],
+      start + 10 * 60_000,
+    );
+    const api = stubApi();
+    expect(await run(w, api.client).done).toBe(0);
+    const body = api.calls.find((c) => c.path === "/sessions")?.body;
+    const candidates = body?.candidates as { key: string; headSha?: string }[];
+    expect(candidates).toEqual([
+      expect.objectContaining({ key: "github.com/acme/other", headSha: then }),
+    ]);
+    expect(then).not.toBe(today);
+  });
+});
+
+describe("repo dirs (AC1)", () => {
+  test("a separate git dir's parent isn't taken for a checkout", () => {
+    const base = realpathSync(mkdtempSync(join(tmpdir(), "imp-backfill-")));
+    mkdirSync(join(base, "meta"));
+    git(base, [
+      "init",
+      "-q",
+      "-b",
+      "main",
+      "--separate-git-dir",
+      "meta/app.git",
+      "app",
+    ]);
+    const app = join(base, "app");
+    commit(app, "2026-09-01T00:00:00Z");
+    git(app, ["worktree", "add", "-q", "-b", "wt", join(base, "wt")]);
+    expect(findRepo(app)?.dirs.sort()).toEqual([app, join(base, "wt")].sort());
+  });
+});
+
+describe("running sessions (AC6, agents/I3)", () => {
+  test("a transcript changed in the last hour is skipped without being opened", async () => {
+    const w = world();
+    piSession(w, w.repo, "s0", NOW - DAY);
+    piSession(w, w.repo, "running", NOW - 2 * HOUR, {
+      mtime: NOW - 30 * 60_000,
+    });
+    // Opening it would throw.
+    chmodSync(
+      join(
+        w.env.IMPRESSION_BACKFILL_PI_DIR,
+        piDirName(w.repo),
+        "running.jsonl",
+      ),
+      0o000,
+    );
+    const api = stubApi();
+    const r = run(w, api.client);
+    expect(await r.done).toBe(0);
+    expect(api.sent()).toEqual(["s0"]);
+    expect(r.out()).toContain(
+      "1 session changed in the last hour (may still be running)",
+    );
+  });
+});
+
+describe("status (AC15)", () => {
+  test("clears a finished run's progress only while it is still the file shown", async () => {
+    const w = world();
+    piSession(w, w.repo, "s0", NOW - DAY);
+    expect(await run(w, stubApi().client).done).toBe(0);
+    const next = {
+      total: 9,
+      done: 0,
+      saved: 0,
+      updated: 0,
+      failed: 0,
+      notSent: 0,
+      costUsd: 0,
+      startedAt: "2026-11-21T00:00:00.000Z",
+      finishedAt: null,
+    };
+    const shown = backfillStatus(
+      w.repo,
+      w.env,
+      () => false,
+      () =>
+        // A new run starts between the read and the clear.
+        writeFileSync(progressPath(w.env, w.key), JSON.stringify(next)),
+    );
+    expect(shown).toContain("Backfill:  finished, 1 of 1 pieces");
+    expect(readProgress(w.env, w.key)).toEqual(next);
+  });
+});
+
+describe("setup's background start (AC15, agents/I1)", () => {
+  test("a start that fails says so, with the command to run by hand", async () => {
+    const w = world();
+    piSession(w, w.repo, "s0", NOW - DAY);
+    const info: string[] = [];
+    await offerBackfill({
+      client: stubApi().client,
+      cwd: w.repo,
+      env: w.env,
+      now: () => NOW,
+      interactive: true,
+      info: (t) => info.push(t),
+      ask: async () => true,
+      start: async () => {
+        throw new Error("spawn node ENOENT");
+      },
+      alive: () => false,
+    });
+    expect(info).toEqual([
+      `Couldn't start the backfill (spawn node ENOENT). Run it by hand: impression backfill --repo ${w.repo}`,
+    ]);
+  });
+
+  test("startBackfill waits for the child to start, and rejects when it can't", async () => {
+    const w = world();
+    const script = join(w.base, "noop.js");
+    writeFileSync(script, "");
+    await expect(
+      startBackfill(w.repo, process.execPath, script),
+    ).resolves.toBeUndefined();
+    await expect(
+      startBackfill(w.repo, join(w.base, "no-such-node"), script),
+    ).rejects.toThrow(/ENOENT/);
   });
 });

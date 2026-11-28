@@ -125,17 +125,28 @@ function listDir(dir: string): string[] {
   }
 }
 
-/**
- * Files under `since` are left unread: a session that started after it was
- * written to after it too.
- */
-function jsonlFiles(dir: string, since: number): [string, number][] {
+/** Which files to read, by when they last changed. */
+interface Window {
+  /** Files changed before this are left unread: a session that started after it was written to after it too. */
+  since: number;
+  /** Files changed after this may belong to a running session and are left unread. */
+  until: number;
+  /** Where files left unread for `until` are collected, when the caller counts them. */
+  running?: Set<string>;
+}
+
+function jsonlFiles(dir: string, w: Window): [string, number][] {
   return listDir(dir)
     .filter((f) => f.endsWith(".jsonl"))
     .map((f) => join(dir, f))
     .flatMap((f): [string, number][] => {
       const s = statSync(f);
-      return s.isFile() && s.mtimeMs >= since ? [[f, s.mtimeMs]] : [];
+      if (!s.isFile() || s.mtimeMs < w.since) return [];
+      if (s.mtimeMs > w.until) {
+        w.running?.add(f);
+        return [];
+      }
+      return [[f, s.mtimeMs]];
     });
 }
 
@@ -148,7 +159,7 @@ function byDirName(
   agent: "pi" | "claude",
   root: string,
   repo: string,
-  since: number,
+  w: Window,
 ): SessionFile[] {
   const exact = agent === "pi" ? piDirName(repo) : claudeDirName(repo);
   const prefix = agent === "pi" ? exact.slice(0, -2) : exact;
@@ -160,7 +171,7 @@ function byDirName(
         : name.startsWith(`${prefix}-`);
     if (name !== exact && !nested) continue;
     // Only top-level files: Claude keeps subagent transcripts in subfolders.
-    for (const [path, mtime] of jsonlFiles(join(root, name), since)) {
+    for (const [path, mtime] of jsonlFiles(join(root, name), w)) {
       const head = headEntries(path);
       const cwd = field(head, "cwd");
       if (cwd ? !isUnder(cwd, repo) : name !== exact) continue;
@@ -184,12 +195,20 @@ function byDirName(
   return out;
 }
 
-function walk(dir: string, since: number, out: [string, number][] = []) {
+/**
+ * Codex rollouts in the window. One changed after `until` is left unread and
+ * uncounted: only its contents say which repo it ran in.
+ */
+function walk(dir: string, w: Window, out: [string, number][] = []) {
   for (const name of listDir(dir)) {
     const p = join(dir, name);
     const s = statSync(p);
-    if (s.isDirectory()) walk(p, since, out);
-    else if (/^rollout-.*\.jsonl$/.test(name) && s.mtimeMs >= since)
+    if (s.isDirectory()) walk(p, w, out);
+    else if (
+      /^rollout-.*\.jsonl$/.test(name) &&
+      s.mtimeMs >= w.since &&
+      s.mtimeMs <= w.until
+    )
       out.push([p, s.mtimeMs]);
   }
   return out;
@@ -220,7 +239,9 @@ function codexSessions(files: [string, number][], repo: string): SessionFile[] {
 
 /**
  * Every transcript run in any of `dirs` (a repo's main checkout and its
- * worktrees) or under them, from the chosen agents, oldest first.
+ * worktrees) or under them, from the chosen agents, oldest first. A file
+ * changed after `settledBefore` is never opened; pi and Claude Code files in
+ * the repo's folders are added to `running` instead.
  */
 export function discoverSessions(
   dirs: string | readonly string[],
@@ -228,6 +249,8 @@ export function discoverSessions(
     agents?: readonly BackfillAgent[];
     roots?: Roots;
     since?: number;
+    settledBefore?: number;
+    running?: Set<string>;
   } = {},
 ): SessionFile[] {
   const roots = opts.roots ?? defaultRoots();
@@ -237,12 +260,16 @@ export function discoverSessions(
   const add = (list: SessionFile[]) => {
     for (const s of list) found.set(s.path, s);
   };
-  const codexFiles = agents.includes("codex") ? walk(roots.codex, since) : [];
+  const w: Window = {
+    since,
+    until: opts.settledBefore ?? Number.POSITIVE_INFINITY,
+    ...(opts.running ? { running: opts.running } : {}),
+  };
+  const codexFiles = agents.includes("codex") ? walk(roots.codex, w) : [];
   for (const dir of typeof dirs === "string" ? [dirs] : dirs) {
     const r = resolve(dir);
-    if (agents.includes("pi")) add(byDirName("pi", roots.pi, r, since));
-    if (agents.includes("claude"))
-      add(byDirName("claude", roots.claude, r, since));
+    if (agents.includes("pi")) add(byDirName("pi", roots.pi, r, w));
+    if (agents.includes("claude")) add(byDirName("claude", roots.claude, r, w));
     if (agents.includes("codex")) add(codexSessions(codexFiles, r));
   }
   return [...found.values()]

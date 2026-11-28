@@ -5,11 +5,13 @@
  * and sends the new pieces oldest first, three at a time.
  */
 import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
+  closeSync,
+  fstatSync,
+  linkSync,
   mkdirSync,
   openSync,
-  closeSync,
   readFileSync,
   renameSync,
   rmSync,
@@ -23,6 +25,7 @@ import {
   pieceHash,
   resolveProject,
 } from "@impression/shared";
+import { commitBefore } from "./candidates.js";
 import { sessionAgent } from "./hook-io.js";
 import { safeCandidates, transcriptText } from "./session-end.js";
 import {
@@ -48,6 +51,11 @@ export const CONCURRENCY = 3;
 const PLAN_BATCH = 1000;
 
 export const NOT_SIGNED_IN = "Not signed in. Run: impression login --github";
+
+export { commitBefore };
+
+/** Dollars as whole millionths, so sums and comparisons are exact. */
+const micros = (usd: number) => Math.round(usd * 1e6);
 
 // ---------------------------------------------------------------- repo
 
@@ -78,41 +86,18 @@ function git(cwd: string, ...args: string[]): string | null {
 export function findRepo(cwd: string): Repo | null {
   const checkout = git(cwd, "rev-parse", "--show-toplevel");
   if (!checkout) return null;
-  const common = git(
-    checkout,
-    "rev-parse",
-    "--path-format=absolute",
-    "--git-common-dir",
-  );
   const dirs = new Set<string>([checkout]);
-  if (common) dirs.add(dirname(common));
+  // Each worktree's own top level: with a separate git dir, git lists the git
+  // dir as the main worktree, and that has no top level, so it's left out.
   for (const line of (
     git(checkout, "worktree", "list", "--porcelain") ?? ""
-  ).split("\n"))
-    if (line.startsWith("worktree ")) dirs.add(line.slice(9));
+  ).split("\n")) {
+    if (!line.startsWith("worktree ")) continue;
+    const top = git(line.slice(9), "rev-parse", "--show-toplevel");
+    if (top) dirs.add(top);
+  }
   const p = resolveProject(checkout);
   return { checkout, dirs: [...dirs], key: p.key, name: p.name };
-}
-
-/**
- * The last commit on the checkout's branch before `ms`, or the repo's first
- * commit when the session predates it. Memories from the session are anchored
- * there, so the staleness check rechecks them when their files have moved on.
- */
-export function commitBefore(checkout: string, ms: number): string | undefined {
-  const before = git(
-    checkout,
-    "rev-list",
-    "-1",
-    `--before=${new Date(ms).toISOString()}`,
-    "HEAD",
-  );
-  const sha =
-    before ||
-    (git(checkout, "rev-list", "--max-parents=0", "HEAD") ?? "")
-      .split("\n")
-      .at(-1);
-  return sha && /^[0-9a-f]{7,40}$/i.test(sha) ? sha : undefined;
 }
 
 // ---------------------------------------------------------------- lock and progress
@@ -152,31 +137,77 @@ export function lockHolder(
   }
 }
 
+/** A lock file's text and identity, read through one descriptor. */
+function readLockFile(path: string): { text: string; ino: number } | undefined {
+  let fd: number;
+  try {
+    fd = openSync(path, "r");
+  } catch {
+    return undefined;
+  }
+  try {
+    return { text: readFileSync(fd, "utf8"), ino: fstatSync(fd).ino };
+  } finally {
+    closeSync(fd);
+  }
+}
+
+const errCode = (e: unknown) => (e as NodeJS.ErrnoException).code;
+
 /**
  * Takes the repo's lock for `pid`. False when a running process holds it. A
  * lock whose process is gone (a crash, Ctrl-C, a closed terminal) is taken over.
+ *
+ * The lock is written whole under a unique name and hard-linked into place, an
+ * exclusive create, so no one reads a half-written lock. A stale lock is moved
+ * aside under a unique name, which only one contender can do, and removed only
+ * when the moved file is the one found stale; a live lock moved by mistake is
+ * put back. `onStale` runs between finding a lock stale and moving it, for tests.
  */
 export function acquireLock(
   env: NodeJS.ProcessEnv,
   key: string,
   pid: number,
   alive: (pid: number) => boolean = pidAlive,
+  onStale?: () => void,
 ): boolean {
   const path = lockPath(env, key);
   mkdirSync(dirname(path), { recursive: true });
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const fd = openSync(path, "wx");
-      writeFileSync(fd, `${pid}\n`);
-      closeSync(fd);
-      return true;
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
-      if (lockHolder(env, key, alive) !== undefined) return false;
-      rmSync(path, { force: true });
+  const mine = `${path}.${pid}.${randomUUID()}.new`;
+  writeFileSync(mine, `${pid}\n`);
+  try {
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        linkSync(mine, path);
+        return true;
+      } catch (e) {
+        if (errCode(e) !== "EEXIST") throw e;
+      }
+      const held = readLockFile(path);
+      if (!held) continue;
+      const holder = Number(held.text.trim());
+      if (Number.isInteger(holder) && holder > 0 && alive(holder)) return false;
+      onStale?.();
+      const aside = `${path}.${pid}.${randomUUID()}.stale`;
+      try {
+        renameSync(path, aside);
+      } catch (e) {
+        if (errCode(e) === "ENOENT") continue;
+        throw e;
+      }
+      const moved = readLockFile(aside);
+      if (moved?.ino !== held.ino || moved.text !== held.text) {
+        // Another contender's lock, taken after this one read the stale one.
+        try {
+          linkSync(aside, path);
+        } catch {}
+      }
+      rmSync(aside, { force: true });
     }
+    return false;
+  } finally {
+    rmSync(mine, { force: true });
   }
-  return false;
 }
 
 export function releaseLock(env: NodeJS.ProcessEnv, key: string, pid: number) {
@@ -231,6 +262,8 @@ export function backfillStatus(
   cwd: string,
   env: NodeJS.ProcessEnv = process.env,
   alive: (pid: number) => boolean = pidAlive,
+  /** Runs before the shown progress is cleared, for tests. */
+  beforeClear?: () => void,
 ): string | undefined {
   const key = resolveProject(cwd).key;
   const p = readProgress(env, key);
@@ -239,7 +272,11 @@ export function backfillStatus(
   const failed = p.failed ? `, ${p.failed} failed` : "";
   if (!p.finishedAt && lockHolder(env, key, alive) !== undefined)
     return `Backfill:  running, ${p.done} of ${p.total} pieces done, ${memories}${failed}`;
-  rmSync(progressPath(env, key), { force: true });
+  beforeClear?.();
+  // Only the run shown: a new run may have started since it was read.
+  const now = readProgress(env, key);
+  if (now?.startedAt === p.startedAt && now.finishedAt === p.finishedAt)
+    rmSync(progressPath(env, key), { force: true });
   if (!p.finishedAt)
     return `Backfill:  stopped at ${p.done} of ${p.total} pieces, ${memories}. Run impression backfill to send the rest.`;
   return `Backfill:  finished, ${p.done} of ${p.total} pieces, ${memories}${failed}, ${usd(p.costUsd)}`;
@@ -322,6 +359,8 @@ export interface Plan {
   estimateUsd: number;
   /** New pieces the budget leaves out, the newest ones. */
   leftOut: number;
+  /** Sessions with a new piece, the left-out ones included. */
+  newSessions: number;
   /** Estimate of every new piece, the left-out ones included. */
   fullEstimateUsd: number;
   budgetUsd: number;
@@ -349,12 +388,14 @@ export async function makePlan(
   now: number,
 ): Promise<Plan> {
   const since = opts.since ?? now - DEFAULT_DAYS * DAY_MS;
-  const found = discoverSessions(repo.dirs, {
+  const running = new Set<string>();
+  const settled = discoverSessions(repo.dirs, {
     agents: opts.agents ?? BACKFILL_AGENTS,
     roots: defaultRoots(env),
     since,
+    settledBefore: now - RUNNING_MS,
+    running,
   });
-  const settled = found.filter((s) => s.mtime <= now - RUNNING_MS);
   const window = settled.slice(-(opts.limit ?? DEFAULT_LIMIT));
   const pieces = toPieces(window);
   const reply = await askPlan(client, repo.key, pieces);
@@ -365,10 +406,10 @@ export async function makePlan(
       .filter((p) => status.get(p.hash) === "live")
       .map((p) => p.session.path),
   );
-  const left = Math.max(0, reply.budgetUsd - reply.spentUsd);
+  const left = Math.max(0, micros(reply.budgetUsd) - micros(reply.spentUsd));
   let send = fresh;
   let estimateUsd = reply.estimateUsd;
-  if (fresh.length && reply.estimateUsd > left) {
+  if (fresh.length && micros(reply.estimateUsd) > left) {
     // The longest oldest-first prefix whose estimate fits, by bisection on the
     // server's own prices. Estimates grow with every piece added.
     let fit = 0;
@@ -379,7 +420,7 @@ export async function makePlan(
       const mid = Math.floor((lo + hi) / 2);
       const est = (await askPlan(client, repo.key, fresh.slice(0, mid)))
         .estimateUsd;
-      if (est <= left) {
+      if (micros(est) <= left) {
         fit = mid;
         estimateUsd = est;
         lo = mid + 1;
@@ -392,13 +433,14 @@ export async function makePlan(
     send,
     estimateUsd,
     leftOut: fresh.length - send.length,
+    newSessions: new Set(fresh.map((p) => p.session.path)).size,
     fullEstimateUsd: reply.estimateUsd,
     budgetUsd: reply.budgetUsd,
     spentUsd: reply.spentUsd,
     model: reply.model,
     skipped: {
       live: liveSessions.size,
-      running: found.length - settled.length,
+      running: running.size,
       done: pieces.filter((p) => status.get(p.hash) === "done").length,
     },
   };
@@ -439,6 +481,10 @@ export function formatPlan(plan: Plan): string[] {
   if (plan.send.length)
     out.push(
       `${plural(sessions.size, "session")}, ${plural(plan.send.length, "piece")}. Estimated cost ${usd(plan.estimateUsd)} on ${plan.model}.`,
+    );
+  else if (plan.leftOut)
+    out.push(
+      `${plural(plan.newSessions, "session")}, ${plural(plan.leftOut, "piece")}. Estimated cost ${usd(plan.fullEstimateUsd)} on ${plan.model}.`,
     );
   out.push(`Backfill budget left: ${usd(left)} of ${usd(plan.budgetUsd)}.`);
   if (plan.leftOut)
@@ -502,19 +548,25 @@ interface Extracted {
   alreadyExtracted?: boolean;
 }
 
-/** Uploads one piece as a backfill session and extracts it. Throws on API errors. */
+/**
+ * Uploads one piece as a backfill session and extracts it. Throws on API
+ * errors. Once `stopped` (the budget ran out meanwhile) it skips the extract.
+ */
 async function sendPiece(
   client: ApiClient,
   repo: Repo,
   piece: Piece,
   commitSha: string | undefined,
   instructions: string | undefined,
+  stopped: () => boolean,
 ): Promise<Outcome> {
   const s = piece.session;
+  // Other repos the session touched are anchored at their commit then, too.
   const candidates = safeCandidates(
     piece.raw,
     s.cwd ?? repo.checkout,
     repo.key,
+    s.start,
   );
   const up = (await client.post("/sessions", {
     project: { key: repo.key, name: repo.name },
@@ -526,6 +578,7 @@ async function sendPiece(
     source: "backfill",
     startedAt: new Date(s.start).toISOString(),
   })) as { id: string };
+  if (stopped()) return { kind: "budget" };
   let x: Extracted;
   try {
     x = ((await client.post(
@@ -572,7 +625,8 @@ function label(p: Piece): string {
 /**
  * Sends the plan's pieces oldest first, a few at a time, one line each. A
  * failure is retried once on a network error, timeout or 5xx, then counted and
- * the run goes on. A budget refusal stops the run after the pieces in flight.
+ * the run goes on. A budget refusal stops the run: pieces in flight finish the
+ * request they're in, and none starts another upload, extract or retry.
  */
 export async function runPlan(
   client: ApiClient,
@@ -606,6 +660,11 @@ export async function runPlan(
     const tag = `[${String(i + 1).padStart(width)}/${items.length}] ${label(piece)}`;
     let outcome: Outcome = { kind: "failed", error: "" };
     for (let attempt = 0; attempt < 2; attempt++) {
+      // After a budget refusal nothing new starts, a retry included.
+      if (totals.budgetStopped) {
+        outcome = { kind: "budget" };
+        break;
+      }
       try {
         outcome = await sendPiece(
           client,
@@ -613,6 +672,7 @@ export async function runPlan(
           piece,
           commitFor(piece.session),
           opts.instructions,
+          () => totals.budgetStopped,
         );
         break;
       } catch (err) {
@@ -790,24 +850,7 @@ export async function backfill(
     return 1;
   }
 
-  if (args.undo) {
-    try {
-      const r = (await client.post(
-        `/backfill/undo?project=${encodeURIComponent(repo.key)}`,
-        {},
-      )) as { retired: number };
-      log(
-        `Retired ${plural(r.retired, "memory", "memories")} that backfills made in ${repo.key}.`,
-      );
-      return 0;
-    } catch (err) {
-      if (apiStatus(err) === 404) {
-        log(`Impression has no project ${repo.key} you can reach.`);
-        return 1;
-      }
-      throw err;
-    }
-  }
+  if (args.undo) return undo(client, repo, args, deps);
 
   const alive = deps.alive ?? pidAlive;
   if (!args.dryRun && !acquireLock(env, repo.key, deps.pid, alive)) {
@@ -879,6 +922,8 @@ export async function backfill(
       ...(deps.instructions ? { instructions: deps.instructions } : {}),
       onProgress: (t) => writeProgress(env, repo.key, progress(t, null)),
     });
+    const recorded = await recordedCost(client, repo.key, plan.spentUsd);
+    if (recorded !== undefined) totals.costUsd = recorded;
     writeProgress(
       env,
       repo.key,
@@ -888,6 +933,83 @@ export async function backfill(
     return totals.failed ? 1 : 0;
   } finally {
     if (!args.dryRun) releaseLock(env, repo.key, deps.pid);
+  }
+}
+
+/**
+ * What the run cost as the server recorded it: the person's spend now less
+ * their spend at the plan. It counts a piece the server billed but answered
+ * with an error. Undefined when the server can't be asked.
+ */
+async function recordedCost(
+  client: ApiClient,
+  key: string,
+  spentBefore: number,
+): Promise<number | undefined> {
+  try {
+    const after = await askPlan(client, key, []);
+    return Math.max(0, micros(after.spentUsd) - micros(spentBefore)) / 1e6;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * `impression backfill --undo`: asks first, as a send does, and holds the
+ * repo's lock while it retires. `--dry-run` retires nothing.
+ */
+async function undo(
+  client: ApiClient,
+  repo: Repo,
+  args: BackfillArgs,
+  deps: BackfillDeps,
+): Promise<number> {
+  const { log, env } = deps;
+  if (args.dryRun) {
+    log(
+      `Dry run: would retire the memories backfills made in ${repo.key}. Nothing retired.`,
+    );
+    return 0;
+  }
+  if (!acquireLock(env, repo.key, deps.pid, deps.alive ?? pidAlive)) {
+    log(
+      `A backfill is already running for ${repo.key}. impression status shows its progress.`,
+    );
+    return 1;
+  }
+  try {
+    if (!args.yes) {
+      if (!deps.confirm) {
+        log(
+          "Nothing retired. Without a terminal, run it with --yes to retire.",
+        );
+        return 1;
+      }
+      if (
+        !(await deps.confirm(
+          `Retire every memory backfills made in ${repo.key}?`,
+        ))
+      ) {
+        log("Nothing retired.");
+        return 0;
+      }
+    }
+    const r = (await client.post(
+      `/backfill/undo?project=${encodeURIComponent(repo.key)}`,
+      {},
+    )) as { retired: number };
+    log(
+      `Retired ${plural(r.retired, "memory", "memories")} that backfills made in ${repo.key}.`,
+    );
+    return 0;
+  } catch (err) {
+    if (apiStatus(err) === 404) {
+      log(`Impression has no project ${repo.key} you can reach.`);
+      return 1;
+    }
+    throw err;
+  } finally {
+    releaseLock(env, repo.key, deps.pid);
   }
 }
 
@@ -903,8 +1025,8 @@ export interface OfferDeps {
   info: (text: string) => void;
   /** Shows the plan and asks whether to start. */
   ask: (plan: string) => Promise<boolean>;
-  /** Starts `impression backfill --yes` for the checkout, detached. */
-  start: (checkout: string) => void;
+  /** Starts `impression backfill --yes` for the checkout, detached. Rejects when it couldn't. */
+  start: (checkout: string) => Promise<void>;
   alive?: (pid: number) => boolean;
 }
 
@@ -946,7 +1068,14 @@ export async function offerBackfill(deps: OfferDeps): Promise<void> {
       deps.info("Skipped. Run impression backfill any time.");
       return;
     }
-    deps.start(repo.checkout);
+    try {
+      await deps.start(repo.checkout);
+    } catch (err) {
+      deps.info(
+        `Couldn't start the backfill (${err instanceof Error ? err.message : String(err)}). Run it by hand: impression backfill --repo ${repo.checkout}`,
+      );
+      return;
+    }
     deps.info(
       "Backfill started in the background. impression status shows its progress.",
     );

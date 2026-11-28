@@ -160,13 +160,23 @@ export async function runSetup(
 /**
  * Starts `impression backfill --yes` for a checkout in a detached process that
  * outlives setup, with this CLI's own script and node, as the hooks hand off.
+ * Resolves once the process is running; rejects when it couldn't start.
  */
-function startBackfill(checkout: string) {
-  const child = spawn(
-    process.execPath,
-    [process.argv[1] as string, "backfill", "--yes", "--repo", checkout],
-    { detached: true, stdio: "ignore", cwd: checkout, windowsHide: true },
-  );
-  child.on("error", () => {});
-  child.unref();
+export function startBackfill(
+  checkout: string,
+  node: string = process.execPath,
+  script: string = process.argv[1] as string,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      node,
+      [script, "backfill", "--yes", "--repo", checkout],
+      { detached: true, stdio: "ignore", cwd: checkout, windowsHide: true },
+    );
+    child.once("spawn", () => {
+      child.unref();
+      resolve();
+    });
+    child.on("error", reject);
+  });
 }
