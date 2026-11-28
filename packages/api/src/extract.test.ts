@@ -474,3 +474,64 @@ test("a later item finds the memory an earlier item merged into by its merged te
     verdict = before;
   }
 });
+
+test("a memory an earlier item merged into still competes for the five candidate places", async () => {
+  const repo = { key: "github.com/acme/merge-rank" };
+  const make = async (content: string) =>
+    (
+      (await (
+        await call("POST", "/memories", {
+          scope: "project",
+          project: repo,
+          content,
+          dedup: false,
+        })
+      ).json()) as { id: string }
+    ).id;
+  const m = await make("rrm1 rrm2");
+  // Five memories closer to the second item than M's merged text will be.
+  for (const z of ["rrz1", "rrz2", "rrz3", "rrz4", "rrz5"])
+    await make(`rrq1 rrq2 rrq3 rrq4 ${z}`);
+  // Only the merged text shares words with the second item, and fewer than the five do.
+  const merged = "rrm1 rrm2 rrq1 rrq2";
+  reply = JSON.stringify({
+    memories: [
+      { content: "rrm1 rrm2 often", confidence: 0.9 },
+      { content: "rrq1 rrq2 rrq3 rrq4", confidence: 0.9 },
+    ],
+  });
+  const before = verdict;
+  const counts: number[] = [];
+  // Both items name M; the second's verdict counts only if M is a candidate.
+  verdict = (prompt) => {
+    const list = prompt.split("\n\nNew memory:\n")[0] ?? "";
+    counts.push(list.split("\n").length - 1);
+    const fresh = prompt.split("New memory:\n")[1] ?? "";
+    return JSON.stringify(
+      fresh.includes("often")
+        ? { action: "duplicate", id: m, merged }
+        : { action: "duplicate", id: m },
+    );
+  };
+  try {
+    const res = await call("POST", "/sessions", {
+      project: repo,
+      transcript: "merge rank transcript",
+      commitSha: "abc1234",
+    });
+    const { id } = (await res.json()) as { id: string };
+    expect(
+      await (await call("POST", `/sessions/${id}/extract`)).json(),
+    ).toEqual({
+      accepted: 1,
+      skippedDuplicates: 1,
+      skippedEmpty: 0,
+      skippedRepeats: 0,
+      skippedBelowFloor: 0,
+      skippedNoAccess: 0,
+    });
+    expect(counts).toEqual([1, 5]);
+  } finally {
+    verdict = before;
+  }
+});

@@ -12,7 +12,7 @@ import {
   storeMemory,
 } from "./memories.js";
 import type { LlmProvider, Providers } from "./providers/index.js";
-import { CANDIDATE_MIN_SIMILARITY, type Candidate } from "./reconcile.js";
+import type { ScoredCandidate } from "./reconcile.js";
 import { isEmptyAfterScrub, scrub } from "./scrub.js";
 import { getExtractionFloor } from "./settings.js";
 
@@ -368,10 +368,6 @@ const cosine = (a: number[], b: number[]) => {
   return na && nb ? dot / Math.sqrt(na * nb) : 0;
 };
 
-/** Whether a vector is close enough to `v` to be a dedup candidate. */
-const near = (a: number[] | null, v: number[]) =>
-  !!a && cosine(a, v) >= CANDIDATE_MIN_SIMILARITY;
-
 /** One extracted item, worked out and ready to write. */
 interface Prepared {
   /** What the dedup check calls this item's memory before it exists. */
@@ -389,8 +385,10 @@ interface Prepared {
 /**
  * Does every embedding and model call extraction's items need, before any
  * write: the repeat check and each memory's dedup check. An item's dedup check
- * also sees the memories this piece's earlier items will write or change, as
- * it would if they were written first. Returns the summary so far and `store`,
+ * is shown the candidates it would get if this piece's earlier items were
+ * already written: the memories they add, the text and vectors of the ones
+ * they merge into, and none they supersede, ranked together under the usual
+ * floor and limit. Returns the summary so far and `store`,
  * which makes only database writes.
  */
 async function prepareItems(
@@ -502,39 +500,46 @@ async function prepareItems(
       {
         embedding: vec,
         ...(input.signal ? { signal: input.signal } : {}),
-        candidates: (found, v) => [
-          ...prepared
-            .filter(
-              (p) =>
-                "plan" in p.planned &&
-                p.planned.plan.verdict.action === "add" &&
-                !gone.has(p.key) &&
-                p.practice === practice &&
-                (practice || p.projectId === projectId) &&
-                near(moved.get(p.key)?.vec ?? p.planned.plan.vector, v),
-            )
-            .map((p) => ({
-              id: p.key,
-              content: text.get(p.key) ?? p.content,
-            })),
-          // A memory an earlier item merged into is found by its new text's vector.
-          ...[...moved]
-            .filter(
-              ([id, m]) =>
-                !id.startsWith("new-") &&
-                !gone.has(id) &&
-                m.practice === practice &&
-                (practice || m.projectId === projectId) &&
-                near(m.vec, v),
-            )
-            .map(([id]) => ({ id, content: text.get(id) ?? "" })),
-          ...found
-            .filter((c) => !gone.has(c.id) && !moved.has(c.id))
-            .map((c): Candidate => ({
-              ...c,
-              content: text.get(c.id) ?? c.content,
-            })),
-        ],
+        candidates: {
+          // Stored memories superseded or merged into drop out of `found`; fetch enough to fill their places.
+          extra: [...gone, ...moved.keys()].filter(
+            (id) => !id.startsWith("new-"),
+          ).length,
+          adjust: (found, v) => [
+            ...found
+              .filter((c) => !gone.has(c.id) && !moved.has(c.id))
+              .map((c) => ({ ...c, content: text.get(c.id) ?? c.content })),
+            ...prepared.flatMap((p): ScoredCandidate[] => {
+              if (
+                !("plan" in p.planned) ||
+                p.planned.plan.verdict.action !== "add" ||
+                gone.has(p.key) ||
+                p.practice !== practice ||
+                (!practice && p.projectId !== projectId)
+              )
+                return [];
+              const pv = moved.get(p.key)?.vec ?? p.planned.plan.vector;
+              if (!pv) return [];
+              const content = text.get(p.key) ?? p.content;
+              return [{ id: p.key, content, similarity: cosine(pv, v) }];
+            }),
+            // A memory an earlier item merged into is ranked by its new text's vector.
+            ...[...moved].flatMap(([id, m]): ScoredCandidate[] =>
+              !id.startsWith("new-") &&
+              !gone.has(id) &&
+              m.practice === practice &&
+              (practice || m.projectId === projectId)
+                ? [
+                    {
+                      id,
+                      content: text.get(id) ?? "",
+                      similarity: cosine(m.vec, v),
+                    },
+                  ]
+                : [],
+            ),
+          ],
+        },
       },
     );
     checked();

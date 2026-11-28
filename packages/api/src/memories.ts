@@ -33,10 +33,11 @@ import {
 import { type EventSource, logEvent } from "./events.js";
 import type { Providers } from "./providers/index.js";
 import {
-  type Candidate,
   decide,
   findCandidates,
   markSuperseded,
+  rankCandidates,
+  type ScoredCandidate,
 } from "./reconcile.js";
 import { isEmptyAfterScrub, type Redaction, scrub } from "./scrub.js";
 
@@ -261,8 +262,15 @@ export interface CreateOptions {
    * and to the principal otherwise. False when the caller logs its own entry.
    */
   event?: EventSource | false;
-  /** Changes the dedup candidates before the LLM sees them. Extraction adds the memories its earlier items will write. */
-  candidates?: (found: Candidate[], vector: number[]) => Candidate[];
+  /**
+   * Changes the dedup candidates before they are ranked for the LLM.
+   * Extraction swaps in what its earlier items will write. `extra` fetches
+   * that many more stored candidates, to stand in for ones `adjust` drops.
+   */
+  candidates?: {
+    extra: number;
+    adjust: (found: ScoredCandidate[], vector: number[]) => ScoredCandidate[];
+  };
   /** Aborts the dedup check's model call. */
   signal?: AbortSignal;
 }
@@ -381,8 +389,11 @@ export async function planMemory(
     db,
     { scope: b.scope, projectId, owner: principal },
     vector,
+    opts.candidates?.extra ?? 0,
   );
-  const candidates = opts.candidates?.(found, vector) ?? found;
+  const candidates = rankCandidates(
+    opts.candidates?.adjust(found, vector) ?? found,
+  );
   const verdict = await decide(providers.llm, b.content, candidates, {
     strict: opts.requireDedup,
     ...(opts.signal ? { signal: opts.signal } : {}),
