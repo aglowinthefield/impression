@@ -5,9 +5,9 @@ export type EventKind = (typeof memoryEvents.$inferInsert)["kind"];
 export type EventActor = "extraction" | "check" | "person" | "pass";
 
 /**
- * The one-time scope pass (scope-pass.ts) has no value in the actor column, and
- * adding one takes a migration for a script run once. Its events are stored as
- * extraction's with this in `detail.by`, and Activity reads them back as "pass".
+ * The one-time scope pass (run on 2026-11-28, then removed) has no value in the
+ * actor column. Its events are stored as extraction's with this in `detail.by`,
+ * and Activity reads them back as "pass", so they stay visible and undoable.
  */
 export const PASS_BY = "scope-pass";
 
